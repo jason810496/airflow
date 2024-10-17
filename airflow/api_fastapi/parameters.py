@@ -210,6 +210,18 @@ class _TagsFilter(BaseParam[List[str]]):
         return self.set_value(tags)
 
 
+class _DagIdsFilter(BaseParam[List[str]]):
+    """Filter on dag_ids."""
+
+    def to_orm(self, select: Select) -> Select:
+        if self.value is None:
+            return select
+        return select.where(DagRun.dag_id.in_(self.value))
+
+    def depends(self, dag_ids: list[str] = Query(default_factory=list)) -> _DagIdsFilter:
+        return self.set_value(dag_ids)
+
+
 class _OwnersFilter(BaseParam[List[str]]):
     """Filter on owners."""
 
@@ -273,3 +285,5 @@ QueryTagsFilter = Annotated[_TagsFilter, Depends(_TagsFilter().depends)]
 QueryOwnersFilter = Annotated[_OwnersFilter, Depends(_OwnersFilter().depends)]
 # DagRun
 QueryLastDagRunStateFilter = Annotated[_LastDagRunStateFilter, Depends(_LastDagRunStateFilter().depends)]
+# UI Dags
+QueryDagIdsFilter = Annotated[_DagIdsFilter, Depends(_DagIdsFilter().depends)]
