@@ -381,7 +381,7 @@ export type PatchDagsResponse = DAGCollectionResponse;
 export type GetDagTagsData = {
   limit?: number;
   offset?: number;
-  orderBy?: string;
+  orderBy: null;
   tagNamePattern?: string | null;
 };
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Generic, List, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, List, TypeVar
 
 from fastapi import Depends, HTTPException, Query
 from pendulum.parsing.exceptions import ParserError
@@ -28,7 +28,7 @@ from sqlalchemy import Column, case, or_
 from sqlalchemy.inspection import inspect
 from typing_extensions import Annotated, Self
 
-from airflow.models import Base, Connection
+from airflow.models import Base
 from airflow.models.dag import DagModel, DagTag
 from airflow.models.dagrun import DagRun
 from airflow.utils import timezone
@@ -128,26 +128,6 @@ class _SearchParam(BaseParam[str]):
         return value
 
 
-class _OrderByParam(BaseParam[str]):
-    """Order result by specified attribute ascending or descending."""
-
-    def __init__(self, attribute: ColumnElement, skip_none: bool = True) -> None:
-        super().__init__(skip_none)
-        self.attribute: ColumnElement = attribute
-        self.value: Literal["asc", "desc"] | None = None
-
-    def to_orm(self, select: Select) -> Select:
-        if self.value is None and self.skip_none:
-            return select
-        asc_stmt = select.order_by(self.attribute.asc())
-        if self.value is None:
-            return asc_stmt
-        return asc_stmt if self.value == "asc" else select.order_by(self.attribute.desc())
-
-    def depends(self, order_by: str = "asc") -> _OrderByParam:
-        return self.set_value(order_by)
-
-
 class _DagIdPatternSearch(_SearchParam):
     """Search on dag_id."""
 
@@ -173,20 +153,16 @@ class _DagDisplayNamePatternSearch(_SearchParam):
 class SortParam(BaseParam[str]):
     """Order result by the attribute."""
 
-    attr_mapping = {
-        "last_run_state": DagRun.state,
-        "last_run_start_date": DagRun.start_date,
-        "connection_id": Connection.conn_id,
-    }
-
     def __init__(
         self,
-        allowed_attrs: list[str],
+        attr_mapping: dict[str, Column],
         model: Base,
+        default_attr: str | None = None,
     ) -> None:
         super().__init__()
-        self.allowed_attrs = allowed_attrs
+        self.attr_mapping = attr_mapping
         self.model = model
+        self.default_attr = default_attr
 
     def to_orm(self, select: Select) -> Select:
         if self.skip_none is False:
@@ -196,7 +172,7 @@ class SortParam(BaseParam[str]):
             return select
 
         lstriped_orderby = self.value.lstrip("-")
-        if self.allowed_attrs and lstriped_orderby not in self.allowed_attrs:
+        if self.attr_mapping and self.attr_mapping.get(lstriped_orderby) is None:
             raise HTTPException(
                 400,
                 f"Ordering with '{lstriped_orderby}' is disallowed or "
@@ -233,7 +209,9 @@ class SortParam(BaseParam[str]):
         raise NotImplementedError("Use dynamic_depends, depends not implemented.")
 
     def dynamic_depends(self) -> Callable:
-        def inner(order_by: str = self.get_primary_key_string()) -> SortParam:
+        default_order_by = self.default_attr or self.get_primary_key_string()
+
+        def inner(order_by: str = default_order_by) -> SortParam:
             return self.set_value(self.get_primary_key_string() if order_by == "" else order_by)
 
         return inner
@@ -331,5 +309,5 @@ QueryOwnersFilter = Annotated[_OwnersFilter, Depends(_OwnersFilter().depends)]
 # DagRun
 QueryLastDagRunStateFilter = Annotated[_LastDagRunStateFilter, Depends(_LastDagRunStateFilter().depends)]
 # DAGTags
-QueryDagTagOrderBy = Annotated[_OrderByParam, Depends(_OrderByParam(DagTag.name, skip_none=False).depends)]
+QueryDagTagOrderBy = None
 QueryDagTagPatternSearch = Annotated[_DagTagNamePatternSearch, Depends(_DagTagNamePatternSearch().depends)]

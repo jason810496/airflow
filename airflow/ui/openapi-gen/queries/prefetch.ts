@@ -132,9 +132,9 @@ export const prefetchUseDagServiceGetDags = (
  * Get Dag Tags
  * Get all DAG tags.
  * @param data The data for the request.
+ * @param data.orderBy
  * @param data.limit
  * @param data.offset
- * @param data.orderBy
  * @param data.tagNamePattern
  * @returns DAGTagCollectionResponse Successful Response
  * @throws ApiError
@@ -149,9 +149,9 @@ export const prefetchUseDagServiceGetDagTags = (
   }: {
     limit?: number;
     offset?: number;
-    orderBy?: string;
+    orderBy: null;
     tagNamePattern?: string;
-  } = {},
+  },
 ) =>
   queryClient.prefetchQuery({
     queryKey: Common.UseDagServiceGetDagTagsKeyFn({
