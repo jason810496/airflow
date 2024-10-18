@@ -381,7 +381,7 @@ export type PatchDagsResponse = DAGCollectionResponse;
 export type GetDagTagsData = {
   limit?: number;
   offset?: number;
-  orderBy: null;
+  orderBy?: string;
   tagNamePattern?: string | null;
 };
 
@@ -572,6 +572,10 @@ export type $OpenApiTs = {
          * Successful Response
          */
         200: DAGTagCollectionResponse;
+        /**
+         * Bad Request
+         */
+        400: HTTPExceptionResponse;
         /**
          * Unauthorized
          */

@@ -188,26 +188,27 @@ export class DagService {
    * Get Dag Tags
    * Get all DAG tags.
    * @param data The data for the request.
-   * @param data.orderBy
    * @param data.limit
    * @param data.offset
+   * @param data.orderBy
    * @param data.tagNamePattern
    * @returns DAGTagCollectionResponse Successful Response
    * @throws ApiError
    */
   public static getDagTags(
-    data: GetDagTagsData,
+    data: GetDagTagsData = {},
   ): CancelablePromise<GetDagTagsResponse> {
     return __request(OpenAPI, {
       method: "GET",
       url: "/public/dags/tags",
       query: {
-        order_by: data.orderBy,
         limit: data.limit,
         offset: data.offset,
+        order_by: data.orderBy,
         tag_name_pattern: data.tagNamePattern,
       },
       errors: {
+        400: "Bad Request",
         401: "Unauthorized",
         403: "Forbidden",
         422: "Validation Error",

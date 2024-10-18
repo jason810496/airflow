@@ -154,9 +154,9 @@ export const useDagServiceGetDagsSuspense = <
  * Get Dag Tags
  * Get all DAG tags.
  * @param data The data for the request.
- * @param data.orderBy
  * @param data.limit
  * @param data.offset
+ * @param data.orderBy
  * @param data.tagNamePattern
  * @returns DAGTagCollectionResponse Successful Response
  * @throws ApiError
@@ -174,9 +174,9 @@ export const useDagServiceGetDagTagsSuspense = <
   }: {
     limit?: number;
     offset?: number;
-    orderBy: null;
+    orderBy?: string;
     tagNamePattern?: string;
-  },
+  } = {},
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
 ) =>

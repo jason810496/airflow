@@ -117,9 +117,9 @@ export const UseDagServiceGetDagTagsKeyFn = (
   }: {
     limit?: number;
     offset?: number;
-    orderBy: null;
+    orderBy?: string;
     tagNamePattern?: string;
-  },
+  } = {},
   queryKey?: Array<unknown>,
 ) => [
   useDagServiceGetDagTagsKey,

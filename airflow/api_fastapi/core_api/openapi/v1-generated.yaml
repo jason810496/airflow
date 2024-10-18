@@ -299,12 +299,6 @@ paths:
       description: Get all DAG tags.
       operationId: get_dag_tags
       parameters:
-      - name: order_by
-        in: query
-        required: true
-        schema:
-          type: 'null'
-          title: Order By
       - name: limit
         in: query
         required: false
@@ -319,6 +313,13 @@ paths:
           type: integer
           default: 0
           title: Offset
+      - name: order_by
+        in: query
+        required: false
+        schema:
+          type: string
+          default: name
+          title: Order By
       - name: tag_name_pattern
         in: query
         required: false
@@ -334,6 +335,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DAGTagCollectionResponse'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Bad Request
         '401':
           content:
             application/json:

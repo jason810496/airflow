@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Query, Request, Response
-from sqlalchemy import distinct, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated
 
@@ -32,7 +32,6 @@ from airflow.api_fastapi.common.parameters import (
     QueryDagDisplayNamePatternSearch,
     QueryDagIdPatternSearch,
     QueryDagIdPatternSearchWithNone,
-    QueryDagTagOrderBy,
     QueryDagTagPatternSearch,
     QueryLastDagRunStateFilter,
     QueryLimit,
@@ -53,7 +52,7 @@ from airflow.api_fastapi.core_api.serializers.dags import (
     DAGTagCollectionResponse,
 )
 from airflow.exceptions import AirflowException, DagNotFound
-from airflow.models import DAG, DagModel, DagTag
+from airflow.models import DAG, DagModel, DagRun, DagTag
 
 dags_router = AirflowRouter(tags=["DAG"], prefix="/dags")
 
@@ -73,7 +72,13 @@ async def get_dags(
         SortParam,
         Depends(
             SortParam(
-                ["dag_id", "dag_display_name", "next_dagrun", "last_run_state", "last_run_start_date"],
+                {
+                    "dag_id": DagModel.dag_id,
+                    "dag_display_name": DagModel.dag_display_name,
+                    "next_dagrun": DagModel.next_dagrun,
+                    "last_run_state": DagRun.state,
+                    "last_run_start_date": DagRun.start_date,
+                },
                 DagModel,
             ).dynamic_depends()
         ),
@@ -100,17 +105,26 @@ async def get_dags(
 
 @dags_router.get(
     "/tags",
-    responses=create_openapi_http_exception_doc([401, 403]),
+    responses=create_openapi_http_exception_doc([400, 401, 403]),
 )
 async def get_dag_tags(
     limit: QueryLimit,
     offset: QueryOffset,
-    order_by: QueryDagTagOrderBy,
+    order_by: Annotated[
+        SortParam,
+        Depends(
+            SortParam(
+                {"name": DagTag.name},
+                DagTag,
+                "name",
+            ).dynamic_depends()
+        ),
+    ],
     tag_name_pattern: QueryDagTagPatternSearch,
     session: Annotated[Session, Depends(get_session)],
 ) -> DAGTagCollectionResponse:
     """Get all DAG tags."""
-    base_select = select(distinct(DagTag.name))
+    base_select = select(DagTag.name).group_by(DagTag.name)
     dag_tags_select, total_entries = paginated_select(
         base_select=base_select,
         filters=[tag_name_pattern],

@@ -80,7 +80,15 @@ async def get_connections(
         SortParam,
         Depends(
             SortParam(
-                ["connection_id", "conn_type", "description", "host", "port", "id"], Connection
+                {
+                    "connection_id": Connection.conn_id,
+                    "conn_type": Connection.conn_type,
+                    "description": Connection.description,
+                    "host": Connection.host,
+                    "port": Connection.port,
+                    "id": Connection.id,
+                },
+                Connection,
             ).dynamic_depends()
         ),
     ],
