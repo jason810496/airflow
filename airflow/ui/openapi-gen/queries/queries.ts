@@ -42,6 +42,7 @@ import {
   PoolPostBody,
   TaskInstancesBatchBody,
   VariableBody,
+  VariableBulkBody,
 } from "../requests/types.gen";
 import * as Common from "./common";
 
@@ -2235,6 +2236,45 @@ export const useVariableServicePostVariable = <
   >({
     mutationFn: ({ requestBody }) =>
       VariableService.postVariable({
+        requestBody,
+      }) as unknown as Promise<TData>,
+    ...options,
+  });
+/**
+ * Post Variables
+ * Create multiple variables.
+ * @param data The data for the request.
+ * @param data.requestBody
+ * @returns VariableCollectionResponse Successful Response
+ * @throws ApiError
+ */
+export const useVariableServicePostVariables = <
+  TData = Common.VariableServicePostVariablesMutationResult,
+  TError = unknown,
+  TContext = unknown,
+>(
+  options?: Omit<
+    UseMutationOptions<
+      TData,
+      TError,
+      {
+        requestBody: VariableBulkBody;
+      },
+      TContext
+    >,
+    "mutationFn"
+  >,
+) =>
+  useMutation<
+    TData,
+    TError,
+    {
+      requestBody: VariableBulkBody;
+    },
+    TContext
+  >({
+    mutationFn: ({ requestBody }) =>
+      VariableService.postVariables({
         requestBody,
       }) as unknown as Promise<TData>,
     ...options,

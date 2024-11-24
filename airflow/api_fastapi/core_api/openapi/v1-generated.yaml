@@ -3679,8 +3679,6 @@ paths:
         in: path
         required: true
         schema:
-          enum:
-          - '~'
           const: '~'
           type: string
           title: Dag Id
@@ -3688,8 +3686,6 @@ paths:
         in: path
         required: true
         schema:
-          enum:
-          - '~'
           const: '~'
           type: string
           title: Dag Run Id
@@ -4152,6 +4148,56 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPExceptionResponse'
           description: Forbidden
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Conflict
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /public/variables/bulk:
+    post:
+      tags:
+      - Variable
+      summary: Post Variables
+      description: Create multiple variables.
+      operationId: post_variables
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VariableBulkBody'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariableCollectionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
         '422':
           description: Validation Error
           content:
@@ -6987,7 +7033,7 @@ components:
       properties:
         __type:
           type: string
-          title: '  Type'
+          title: Type
           default: TimeDelta
         days:
           type: integer
@@ -7094,6 +7140,18 @@ components:
       - value
       title: VariableBody
       description: Variable serializer for bodies.
+    VariableBulkBody:
+      properties:
+        variables:
+          items:
+            $ref: '#/components/schemas/VariableBody'
+          type: array
+          title: Variables
+      type: object
+      required:
+      - variables
+      title: VariableBulkBody
+      description: Variables serializer for post bulk bodies.
     VariableCollectionResponse:
       properties:
         variables:

@@ -4200,7 +4200,7 @@ export const $TimeDelta = {
   properties: {
     __type: {
       type: "string",
-      title: "  Type",
+      title: "Type",
       default: "TimeDelta",
     },
     days: {
@@ -4354,6 +4354,22 @@ export const $VariableBody = {
   required: ["key", "value"],
   title: "VariableBody",
   description: "Variable serializer for bodies.",
+} as const;
+
+export const $VariableBulkBody = {
+  properties: {
+    variables: {
+      items: {
+        $ref: "#/components/schemas/VariableBody",
+      },
+      type: "array",
+      title: "Variables",
+    },
+  },
+  type: "object",
+  required: ["variables"],
+  title: "VariableBulkBody",
+  description: "Variables serializer for post bulk bodies.",
 } as const;
 
 export const $VariableCollectionResponse = {

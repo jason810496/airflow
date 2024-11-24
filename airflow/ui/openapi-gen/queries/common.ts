@@ -1206,6 +1206,9 @@ export type TaskInstanceServiceGetTaskInstancesBatchMutationResult = Awaited<
 export type VariableServicePostVariableMutationResult = Awaited<
   ReturnType<typeof VariableService.postVariable>
 >;
+export type VariableServicePostVariablesMutationResult = Awaited<
+  ReturnType<typeof VariableService.postVariables>
+>;
 export type BackfillServicePauseBackfillMutationResult = Awaited<
   ReturnType<typeof BackfillService.pauseBackfill>
 >;

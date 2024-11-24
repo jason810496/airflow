@@ -999,6 +999,13 @@ export type VariableBody = {
 };
 
 /**
+ * Variables serializer for post bulk bodies.
+ */
+export type VariableBulkBody = {
+  variables: Array<VariableBody>;
+};
+
+/**
  * Variable Collection serializer for responses.
  */
 export type VariableCollectionResponse = {
@@ -1604,6 +1611,12 @@ export type PostVariableData = {
 };
 
 export type PostVariableResponse = VariableResponse;
+
+export type PostVariablesData = {
+  requestBody: VariableBulkBody;
+};
+
+export type PostVariablesResponse = VariableCollectionResponse;
 
 export type GetXcomEntryData = {
   dagId: string;
@@ -3369,6 +3382,37 @@ export type $OpenApiTs = {
          * Forbidden
          */
         403: HTTPExceptionResponse;
+        /**
+         * Conflict
+         */
+        409: HTTPExceptionResponse;
+        /**
+         * Validation Error
+         */
+        422: HTTPValidationError;
+      };
+    };
+  };
+  "/public/variables/bulk": {
+    post: {
+      req: PostVariablesData;
+      res: {
+        /**
+         * Successful Response
+         */
+        201: VariableCollectionResponse;
+        /**
+         * Unauthorized
+         */
+        401: HTTPExceptionResponse;
+        /**
+         * Forbidden
+         */
+        403: HTTPExceptionResponse;
+        /**
+         * Conflict
+         */
+        409: HTTPExceptionResponse;
         /**
          * Validation Error
          */

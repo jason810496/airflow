@@ -57,6 +57,12 @@ class VariableBody(BaseModel):
     description: str | None = Field(default=None)
 
 
+class VariableBulkBody(BaseModel):
+    """Variables serializer for post bulk bodies."""
+
+    variables: list[VariableBody]
+
+
 class VariableCollectionResponse(BaseModel):
     """Variable Collection serializer for responses."""
 

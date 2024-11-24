@@ -135,6 +135,8 @@ import type {
   GetVariablesResponse,
   PostVariableData,
   PostVariableResponse,
+  PostVariablesData,
+  PostVariablesResponse,
   GetXcomEntryData,
   GetXcomEntryResponse,
   GetHealthResponse,
@@ -2224,6 +2226,32 @@ export class VariableService {
       errors: {
         401: "Unauthorized",
         403: "Forbidden",
+        409: "Conflict",
+        422: "Validation Error",
+      },
+    });
+  }
+
+  /**
+   * Post Variables
+   * Create multiple variables.
+   * @param data The data for the request.
+   * @param data.requestBody
+   * @returns VariableCollectionResponse Successful Response
+   * @throws ApiError
+   */
+  public static postVariables(
+    data: PostVariablesData,
+  ): CancelablePromise<PostVariablesResponse> {
+    return __request(OpenAPI, {
+      method: "POST",
+      url: "/public/variables/bulk",
+      body: data.requestBody,
+      mediaType: "application/json",
+      errors: {
+        401: "Unauthorized",
+        403: "Forbidden",
+        409: "Conflict",
         422: "Validation Error",
       },
     });

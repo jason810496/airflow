@@ -27,6 +27,7 @@ from airflow.api_fastapi.common.parameters import QueryLimit, QueryOffset, SortP
 from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.core_api.datamodels.variables import (
     VariableBody,
+    VariableBulkBody,
     VariableCollectionResponse,
     VariableResponse,
 )
@@ -146,6 +147,11 @@ def patch_variable(
 @variables_router.post(
     "/",
     status_code=status.HTTP_201_CREATED,
+    responses=create_openapi_http_exception_doc(
+        [
+            status.HTTP_409_CONFLICT,
+        ]
+    ),
 )
 def post_variable(
     post_body: VariableBody,
@@ -157,3 +163,26 @@ def post_variable(
     variable = session.scalar(select(Variable).where(Variable.key == post_body.key).limit(1))
 
     return VariableResponse.model_validate(variable, from_attributes=True)
+
+
+@variables_router.post(
+    "/bulk",
+    status_code=status.HTTP_201_CREATED,
+    responses=create_openapi_http_exception_doc(
+        [
+            status.HTTP_409_CONFLICT,
+        ]
+    ),
+)
+def post_variables(
+    body: VariableBulkBody,
+    session: Annotated[Session, Depends(get_session)],
+) -> VariableCollectionResponse:
+    """Create multiple variables."""
+    variables = [Variable(**variable.model_dump()) for variable in body.variables]
+    session.add_all(variables)
+
+    return VariableCollectionResponse(
+        variables=[VariableResponse.model_validate(variable, from_attributes=True) for variable in variables],
+        total_entries=len(variables),
+    )
