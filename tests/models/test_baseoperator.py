@@ -30,7 +30,6 @@ import pytest
 
 from airflow.decorators import task as task_decorator
 from airflow.exceptions import AirflowException, TaskDeferralTimeout
-from airflow.lineage.entities import File
 from airflow.models.baseoperator import (
     BaseOperator,
     chain,
@@ -525,54 +524,6 @@ class TestBaseOperator:
 
         with pytest.raises(AirflowException):
             chain([tg1, tg2], [tg3, tg4, tg5])
-
-    def test_lineage_composition(self):
-        """
-        Test composition with lineage
-        """
-        inlet = File(url="in")
-        outlet = File(url="out")
-        dag = DAG("test-dag", schedule=None, start_date=DEFAULT_DATE)
-        task1 = BaseOperator(task_id="op1", dag=dag)
-        task2 = BaseOperator(task_id="op2", dag=dag)
-
-        # mock
-        task1.supports_lineage = True
-
-        # note: operator precedence still applies
-        inlet > task1 | (task2 > outlet)
-
-        assert task1.get_inlet_defs() == [inlet]
-        assert task2.get_inlet_defs() == [task1.task_id]
-        assert task2.get_outlet_defs() == [outlet]
-
-        fail = ClassWithCustomAttributes()
-        with pytest.raises(TypeError):
-            fail > task1
-        with pytest.raises(TypeError):
-            task1 > fail
-        with pytest.raises(TypeError):
-            fail | task1
-        with pytest.raises(TypeError):
-            task1 | fail
-
-        task3 = BaseOperator(task_id="op3", dag=dag)
-        extra = File(url="extra")
-        [inlet, extra] > task3
-
-        assert task3.get_inlet_defs() == [inlet, extra]
-
-        task1.supports_lineage = False
-        with pytest.raises(ValueError):
-            task1 | task3
-
-        assert task2.supports_lineage is False
-        task2 | task3
-        assert len(task3.get_inlet_defs()) == 3
-
-        task4 = BaseOperator(task_id="op4", dag=dag)
-        task4 > [inlet, outlet, extra]
-        assert task4.get_outlet_defs() == [inlet, outlet, extra]
 
     def test_pre_execute_hook(self):
         hook = mock.MagicMock()

@@ -25,7 +25,6 @@ import pytest
 from dateutil.tz import UTC
 
 from airflow.decorators import task_group
-from airflow.lineage.entities import File
 from airflow.models import DagBag
 from airflow.models.asset import AssetDagRunQueue, AssetEvent, AssetModel
 from airflow.operators.empty import EmptyOperator
@@ -418,54 +417,6 @@ def test_query_count(dag_with_runs, session):
     run1, run2 = dag_with_runs
     with assert_queries_count(2):
         dag_to_grid(run1.dag, (run1, run2), session)
-
-
-def test_has_outlet_asset_flag(admin_client, dag_maker, session, app, monkeypatch):
-    with monkeypatch.context() as m:
-        # Remove global operator links for this test
-        m.setattr("airflow.plugins_manager.global_operator_extra_links", [])
-        m.setattr("airflow.plugins_manager.operator_extra_links", [])
-        m.setattr("airflow.plugins_manager.registered_operator_link_classes", {})
-
-        with dag_maker(dag_id=DAG_ID, serialized=True, session=session):
-            lineagefile = File("/tmp/does_not_exist")
-            EmptyOperator(task_id="task1")
-            EmptyOperator(task_id="task2", outlets=[lineagefile])
-            EmptyOperator(task_id="task3", outlets=[Asset(name="foo", uri="s3://bucket/key"), lineagefile])
-            EmptyOperator(task_id="task4", outlets=[Asset(name="foo", uri="s3://bucket/key")])
-
-        m.setattr(app, "dag_bag", dag_maker.dagbag)
-        resp = admin_client.get(f"/object/grid_data?dag_id={DAG_ID}", follow_redirects=True)
-
-    def _expected_task_details(task_id, has_outlet_assets):
-        return {
-            "extra_links": [],
-            "has_outlet_assets": has_outlet_assets,
-            "id": task_id,
-            "instances": [],
-            "is_mapped": False,
-            "label": task_id,
-            "operator": "EmptyOperator",
-            "trigger_rule": "all_success",
-        }
-
-    assert resp.status_code == 200, resp.json
-    assert resp.json == {
-        "dag_runs": [],
-        "groups": {
-            "children": [
-                _expected_task_details("task1", False),
-                _expected_task_details("task2", False),
-                _expected_task_details("task3", True),
-                _expected_task_details("task4", True),
-            ],
-            "id": None,
-            "instances": [],
-            "label": None,
-        },
-        "ordering": ["data_interval_end", "logical_date"],
-        "errors": [],
-    }
 
 
 @pytest.mark.need_serialized_dag
