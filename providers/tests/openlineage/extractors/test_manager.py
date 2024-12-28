@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import tempfile
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -30,9 +31,9 @@ from openlineage.client.facet_v2 import (
 )
 
 from airflow.io.path import ObjectStoragePath
-from airflow.lineage.entities import Column, File, Table, User
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.taskinstance import TaskInstance
+from airflow.providers.common.compat.lineage.entities import Column, File, Table, User
 from airflow.providers.openlineage.extractors import OperatorLineage
 from airflow.providers.openlineage.extractors.manager import ExtractorManager
 from airflow.providers.openlineage.utils.utils import Asset
@@ -48,15 +49,18 @@ if AIRFLOW_V_2_10_PLUS:
 
     @pytest.fixture
     def hook_lineage_collector():
-        from airflow.lineage import hook
+        from airflow.providers.common.compat.lineage import hook
         from airflow.providers.common.compat.lineage.hook import (
             get_hook_lineage_collector,
         )
 
         hook._hook_lineage_collector = None
+        print(f"hook_lineage_collector {datetime.now()} - create {hook._hook_lineage_collector}")
         hook._hook_lineage_collector = hook.HookLineageCollector()
 
+        print(f"hook_lineage_collector {datetime.now()} - yield {hook._hook_lineage_collector}")
         yield get_hook_lineage_collector()
+        print(f"hook_lineage_collector {datetime.now()} - after yield {hook._hook_lineage_collector}")
 
         hook._hook_lineage_collector = None
 
@@ -299,6 +303,14 @@ def test_extractor_manager_does_not_use_hook_level_lineage_when_operator(
 @pytest.mark.db_test
 @pytest.mark.skipif(not AIRFLOW_V_2_10_PLUS, reason="Hook lineage works in Airflow >= 2.10.0")
 def test_extractor_manager_gets_data_from_pythonoperator(session, dag_maker, hook_lineage_collector):
+    from airflow import plugins_manager
+
+    plugins_manager.ensure_plugins_loaded()
+    print(f"test {datetime.now()} - hook_lineage_collector", hook_lineage_collector)
+    import airflow.models.baseoperator as airflow_baseoperator
+
+    print(f"test {datetime.now()} - pre_execute", airflow_baseoperator.BaseOperator.pre_execute)
+    print(f"test {datetime.now()} - post_execute", airflow_baseoperator.BaseOperator.post_execute)
     path = None
     with tempfile.NamedTemporaryFile() as f:
         path = f.name
