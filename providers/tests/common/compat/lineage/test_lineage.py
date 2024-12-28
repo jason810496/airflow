@@ -135,6 +135,9 @@ class TestLineage:
         assert op1.inlets[0].url == f1s.format(DEFAULT_DATE)
         assert op1.outlets[0].url == f1s.format(DEFAULT_DATE)
 
+    @conf_vars(
+        {("core", "allowed_deserialization_classes"): "providers.tests.common.compat.lineage.test_lineage.A"}
+    )
     def test_attr_outlet(self, dag_maker):
         a = A()
 

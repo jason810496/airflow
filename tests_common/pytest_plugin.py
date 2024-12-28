@@ -1510,7 +1510,7 @@ def providers_src_folder() -> Path:
 
 @pytest.fixture
 def hook_lineage_collector():
-    from airflow.lineage import hook
+    from airflow.providers.common.compat.lineage import hook
 
     hook._hook_lineage_collector = None
     hook._hook_lineage_collector = hook.HookLineageCollector()
