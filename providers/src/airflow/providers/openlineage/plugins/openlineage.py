@@ -41,9 +41,40 @@ class OpenLineageProviderPlugin(AirflowPlugin):
         macros = [lineage_job_namespace, lineage_job_name, lineage_run_id, lineage_parent_id]
         listeners = [get_openlineage_listener()]
         if AIRFLOW_V_2_10_PLUS:
-            from airflow.lineage.hook import HookLineageReader
+            from airflow.providers.common.compat.lineage.hook import HookLineageReader
 
             hook_lineage_readers = [HookLineageReader]
     else:
         macros = []
         listeners = []
+
+    def on_load(*args, **kwargs):
+        """Monkey patches the core modules with compatible lineage logic."""
+        import airflow.io.path as airflow_io_path
+        import airflow.models.baseoperator as airflow_baseoperator
+        from airflow.providers.common.compat.lineage import (
+            apply_lineage,
+            object_storage_path_copy_lineage_decorator,
+            object_storage_path_move_lineage_decorator,
+            prepare_lineage,
+            tracking_file_getattr_decorator,
+        )
+
+        # monkey patch the BaseOperator
+        airflow_baseoperator.BaseOperator.pre_execute = prepare_lineage(
+            airflow_baseoperator.BaseOperator.pre_execute
+        )
+        airflow_baseoperator.BaseOperator.post_execute = apply_lineage(
+            airflow_baseoperator.BaseOperator.post_execute
+        )
+        # monkey patch the TrackingFileWrapper
+        airflow_io_path.TrackingFileWrapper.__getattr__ = tracking_file_getattr_decorator(
+            airflow_io_path.TrackingFileWrapper.__getattr__
+        )
+        # monkey patch the ObjectStoragePath
+        airflow_io_path.ObjectStoragePath.copy = object_storage_path_copy_lineage_decorator(
+            airflow_io_path.ObjectStoragePath.copy
+        )
+        airflow_io_path.ObjectStoragePath.move = object_storage_path_move_lineage_decorator(
+            airflow_io_path.ObjectStoragePath.move
+        )

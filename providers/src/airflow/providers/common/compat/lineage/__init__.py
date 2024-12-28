@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 from airflow.configuration import conf
 from airflow.providers.common.compat.lineage.backend import LineageBackend
+from airflow.providers.common.compat.lineage.hook import get_hook_lineage_collector
 from airflow.utils.session import create_session
 
 if TYPE_CHECKING:
@@ -153,5 +154,49 @@ def prepare_lineage(func: T) -> T:
         self.log.debug("inlets: %s, outlets: %s", self.inlets, self.outlets)
 
         return func(self, context, *args, **kwargs)
+
+    return cast(T, wrapper)
+
+
+def tracking_file_getattr_decorator(func: T) -> T:
+    """Monkey patch the TrackingFileWrapper.__getattr__ method to intercept lineage for the TrackingFileWrapper."""
+
+    @wraps(func)
+    def wrapper(self, name, *args, **kwargs):
+        result = func(self, name, *args, **kwargs)
+        if not callable(result):
+            return result
+        # If the attribute is a method, wrap it in another method to intercept the call
+        if name == "read":
+            get_hook_lineage_collector().add_input_asset(context=self._path, uri=str(self._path))
+        elif name == "write":
+            get_hook_lineage_collector().add_output_asset(context=self._path, uri=str(self._path))
+        return result
+
+    return cast(T, wrapper)
+
+
+def object_storage_path_copy_lineage_decorator(func: T) -> T:
+    """Monkey patch the ObjectStoragePath.copy method to add input / output asset for the HookLineageCollector."""
+
+    @wraps(func)
+    def wrapper(self, dst, *args, **kwargs):
+        # only emit this in "optimized" variants - else lineage will be captured by file writes/reads
+        get_hook_lineage_collector().add_input_asset(context=self, uri=str(self))
+        get_hook_lineage_collector().add_output_asset(context=dst, uri=str(dst))
+        return func(self, dst, *args, **kwargs)
+
+    return cast(T, wrapper)
+
+
+def object_storage_path_move_lineage_decorator(func: T) -> T:
+    """Monkey patch the ObjectStoragePath.move method to add input / output asset for the HookLineageCollector."""
+
+    @wraps(func)
+    def wrapper(self, path, *args, **kwargs):
+        # only emit this in "optimized" variants - else lineage will be captured by file writes/reads
+        get_hook_lineage_collector().add_input_asset(context=self, uri=str(self))
+        get_hook_lineage_collector().add_output_asset(context=path, uri=str(path))
+        return func(self, path, *args, **kwargs)
 
     return cast(T, wrapper)
