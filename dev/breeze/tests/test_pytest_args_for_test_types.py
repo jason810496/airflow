@@ -118,7 +118,6 @@ from airflow_breeze.utils.run_tests import convert_parallel_types_to_folders, co
                 "tests/decorators",
                 "tests/hooks",
                 "tests/io",
-                "tests/lineage",
                 "tests/listeners",
                 "tests/macros",
                 "tests/notifications",

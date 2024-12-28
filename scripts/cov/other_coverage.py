@@ -82,7 +82,6 @@ Other tests to potentially run against the source_file packages:
     "tests/hooks",
     "tests/io",
     "tests/jobs",
-    "tests/lineage",
     "tests/listeners",
     "tests/macros",
     "tests/notifications",
