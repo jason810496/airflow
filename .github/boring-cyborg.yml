@@ -610,11 +610,6 @@ labelPRBasedOnFilePath:
     - docs/apache-airflow/cli-and-env-variables-ref.rst
     - docs/apache-airflow/howto/usage-cli.rst
 
-  area:Lineage:
-    - airflow/lineage/**/*
-    - tests/lineage/**/*
-    - docs/apache-airflow/administration-and-deployment/lineage.rst
-
   area:Logging:
     - providers/src/airflow/providers/**/log/*
     - airflow/utils/log/**/*
