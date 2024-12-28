@@ -30,7 +30,6 @@ from upath.registry import get_upath_class
 
 from airflow.io.store import attach
 from airflow.io.utils.stat import stat_result
-from airflow.lineage.hook import get_hook_lineage_collector
 from airflow.utils.log.logging_mixin import LoggingMixin
 
 if typing.TYPE_CHECKING:
@@ -51,20 +50,7 @@ class TrackingFileWrapper(LoggingMixin):
         self._obj = obj
 
     def __getattr__(self, name):
-        attr = getattr(self._obj, name)
-        if callable(attr):
-            # If the attribute is a method, wrap it in another method to intercept the call
-            def wrapper(*args, **kwargs):
-                self.log.debug("Calling method: %s", name)
-                if name == "read":
-                    get_hook_lineage_collector().add_input_asset(context=self._path, uri=str(self._path))
-                elif name == "write":
-                    get_hook_lineage_collector().add_output_asset(context=self._path, uri=str(self._path))
-                result = attr(*args, **kwargs)
-                return result
-
-            return wrapper
-        return attr
+        return getattr(self._obj, name)
 
     def __getitem__(self, key):
         # Intercept item access
@@ -315,11 +301,6 @@ class ObjectStoragePath(CloudPath):
         if isinstance(dst, str):
             dst = ObjectStoragePath(dst)
 
-        if self.samestore(dst) or self.protocol == "file" or dst.protocol == "file":
-            # only emit this in "optimized" variants - else lineage will be captured by file writes/reads
-            get_hook_lineage_collector().add_input_asset(context=self, uri=str(self))
-            get_hook_lineage_collector().add_output_asset(context=dst, uri=str(dst))
-
         # same -> same
         if self.samestore(dst):
             self.fs.copy(self.path, dst.path, recursive=recursive, **kwargs)
@@ -382,8 +363,6 @@ class ObjectStoragePath(CloudPath):
             path = ObjectStoragePath(path)
 
         if self.samestore(path):
-            get_hook_lineage_collector().add_input_asset(context=self, uri=str(self))
-            get_hook_lineage_collector().add_output_asset(context=path, uri=str(path))
             return self.fs.move(self.path, path.path, recursive=recursive, **kwargs)
 
         # non-local copy

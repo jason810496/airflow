@@ -52,7 +52,6 @@ from airflow.exceptions import (
     TaskDeferralTimeout,
     TaskDeferred,
 )
-from airflow.lineage import apply_lineage, prepare_lineage
 from airflow.models.abstractoperator import (
     DEFAULT_EXECUTOR,
     DEFAULT_IGNORE_FIRST_DEPENDS_ON_PAST,
@@ -702,7 +701,6 @@ class BaseOperator(TaskSDKBaseOperator, AbstractOperator, metaclass=BaseOperator
     extended/overridden by subclasses.
     """
 
-    @prepare_lineage
     def pre_execute(self, context: Any):
         """Execute right before self.execute() is called."""
         if self._pre_execute_hook is None:
@@ -723,7 +721,6 @@ class BaseOperator(TaskSDKBaseOperator, AbstractOperator, metaclass=BaseOperator
         """
         raise NotImplementedError()
 
-    @apply_lineage
     def post_execute(self, context: Any, result: Any = None):
         """
         Execute right after self.execute() is called.

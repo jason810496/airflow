@@ -42,7 +42,7 @@ from airflow.utils.file import find_path_from_directory
 from airflow.utils.module_loading import import_string, qualname
 
 if TYPE_CHECKING:
-    from airflow.lineage.hook import HookLineageReader
+    from airflow.providers.common.compat.lineage.hook import HookLineageReader
 
     try:
         import importlib_metadata as metadata
