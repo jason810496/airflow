@@ -25,15 +25,20 @@ import attr
 
 from airflow.providers.common.compat.version_compat import AIRFLOW_V_2_10_PLUS, AIRFLOW_V_3_0_PLUS
 from airflow.providers_manager import ProvidersManager
-from airflow.sdk.definitions.asset import Asset
 from airflow.utils.log.logging_mixin import LoggingMixin
 
 if TYPE_CHECKING:
     from airflow.hooks.base import BaseHook
     from airflow.io.path import ObjectStoragePath
+    from airflow.sdk.definitions.asset import Asset
 
     # Store context what sent lineage.
     LineageContext = Union[BaseHook, ObjectStoragePath]
+else:
+    if AIRFLOW_V_3_0_PLUS:
+        from airflow.sdk.definitions.asset import Asset
+    else:
+        from airflow.datasets import Dataset as Asset
 
 _hook_lineage_collector: HookLineageCollector | None = None
 
