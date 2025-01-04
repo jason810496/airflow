@@ -1813,6 +1813,12 @@ export type GetDagStatsData = {
 
 export type GetDagStatsResponse = DagStatsCollectionResponse;
 
+export type GetDagReportData = {
+  subdir: string;
+};
+
+export type GetDagReportResponse = unknown;
+
 export type ListDagWarningsData = {
   dagId?: string | null;
   limit?: number;
@@ -3482,6 +3488,29 @@ export type $OpenApiTs = {
          * Not Found
          */
         404: HTTPExceptionResponse;
+        /**
+         * Validation Error
+         */
+        422: HTTPValidationError;
+      };
+    };
+  };
+  "/public/dagReport": {
+    get: {
+      req: GetDagReportData;
+      res: {
+        /**
+         * Successful Response
+         */
+        200: unknown;
+        /**
+         * Unauthorized
+         */
+        401: HTTPExceptionResponse;
+        /**
+         * Forbidden
+         */
+        403: HTTPExceptionResponse;
         /**
          * Validation Error
          */
