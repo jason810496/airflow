@@ -3495,7 +3495,7 @@ export type $OpenApiTs = {
       };
     };
   };
-  "/public/dagReport": {
+  "/public/dagReports": {
     get: {
       req: GetDagReportData;
       res: {
@@ -3503,6 +3503,10 @@ export type $OpenApiTs = {
          * Successful Response
          */
         200: unknown;
+        /**
+         * Bad Request
+         */
+        400: HTTPExceptionResponse;
         /**
          * Unauthorized
          */
