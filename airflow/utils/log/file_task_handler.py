@@ -46,6 +46,7 @@ from airflow.utils.state import State, TaskInstanceState
 if TYPE_CHECKING:
     from pendulum import DateTime
 
+    from airflow.executors.base_executor import BaseExecutor
     from airflow.models import DagRun
     from airflow.models.taskinstance import TaskInstance
     from airflow.models.taskinstancekey import TaskInstanceKey
@@ -346,6 +347,35 @@ class FileTaskHandler(logging.Handler):
         executor = ExecutorLoader.get_default_executor()
         return executor.get_task_log
 
+    @cached_property
+    def _available_executors(self) -> dict[str, BaseExecutor]:
+        """Avoid loading executors repeatedly."""
+        return {ex.__class__.__name__: ex for ex in ExecutorLoader.init_executors()}
+
+    @cached_property
+    def _default_executor(self) -> BaseExecutor:
+        """Get the default executor."""
+        return next(iter(self._available_executors.values()))
+
+    def _get_executor_get_task_log(
+        self, ti: TaskInstance
+    ) -> Callable[[TaskInstance, int], tuple[list[str], list[str]]]:
+        """
+        Get the get_task_log method from executor of current task instance.
+
+        Since there might be multiple executors, so we need to get the executor of current task instance instead of getting from default executor.
+        :param ti: task instance object
+        :return: get_task_log method of the executor
+        """
+        executor_name = ti.executor
+        if executor_name is None:
+            executor = self._default_executor
+        elif executor_name in self._available_executors:
+            executor = self._available_executors[executor_name]
+        else:
+            raise AirflowException(f"Executor {executor_name} not found for task {ti}")
+        return executor.get_task_log
+
     def _read(
         self,
         ti: TaskInstance,
@@ -386,7 +416,8 @@ class FileTaskHandler(logging.Handler):
             messages_list.extend(remote_messages)
         has_k8s_exec_pod = False
         if ti.state == TaskInstanceState.RUNNING:
-            response = self._executor_get_task_log(ti, try_number)
+            executor_get_task_log = self._get_executor_get_task_log(ti)
+            response = executor_get_task_log(ti, try_number)
             if response:
                 executor_messages, executor_logs = response
             if executor_messages:
