@@ -219,7 +219,7 @@ class DagRun(BaseModel):
     logical_date: Annotated[datetime, Field(title="Logical Date")]
     data_interval_start: Annotated[datetime | None, Field(title="Data Interval Start")] = None
     data_interval_end: Annotated[datetime | None, Field(title="Data Interval End")] = None
-    start_date: Annotated[datetime, Field(title="Start Date")]
+    start_date: Annotated[datetime | None, Field(title="Start Date")]
     end_date: Annotated[datetime | None, Field(title="End Date")] = None
     run_type: DagRunType
     conf: Annotated[dict[str, Any] | None, Field(title="Conf")] = None

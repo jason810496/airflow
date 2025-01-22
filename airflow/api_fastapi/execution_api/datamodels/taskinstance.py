@@ -179,7 +179,7 @@ class DagRun(BaseModel):
     logical_date: UtcDateTime
     data_interval_start: UtcDateTime | None
     data_interval_end: UtcDateTime | None
-    start_date: UtcDateTime
+    start_date: UtcDateTime | None
     end_date: UtcDateTime | None
     run_type: DagRunType
     conf: Annotated[dict[str, Any], Field(default_factory=dict)]
