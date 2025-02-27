@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING
 import lazy_object_proxy
 from rich_argparse import RawTextRichHelpFormatter, RichHelpFormatter
 
-from airflow.api_fastapi.app import get_auth_manager_cls
 from airflow.cli.cli_config import (
     DAG_CLI_DICT,
     ActionCommand,
@@ -44,9 +43,15 @@ from airflow.cli.cli_config import (
     GroupCommand,
     core_commands,
 )
+from airflow.cli.cli_definition_loader import CliDefinitionLoader
 from airflow.cli.utils import CliConflictError
-from airflow.exceptions import AirflowException
-from airflow.executors.executor_loader import ExecutorLoader
+from airflow.exceptions import (
+    AirflowException,
+    AirflowLoadAuthManagerCliDefinitionException,
+    AirflowLoadCliDefinitionsException,
+    AirflowLoadExecutorCliDefinitionException,
+    AirflowLoadProviderCliDefinitionException,
+)
 from airflow.utils.helpers import partition
 
 if TYPE_CHECKING:
@@ -59,31 +64,26 @@ airflow_commands = core_commands.copy()  # make a copy to prevent bad interactio
 
 log = logging.getLogger(__name__)
 
-
-for executor_name in ExecutorLoader.get_executor_names():
-    try:
-        executor, _ = ExecutorLoader.import_executor_cls(executor_name)
-        airflow_commands.extend(executor.get_cli_commands())
-    except Exception:
-        log.exception("Failed to load CLI commands from executor: %s", executor_name)
-        log.error(
-            "Ensure all dependencies are met and try again. If using a Celery based executor install "
-            "a 3.3.0+ version of the Celery provider. If using a Kubernetes executor, install a "
-            "7.4.0+ version of the CNCF provider"
-        )
-        # Do not re-raise the exception since we want the CLI to still function for
-        # other commands.
-
 try:
-    auth_mgr = get_auth_manager_cls()
-    airflow_commands.extend(auth_mgr.get_cli_commands())
-except Exception as e:
-    log.warning("cannot load CLI commands from auth manager: %s", e)
-    log.warning("Authentication manager is not configured and webserver will not be able to start.")
-    # do not re-raise for the same reason as above
-    if len(sys.argv) > 1 and sys.argv[1] == "webserver":
-        log.exception(e)
-        sys.exit(1)
+    airflow_commands.extend(CliDefinitionLoader.get_cli_commands())
+except AirflowLoadCliDefinitionsException as load_cli_definitions_exception:
+    for e in load_cli_definitions_exception:
+        if isinstance(e, AirflowLoadProviderCliDefinitionException) or isinstance(
+            AirflowLoadExecutorCliDefinitionException
+        ):
+            log.exception(e)
+            log.error(
+                "Ensure all dependencies are met and try again. If using a Celery based executor install "
+                "a 3.3.0+ version of the Celery provider. If using a Kubernetes executor, install a "
+                "7.4.0+ version of the CNCF provider"
+            )
+        elif isinstance(e, AirflowLoadAuthManagerCliDefinitionException):
+            log.warning("cannot load CLI commands from auth manager: %s", e)
+            log.warning("Authentication manager is not configured and webserver will not be able to start.")
+            # do not re-raise for the same reason as above
+            if len(sys.argv) > 1 and sys.argv[1] == "webserver":
+                log.exception(e)
+                sys.exit(1)
 
 
 ALL_COMMANDS_DICT: dict[str, CLICommand] = {sp.name: sp for sp in airflow_commands}

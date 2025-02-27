@@ -94,44 +94,6 @@ if TYPE_CHECKING:
         AirflowKubernetesScheduler,
     )
 
-# CLI Args
-ARG_NAMESPACE = Arg(
-    ("--namespace",),
-    default=conf.get("kubernetes_executor", "namespace"),
-    help="Kubernetes Namespace. Default value is `[kubernetes] namespace` in configuration.",
-)
-
-ARG_MIN_PENDING_MINUTES = Arg(
-    ("--min-pending-minutes",),
-    default=30,
-    type=positive_int(allow_zero=False),
-    help=(
-        "Pending pods created before the time interval are to be cleaned up, "
-        "measured in minutes. Default value is 30(m). The minimum value is 5(m)."
-    ),
-)
-
-# CLI Commands
-KUBERNETES_COMMANDS = (
-    ActionCommand(
-        name="cleanup-pods",
-        help=(
-            "Clean up Kubernetes pods "
-            "(created by KubernetesExecutor/KubernetesPodOperator) "
-            "in evicted/failed/succeeded/pending states"
-        ),
-        func=lazy_load_command("airflow.providers.cncf.kubernetes.cli.kubernetes_command.cleanup_pods"),
-        args=(ARG_NAMESPACE, ARG_MIN_PENDING_MINUTES, ARG_VERBOSE),
-    ),
-    ActionCommand(
-        name="generate-dag-yaml",
-        help="Generate YAML files for all tasks in DAG. Useful for debugging tasks without "
-        "launching into a cluster",
-        func=lazy_load_command("airflow.providers.cncf.kubernetes.cli.kubernetes_command.generate_pod_yaml"),
-        args=(ARG_DAG_ID, ARG_LOGICAL_DATE, ARG_SUBDIR, ARG_OUTPUT_PATH, ARG_VERBOSE),
-    ),
-)
-
 
 class KubernetesExecutor(BaseExecutor):
     """Executor for Kubernetes."""
@@ -735,19 +697,9 @@ class KubernetesExecutor(BaseExecutor):
 
     @staticmethod
     def get_cli_commands() -> list[GroupCommand]:
-        return [
-            GroupCommand(
-                name="kubernetes",
-                help="Tools to help run the KubernetesExecutor",
-                subcommands=KUBERNETES_COMMANDS,
-            )
-        ]
+        """Get CLI commands.
 
+        The CLI commands are moved to provider level CLI definition located in airflow.providers.cncf.kubernetes.cli.definition module.
+        """
+        return []
 
-def _get_parser() -> argparse.ArgumentParser:
-    """
-    Generate documentation; used by Sphinx.
-
-    :meta private:
-    """
-    return KubernetesExecutor._get_parser()

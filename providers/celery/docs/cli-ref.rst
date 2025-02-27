@@ -25,6 +25,6 @@ Celery Executor Commands
 
 
 .. argparse::
-   :module: airflow.providers.celery.executors.celery_executor
+   :module: airflow.providers.cncf.kubernetes.cli.definition
    :func: _get_parser
    :prog: airflow
