@@ -59,6 +59,9 @@ class BaseK8STest:
 
     @pytest.fixture(autouse=True)
     def base_tests_setup(self, request):
+        # Sometimes the DAGs are not serialized yet, will cause the trigger dagRun API to get 404 error
+        # so we need to do it manually
+        self.dags_reserialize()
         # Replacement for unittests.TestCase.id()
         self.test_id = f"{request.node.cls.__name__}_{request.node.name}"
         self.session = self._get_session_with_retries()
@@ -124,7 +127,7 @@ class BaseK8STest:
             check_call(["kubectl", "delete", "pod", names[0]])
 
     @staticmethod
-    def _get_jwt_token(session: requests.Session, username: str, password: str) -> str:
+    def _get_jwt_token(username: str, password: str) -> str:
         """Get the JWT token for the given username and password.
 
         Note: API server is still using FAB Auth Manager.
@@ -144,6 +147,7 @@ class BaseK8STest:
         :return: The JWT token
         """
         # get csrf token from login page
+        session = requests.Session()
         get_login_form_response = session.get(f"http://{KUBERNETES_HOST_PORT}/auth/login")
         # input id="csrf_token"
         csrf_token = re.search(
@@ -176,8 +180,8 @@ class BaseK8STest:
         return jwt_token
 
     def _get_session_with_retries(self):
+        jwt_token = self._get_jwt_token("admin", "admin")
         session = requests.Session()
-        jwt_token = self._get_jwt_token(session, "admin", "admin")
         session.headers.update({"Authorization": f"Bearer {jwt_token}"})
         retries = Retry(
             total=3,
@@ -257,6 +261,23 @@ class BaseK8STest:
             ["kubectl", "rollout", "status", "deployment", deployment_name, "-n", namespace, "--watch"]
         ).decode()
         assert "successfully rolled out" in deployment_rollout_status
+
+    @staticmethod
+    def dags_reserialize():
+        """Reserialize the DAGs using the airflow CLI in the scheduler pod."""
+        check_call(
+            [
+                "kubectl",
+                "-n",
+                "airflow",
+                "exec",
+                "deployment/airflow-scheduler",
+                "--",
+                "airflow",
+                "dags",
+                "reserialize",
+            ]
+        )
 
     def ensure_dag_expected_state(self, host, logical_date, dag_id, expected_final_state, timeout):
         tries = 0
