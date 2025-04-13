@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import textwrap
 
-from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import PositiveInt
 from sqlalchemy.orm import joinedload
@@ -135,21 +136,20 @@ def get_log(
             pass
 
     if accept == Mimetype.JSON or accept == Mimetype.ANY:  # default
-        logs, metadata = task_log_reader.read_log_chunks(ti, try_number, metadata)
+        structured_log_stream, out_metadata = task_log_reader.read_log_chunks(ti, try_number, metadata)
         encoded_token = None
-        if not metadata.get("end_of_log", False):
-            encoded_token = URLSafeSerializer(request.app.state.secret_key).dumps(metadata)
-        return TaskInstancesLogResponse.model_construct(continuation_token=encoded_token, content=logs)
+        if not out_metadata.get("end_of_log", False):
+            encoded_token = URLSafeSerializer(request.app.state.secret_key).dumps(out_metadata)
+        return TaskInstancesLogResponse.model_construct(
+            continuation_token=encoded_token, content=list(structured_log_stream)
+        )
     else:
-        # text/plain, or something else we don't understand. Return raw log content
+        # text/plain, or something else we don't understand. Return raw log content in ndjson format with StreamingResponse
 
-        # We need to exhaust the iterator before we can generate the continuation token.
-        # We could improve this by making it a streaming/async response, and by then setting the header using
-        # HTTP Trailers
-        logs = "".join(task_log_reader.read_log_stream(ti, try_number, metadata))
+        log_stream = task_log_reader.read_log_stream(ti, try_number, metadata)
         headers = None
         if not metadata.get("end_of_log", False):
             headers = {
                 "Airflow-Continuation-Token": URLSafeSerializer(request.app.state.secret_key).dumps(metadata)
             }
-        return Response(media_type="application/x-ndjson", content=logs, headers=headers)
+        return StreamingResponse(media_type="application/x-ndjson", content=log_stream, headers=headers)
