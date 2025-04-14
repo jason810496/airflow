@@ -2423,7 +2423,7 @@ export type PatchTaskInstanceDryRun1Data = {
 export type PatchTaskInstanceDryRun1Response = TaskInstanceCollectionResponse;
 
 export type GetLogData = {
-  accept?: "application/json" | "text/plain" | "*/*";
+  accept?: "application/json" | "application/x-ndjson" | "*/*";
   dagId: string;
   dagRunId: string;
   fullContent?: boolean;
