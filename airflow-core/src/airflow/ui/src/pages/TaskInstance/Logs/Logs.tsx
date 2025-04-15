@@ -19,6 +19,7 @@
 import { Box, Heading } from "@chakra-ui/react";
 import { useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
+import { FixedSizeList as List } from "react-window";
 
 import { useTaskInstanceServiceGetMappedTaskInstance } from "openapi/queries";
 import { Dialog } from "src/components/ui";
@@ -26,11 +27,44 @@ import { SearchParamsKeys } from "src/constants/searchParams";
 import { useConfig } from "src/queries/useConfig";
 import { useLogs } from "src/queries/useLogs";
 
-import { TaskLogContent } from "./TaskLogContent";
 import { TaskLogHeader } from "./TaskLogHeader";
 
+// Correct useParams type
+interface Params {
+  dagId: string;
+  mapIndex: string;
+  runId: string;
+  taskId: string;
+}
+
+const VirtualizedLogContent = ({
+  parsedLogs,
+  wrap,
+}: {
+  readonly parsedLogs: Array<JSX.Element | "">;
+  readonly wrap: boolean;
+}) => {
+  const Row = ({ index, style }: { readonly index: number; readonly style: React.CSSProperties }) => (
+    <Box style={style} whiteSpace={wrap ? "pre-wrap" : "pre"}>
+      {parsedLogs[index]}
+    </Box>
+  );
+
+  return (
+    <List
+      height={600} // Adjust height based on your UI
+      itemCount={parsedLogs.length}
+      itemSize={20} // Adjust item height based on your log line height
+      width="100%"
+      itemData={parsedLogs} // Pass parsedLogs as itemData
+    >
+      {Row}
+    </List>
+  );
+};
+
 export const Logs = () => {
-  const { dagId = "", mapIndex = "-1", runId = "", taskId = "" } = useParams();
+  const { dagId = "", mapIndex = "-1", runId = "", taskId = "" } = useParams<Params>();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tryNumberParam = searchParams.get(SearchParamsKeys.TRY_NUMBER);
@@ -72,7 +106,7 @@ export const Logs = () => {
   };
 
   const {
-    data,
+    data: { parsedLogs, sources },
     error: logError,
     isLoading: isLoadingLogs,
   } = useLogs({
@@ -87,20 +121,20 @@ export const Logs = () => {
     <Box p={2}>
       <TaskLogHeader
         onSelectTryNumber={onSelectTryNumber}
-        sourceOptions={data.sources}
+        sourceOptions={sources}
         taskInstance={taskInstance}
         toggleFullscreen={toggleFullscreen}
         toggleWrap={toggleWrap}
         tryNumber={tryNumber}
         wrap={wrap}
       />
-      <TaskLogContent
-        error={error}
-        isLoading={isLoading || isLoadingLogs}
-        logError={logError}
-        parsedLogs={data.parsedLogs}
-        wrap={wrap}
-      />
+      {error || logError ? (
+        <Box color="red.500">Error loading logs</Box>
+      ) : isLoading || isLoadingLogs ? (
+        <Box>Loading logs...</Box>
+      ) : (
+        <VirtualizedLogContent parsedLogs={parsedLogs} wrap={wrap} />
+      )}
       <Dialog.Root onOpenChange={onOpenChange} open={fullscreen} scrollBehavior="inside" size="full">
         <Dialog.Content backdrop>
           <Dialog.Header>
@@ -119,13 +153,13 @@ export const Logs = () => {
           <Dialog.CloseTrigger />
 
           <Dialog.Body>
-            <TaskLogContent
-              error={error}
-              isLoading={isLoading || isLoadingLogs}
-              logError={logError}
-              parsedLogs={data.parsedLogs}
-              wrap={wrap}
-            />
+            {error || logError ? (
+              <Box color="red.500">Error loading logs</Box>
+            ) : isLoading || isLoadingLogs ? (
+              <Box>Loading logs...</Box>
+            ) : (
+              <VirtualizedLogContent parsedLogs={parsedLogs} wrap={wrap} />
+            )}
           </Dialog.Body>
         </Dialog.Content>
       </Dialog.Root>

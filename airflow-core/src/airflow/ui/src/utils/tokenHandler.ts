@@ -19,7 +19,7 @@
 import type { InternalAxiosRequestConfig } from "axios";
 
 export const TOKEN_STORAGE_KEY = "token";
-const getTokenFromCookies = (): string | undefined => {
+export const getTokenFromCookies = (): string | undefined => {
   const cookies = document.cookie.split(";");
 
   for (const cookie of cookies) {

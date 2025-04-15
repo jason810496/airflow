@@ -18,14 +18,23 @@
  */
 import { chakra } from "@chakra-ui/react";
 import type { UseQueryOptions } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import dayjs from "dayjs";
+import { useState, useEffect } from "react";
 import innerText from "react-innertext";
 
-import { useTaskInstanceServiceGetLog } from "openapi/queries";
-import type { TaskInstanceResponse, TaskInstancesLogResponse } from "openapi/requests/types.gen";
+import type { TaskInstanceResponse } from "openapi/requests/types.gen";
 import { renderStructuredLog } from "src/components/renderStructuredLog";
 import { isStatePending, useAutoRefresh } from "src/utils";
 import { getTaskInstanceLink } from "src/utils/links";
+import { TOKEN_STORAGE_KEY, getTokenFromCookies } from "src/utils/tokenHandler";
+
+// Update TaskInstancesLogResponse type to include headers and body
+interface TaskInstancesLogResponse {
+  content?: Array<any>;
+  headers?: Headers;
+  body?: ReadableStream<Uint8Array>;
+}
 
 type Props = {
   dagId: string;
@@ -119,14 +128,97 @@ const parseLogs = ({ data, logLevelFilters, sourceFilters, taskInstance, tryNumb
   };
 };
 
+const parseNdjsonStream = async (stream: ReadableStream<Uint8Array>, onData: (line: string) => void) => {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {break;}
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+
+    buffer = lines.pop() || ""; // Keep the last incomplete line in the buffer
+
+    for (const line of lines) {
+      if (line.trim()) {
+        onData(line);
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    onData(buffer); // Process any remaining data
+  }
+};
+
+export const useTaskInstanceServiceGetLog = (
+  {
+    accept = "application/x-ndjson",
+    dagId,
+    dagRunId,
+    taskId,
+    tryNumber,
+    mapIndex = -1,
+  }: {
+    accept?: "application/json" | "*/*" | "application/x-ndjson";
+    dagId: string;
+    dagRunId: string;
+    taskId: string;
+    tryNumber: number;
+    mapIndex?: number;
+    token?: string;
+  },
+  options?: Omit<UseQueryOptions<TaskInstancesLogResponse>, "queryFn" | "queryKey">
+) => {
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY) ?? getTokenFromCookies();
+  console.log(
+    `Fetching logs for DAG ID: ${dagId}, DAG Run ID: ${dagRunId}, Task ID: ${taskId}, Try Number: ${tryNumber}, Map Index: ${mapIndex}`
+  )
+  return useQuery<TaskInstancesLogResponse>({
+    queryKey: ["taskInstanceLog", dagId, dagRunId, taskId, tryNumber, mapIndex],
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/v2/dags/${dagId}/dagRuns/${dagRunId}/taskInstances/${taskId}/logs/${tryNumber}?mapIndex=${mapIndex}`,
+        {
+          headers: {
+            Accept: accept,
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch logs: ${response.statusText}`);
+      }
+
+      if (accept === "application/x-ndjson") {
+        return response.body as ReadableStream<Uint8Array>;
+      }
+
+      return response.json();
+    },
+    ...options,
+  });
+};
+
 export const useLogs = (
   { dagId, logLevelFilters, sourceFilters, taskInstance, tryNumber = 1 }: Props,
   options?: Omit<UseQueryOptions<TaskInstancesLogResponse>, "queryFn" | "queryKey">,
 ) => {
   const refetchInterval = useAutoRefresh({ dagId });
+  const [parsedLogs, setParsedLogs] = useState<Array<JSX.Element | "">>([]);
+  const [sources, setSources] = useState<Array<string>>([]);
+  const [warning, setWarning] = useState<string | undefined>();
+
+  console.log(`Fetching logs for DAG ID: ${dagId}, Task Instance: ${taskInstance?.task_id}, Try Number: ${tryNumber}`);
 
   const { data, ...rest } = useTaskInstanceServiceGetLog(
     {
+      accept: "application/x-ndjson",
       dagId,
       dagRunId: taskInstance?.dag_run_id ?? "",
       mapIndex: taskInstance?.map_index ?? -1,
@@ -136,7 +228,7 @@ export const useLogs = (
     undefined,
     {
       enabled: Boolean(taskInstance),
-      refetchInterval: (query) =>
+      refetchInterval: (query: { state: { dataUpdatedAt: number } }) =>
         isStatePending(taskInstance?.state) ||
         dayjs(query.state.dataUpdatedAt).isBefore(taskInstance?.end_date)
           ? refetchInterval
@@ -145,13 +237,52 @@ export const useLogs = (
     },
   );
 
-  const parsedData = parseLogs({
-    data: data?.content ?? [],
-    logLevelFilters,
-    sourceFilters,
-    taskInstance,
-    tryNumber,
-  });
+  useEffect(() => {
+    if (!data) {return;}
 
-  return { data: parsedData, ...rest };
+    const contentType = data.headers?.get("content-type");
+
+    if (contentType === "application/x-ndjson") {
+      const stream = data.body as ReadableStream<Uint8Array>;
+
+      parseNdjsonStream(stream, (line) => {
+        try {
+          const logEntry = JSON.parse(line);
+          const { parsedLogs: newLogs, sources: newSources } = parseLogs({
+            data: [logEntry],
+            logLevelFilters,
+            sourceFilters,
+            taskInstance,
+            tryNumber,
+          });
+
+          // Ensure state updates handle undefined values
+          setParsedLogs((prevLogs) => [...prevLogs, ...(newLogs || [])]);
+          setSources((prevSources) => [...new Set([...(prevSources || []), ...(newSources || [])])]);
+        } catch (error) {
+          console.warn("Error parsing ndjson log line:", error);
+          setWarning("Unable to show logs. There was an error parsing logs.");
+        }
+      });
+    } else {
+      const {
+        parsedLogs: newLogs,
+        sources: newSources,
+        warning: newWarning,
+      } = parseLogs({
+        data: data.content ?? [],
+        logLevelFilters,
+        sourceFilters,
+        taskInstance,
+        tryNumber,
+      });
+
+      // Ensure state updates handle undefined values
+      setParsedLogs(newLogs || []);
+      setSources(newSources || []);
+      setWarning(newWarning);
+    }
+  }, [data, logLevelFilters, sourceFilters, taskInstance?.task_id, taskInstance?.dag_run_id, tryNumber]);
+
+  return { data: { parsedLogs, sources, warning }, ...rest };
 };
