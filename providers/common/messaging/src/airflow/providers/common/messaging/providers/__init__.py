@@ -16,6 +16,7 @@
 # under the License.
 from __future__ import annotations
 
+from airflow.providers.common.messaging.providers.kafka import KafkaMessageQueueProvider
 from airflow.providers.common.messaging.providers.sqs import SqsMessageQueueProvider
 
-MESSAGE_QUEUE_PROVIDERS = [SqsMessageQueueProvider()]
+MESSAGE_QUEUE_PROVIDERS = [SqsMessageQueueProvider(), KafkaMessageQueueProvider()]

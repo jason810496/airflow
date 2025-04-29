@@ -27,6 +27,7 @@ Supported queue providers
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * Amazon SQS: :class:`~airflow.providers.common.messaging.providers.sqs.SqsMessageQueueProvider`
+* Apache Kafka: :class:`~airflow.providers.common.messaging.providers.kafka.KafkaMessageQueueProvider`
 
 Add support for a provider
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
