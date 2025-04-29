@@ -43,6 +43,8 @@
     :caption: References
 
     Python API <_api/airflow/providers/common/messaging/index>
+    Amazon SQS <_api/airflow/providers/common/messaging/providers/sqs/index>
+    Apache Kafka <_api/airflow/providers/common/messaging/providers/kafka/index>
 
 .. toctree::
     :hidden:
@@ -115,12 +117,13 @@ You can install such cross-provider dependencies when installing from PyPI. For 
     pip install apache-airflow-providers-common-messaging[amazon]
 
 
-====================================================================================================  ===========
-Dependent package                                                                                     Extra
-====================================================================================================  ===========
-`apache-airflow-providers-amazon <https://airflow.apache.org/docs/apache-airflow-providers-amazon>`_  ``amazon``
-`apache-airflow-providers-apache-kafka <https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka>`_  ``kafka``
-====================================================================================================  ===========
++------------------------------------------------------------------------------------------------------------------+------------------+
+| Dependent package                                                                                                | Extra            |
++==================================================================================================================+==================+
+| `apache-airflow-providers-amazon <https://airflow.apache.org/docs/apache-airflow-providers-amazon>`_             | ``amazon``       |
++------------------------------------------------------------------------------------------------------------------+------------------+
+| `apache-airflow-providers-apache-kafka <https://airflow.apache.org/docs/apache-airflow-providers-apache-kafka>`_ | ``apache.kafka`` |
++------------------------------------------------------------------------------------------------------------------+------------------+
 
 Downloading official packages
 -----------------------------

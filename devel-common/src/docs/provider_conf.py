@@ -161,7 +161,6 @@ exclude_patterns = [
     "_api/airflow/providers/cncf/index.rst",
     "_api/airflow/providers/common/index.rst",
     "_api/airflow/providers/common/messaging/providers/base_provider/index.rst",
-    "_api/airflow/providers/common/messaging/providers/sqs/index.rst",
     "_api/airflow/providers/dbt/index.rst",
     "_api/airflow/providers/microsoft/index.rst",
     "_api/docs/conf",
