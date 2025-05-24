@@ -55,7 +55,6 @@ from airflow.utils.log.file_task_handler import (
     _fetch_logs_from_service,
     _interleave_logs,
     _is_logs_stream_like,
-    _is_sort_key_with_default_timestamp,
     _log_stream_to_parsed_log_stream,
     _sort_key,
     _stream_lines_by_chunk,
@@ -742,34 +741,7 @@ def test__log_stream_to_parsed_log_stream():
 
 def test__sort_key():
     # assert _sort_key should return int
-    assert isinstance(_sort_key(pendulum.parse("2022-11-16T00:05:54.278000-08:00"), 10), int)
-
-
-@pytest.mark.parametrize(
-    "timestamp, line_num, expected",
-    [
-        pytest.param(
-            pendulum.parse("2022-11-16T00:05:54.278000-08:00"),
-            10,
-            False,
-            id="normal_timestamp_1",
-        ),
-        pytest.param(
-            pendulum.parse("2022-11-16T00:05:54.457000-08:00"),
-            2025,
-            False,
-            id="normal_timestamp_2",
-        ),
-        pytest.param(
-            DEFAULT_SORT_DATETIME,
-            200,
-            True,
-            id="default_timestamp",
-        ),
-    ],
-)
-def test__is_sort_key_with_default_timestamp(timestamp, line_num, expected):
-    assert _is_sort_key_with_default_timestamp(_sort_key(timestamp, line_num)) == expected
+    assert isinstance(_sort_key(pendulum.parse("2022-11-16T00:05:54.278000-08:00")), int)
 
 
 @pytest.mark.parametrize(

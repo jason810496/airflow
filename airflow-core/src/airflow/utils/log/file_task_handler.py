@@ -27,7 +27,7 @@ from collections.abc import Generator
 from contextlib import suppress
 from datetime import datetime
 from enum import Enum
-from itertools import chain
+from itertools import chain, tee
 from pathlib import Path
 from types import GeneratorType
 from typing import IO, TYPE_CHECKING, Any, Callable, Optional, Union, cast
@@ -57,13 +57,6 @@ if TYPE_CHECKING:
 CHUNK_SIZE = 1024 * 1024 * 5  # 5MB
 DEFAULT_SORT_DATETIME = pendulum.datetime(2000, 1, 1)
 DEFAULT_SORT_TIMESTAMP = int(DEFAULT_SORT_DATETIME.timestamp() * 1000)
-SORT_KEY_OFFSET = 10000000
-"""An offset used by the _sort_key utility.
-
-Assuming 50 characters per line, an offset of 10,000,000 can represent approximately 500 MB of file data, which is sufficient for use as a constant.
-"""
-HEAP_DUMP_SIZE = 500000
-HALF_HEAP_DUMP_SIZE = HEAP_DUMP_SIZE // 2
 
 # These types are similar, but have distinct names to make processing them less error prone
 LogMessages: TypeAlias = list[str]
@@ -87,8 +80,8 @@ StructuredLogStream: TypeAlias = Generator["StructuredLogMessage", None, None]
 """Structured log stream, containing structured log messages."""
 LogHandlerOutputStream: TypeAlias = Union[StructuredLogStream, chain["StructuredLogMessage"]]
 """Output stream, containing structured log messages or a chain of them."""
-ParsedLog: TypeAlias = tuple[Optional[datetime], int, "StructuredLogMessage"]
-"""Parsed log record, containing timestamp, line_num and the structured log message."""
+ParsedLog: TypeAlias = tuple[Optional[datetime], "StructuredLogMessage"]
+"""Parsed log record, containing timestamp and the structured log message."""
 ParsedLogStream: TypeAlias = Generator[ParsedLog, None, None]
 LegacyProvidersLogType: TypeAlias = Union[list["StructuredLogMessage"], str, list[str]]
 """Return type used by legacy `_read` methods for Alibaba Cloud, Elasticsearch, OpenSearch, and Redis log handlers.
@@ -226,7 +219,6 @@ def _log_stream_to_parsed_log_stream(
 
     timestamp = None
     next_timestamp = None
-    idx = 0
     for line in log_stream:
         if line:
             try:
@@ -240,70 +232,54 @@ def _log_stream_to_parsed_log_stream(
             if log.timestamp:
                 log.timestamp = coerce_datetime(log.timestamp)
                 timestamp = log.timestamp
-            yield timestamp, idx, log
-        idx += 1
+            yield timestamp, log
 
 
-def _sort_key(timestamp: datetime | None, line_num: int) -> int:
+def _sort_key(timestamp: datetime | None) -> int:
     """
     Generate a sort key for log record, to be used in K-way merge.
 
     :param timestamp: timestamp of the log line
-    :param line_num: line number of the log line
     :return: a integer as sort key to avoid overhead of memory usage
     """
-    return int((timestamp or DEFAULT_SORT_DATETIME).timestamp() * 1000) * SORT_KEY_OFFSET + line_num
-
-
-def _is_sort_key_with_default_timestamp(sort_key: int) -> bool:
-    """
-    Check if the sort key was generated with the DEFAULT_SORT_TIMESTAMP.
-
-    This is used to identify log records that don't have timestamp.
-
-    :param sort_key: The sort key to check
-    :return: True if the sort key was generated with DEFAULT_SORT_TIMESTAMP, False otherwise
-    """
-    # Extract the timestamp part from the sort key (remove the line number part)
-    timestamp_part = sort_key // SORT_KEY_OFFSET
-    return timestamp_part == DEFAULT_SORT_TIMESTAMP
+    return int((timestamp or DEFAULT_SORT_DATETIME).timestamp() * 1000)
 
 
 def _add_log_from_parsed_log_streams_to_heap(
-    heap: list[tuple[int, StructuredLogMessage]],
-    parsed_log_streams: dict[int, ParsedLogStream],
+    heap: list[tuple[int, int]],
+    lookahead_log_streams: dict[int, ParsedLogStream],
 ) -> None:
     """
     Add one log record from each parsed log stream to the heap, and will remove empty log stream from the dict after iterating.
 
-    :param heap: heap to store log records
+    :param heap: heap to store the sort key and log stream index
     :param parsed_log_streams: dict of parsed log streams
     """
     log_stream_to_remove: list[int] | None = None
-    for idx, log_stream in parsed_log_streams.items():
+    for log_idx, log_stream in lookahead_log_streams.items():
         record: ParsedLog | None = next(log_stream, None)
         if record is None:
             if log_stream_to_remove is None:
                 log_stream_to_remove = []
-            log_stream_to_remove.append(idx)
+            log_stream_to_remove.append(log_idx)
             continue
         # add type hint to avoid mypy error
         record = cast("ParsedLog", record)
-        timestamp, line_num, line = record
+        timestamp, _ = record
         # take int as sort key to avoid overhead of memory usage
-        heapq.heappush(heap, (_sort_key(timestamp, line_num), line))
+        heapq.heappush(heap, (_sort_key(timestamp), log_idx))
     # remove empty log stream from the dict
     if log_stream_to_remove is not None:
-        for idx in log_stream_to_remove:
-            del parsed_log_streams[idx]
+        for log_idx in log_stream_to_remove:
+            del lookahead_log_streams[log_idx]
 
 
 def _interleave_logs(*log_streams: RawLogStream) -> StructuredLogStream:
     """
-    Merge parsed log streams using K-way merge.
+    Merge parsed log streams using K-way merge but also ensure global order.
 
-    By yielding HALF_CHUNK_SIZE records when heap size exceeds CHUNK_SIZE, we can reduce the chance of messing up the global order.
-    Since there are multiple log streams, we can't guarantee that the records are in global order.
+    Only add the first timestamp of each log stream as int(sort_key) and its index into the heap.
+    Having buffered log streams allows us to interleave logs from multiple streams
 
     e.g.
 
@@ -312,39 +288,41 @@ def _interleave_logs(*log_streams: RawLogStream) -> StructuredLogStream:
     log_stream3:     --------
 
     The first record of log_stream3 is later than the fourth record of log_stream1 !
-    :param parsed_log_streams: parsed log streams
+
+
+    :param log_streams: list of string log streams to be merged
     :return: interleaved log stream
     """
+    total_log_streams = len(log_streams)
     # don't need to push whole tuple into heap, which increases too much overhead
-    # push only sort_key and line into heap
-    heap: list[tuple[int, StructuredLogMessage]] = []
+    # push only sort_key and index of log stream into heap
+    heap: list[tuple[int, int]] = []
     # to allow removing empty streams while iterating, also turn the str stream into parsed log stream
-    parsed_log_streams: dict[int, ParsedLogStream] = {
-        idx: _log_stream_to_parsed_log_stream(log_stream) for idx, log_stream in enumerate(log_streams)
-    }
+    lookahead_log_streams: dict[int, ParsedLogStream] = {}
+    buffered_log_streams: list[ParsedLogStream] = [None] * total_log_streams
+    for log_idx, log_stream in enumerate(log_streams):
+        # use tee to create memory-efficient buffer for lookahead
+        lookahead_log_streams[log_idx], buffered_log_streams[log_idx] = tee(
+            _log_stream_to_parsed_log_stream(log_stream)
+        )
 
-    # keep adding records from logs until all logs are empty
+
     last = None
-    while parsed_log_streams:
-        _add_log_from_parsed_log_streams_to_heap(heap, parsed_log_streams)
+    _add_log_from_parsed_log_streams_to_heap(heap, lookahead_log_streams)
+    while heap:
+        # keep adding records from logs until all logs are empty
+        _add_log_from_parsed_log_streams_to_heap(heap, lookahead_log_streams)
 
-        # yield HALF_HEAP_DUMP_SIZE records when heap size exceeds HEAP_DUMP_SIZE
-        if len(heap) >= HEAP_DUMP_SIZE:
-            for _ in range(HALF_HEAP_DUMP_SIZE):
-                sort_key, line = heapq.heappop(heap)
-                if line != last or _is_sort_key_with_default_timestamp(sort_key):  # dedupe
-                    yield line
-                last = line
-
-    # yield remaining records
-    for _ in range(len(heap)):
-        sort_key, line = heapq.heappop(heap)
-        if line != last or _is_sort_key_with_default_timestamp(sort_key):  # dedupe
+        sort_key, log_idx = heapq.heappop(heap)
+        _, line = next(buffered_log_streams[log_idx])
+        if line != last or sort_key == DEFAULT_SORT_TIMESTAMP:
             yield line
         last = line
+
     # free memory
     del heap
-    del parsed_log_streams
+    del lookahead_log_streams
+    del buffered_log_streams
 
 
 def _is_logs_stream_like(log):
@@ -667,7 +645,7 @@ class FileTaskHandler(logging.Handler):
             TaskInstanceState.DEFERRED,
         )
 
-        with LogStreamCounter(out_stream, HEAP_DUMP_SIZE) as stream_counter:
+        with LogStreamCounter(out_stream, CHUNK_SIZE) as stream_counter:
             log_pos = stream_counter.get_total_lines()
             out_stream = stream_counter.get_stream()
 
