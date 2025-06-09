@@ -20,12 +20,13 @@ import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Literal, Union, Any
 
 import structlog
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from airflow.sdk.bases.operator import BaseOperator
     from airflow.api_fastapi.auth.tokens import JWTGenerator
     from airflow.models.taskinstance import TaskInstance as TIModel
     from airflow.models.taskinstancekey import TaskInstanceKey
@@ -59,6 +60,8 @@ class TaskInstance(BaseModel):
     task_id: str
     dag_id: str
     run_id: str
+    logical_date: datetime | None = None
+    task: Any
     try_number: int
     map_index: int = -1
 
@@ -113,6 +116,7 @@ class ExecuteTask(BaseWorkload):
         from airflow.utils.helpers import log_filename_template_renderer
 
         ser_ti = TaskInstance.model_validate(ti, from_attributes=True)
+        ser_ti.dag_id = ti.dag_id
         ser_ti.parent_context_carrier = ti.dag_run.context_carrier
         if not bundle_info:
             bundle_info = BundleInfo(

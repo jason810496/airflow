@@ -59,6 +59,7 @@ class RuntimeTaskInstanceProtocol(Protocol):
     task_id: str
     dag_id: str
     run_id: str
+    logical_date: AwareDatetime | None = None
     try_number: int
     map_index: int | None
     max_tries: int

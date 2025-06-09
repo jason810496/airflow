@@ -242,6 +242,7 @@ class TaskInstance(BaseModel):
     task_id: str
     dag_id: str
     run_id: str
+    logical_date: UtcDateTime | None
     try_number: int
     map_index: int = -1
     hostname: str | None = None

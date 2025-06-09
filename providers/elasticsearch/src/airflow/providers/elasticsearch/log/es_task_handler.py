@@ -50,6 +50,8 @@ from airflow.utils.log.file_task_handler import FileTaskHandler
 from airflow.utils.log.logging_mixin import ExternalLoggingMixin, LoggingMixin
 from airflow.utils.module_loading import import_string
 from airflow.utils.session import create_session
+from airflow.utils.session import NEW_SESSION, provide_session
+
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -89,8 +91,8 @@ def get_es_kwargs_from_config() -> dict[str, Any]:
     )
     return kwargs_dict
 
-
-def _ensure_ti(ti: TaskInstanceKey | TaskInstance, session) -> TaskInstance:
+@provide_session
+def _ensure_ti(ti: TaskInstanceKey | TaskInstance, session=NEW_SESSION) -> TaskInstance:
     """
     Given TI | TIKey, return a TI object.
 
@@ -98,7 +100,7 @@ def _ensure_ti(ti: TaskInstanceKey | TaskInstance, session) -> TaskInstance:
     """
     from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
 
-    if not isinstance(ti, TaskInstanceKey):
+    if isinstance(ti, TaskInstance):
         return ti
     val = (
         session.query(TaskInstance)
@@ -114,6 +116,81 @@ def _ensure_ti(ti: TaskInstanceKey | TaskInstance, session) -> TaskInstance:
         val.try_number = ti.try_number
         return val
     raise AirflowException(f"Could not find TaskInstance for {ti}")
+
+@attrs.define
+class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
+    client: elasticsearch.Elasticsearch
+    base_log_folder: pathlib.Path = attrs.field(converter=pathlib.Path)
+    delete_local_copy: bool
+
+    processors = ()
+
+    def _parse_raw_log(self, log: str) -> list[dict[str, Any]]:
+        logs = log.split("\n")
+        parsed_logs = []
+        for line in logs:
+            # Make sure line is not empty
+            if line.strip():
+                parsed_logs.append(json.loads(line))
+
+        return parsed_logs
+
+    def _write_to_es(self, log_lines: list[dict[str, Any]]) -> bool:
+        """
+        Write the log to ElasticSearch; return `True` or fails silently and return `False`.
+
+        :param log_lines: the log_lines to write to the ElasticSearch.
+        """
+        # Prepare the bulk request for Elasticsearch
+        bulk_actions = [{"_index": self.target_index, "_source": log} for log in log_lines]
+        try:
+            _ = helpers.bulk(self.client, bulk_actions)
+            return True
+        except Exception as e:
+            self.log.exception("Unable to insert logs into Elasticsearch. Reason: %s", str(e))
+            return False
+
+    def upload(self, path: os.PathLike | str, ti: RuntimeTI):
+        """Upload the given log path to the remote storage."""
+        path = pathlib.Path(path)
+        if path.is_absolute():
+            local_loc = path
+        else:
+            local_loc = self.base_log_folder.joinpath(path)
+
+        if local_loc.is_file():
+            # read log and remove old logs to get just the latest additions
+            log = local_loc.read_text()
+            has_uploaded = self.write(log)
+            if has_uploaded and self.delete_local_copy:
+                shutil.rmtree(os.path.dirname(local_loc))
+
+    def write(
+        self,
+        log: str,
+    ) -> bool:
+        """
+        Write the log to the remote_log_location; return `True` or fails silently and return `False`.
+
+        :param log: the contents to write to the remote_log_location
+        :param remote_log_location: the log's location in remote storage
+        :param append: if False, any existing log file is overwritten. If True,
+            the new log is appended to any existing logs.
+        :param max_retry: Maximum number of times to retry on upload failure
+        :return: whether the log is successfully written to remote location or not.
+        """
+        try:
+            log_lines = self._parse_raw_log(log)
+            success = self._write_to_es(log_lines)
+        except Exception:
+            self.log.exception("Could not verify previous log to append")
+            return False
+
+        return success
+    
+    def read(self, relative_path: str, ti: RuntimeTI) -> tuple[LogSourceInfo, LogMessages | None]:
+        logs: list[str] = []
+        messages = []
 
 
 class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMixin):
@@ -164,6 +241,7 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         es_kwargs: dict | None | Literal["default_es_kwargs"] = "default_es_kwargs",
         **kwargs,
     ):
+        print("DEBUG: Initializing ElasticsearchTaskHandler")
         es_kwargs = es_kwargs or {}
         if es_kwargs == "default_es_kwargs":
             es_kwargs = get_es_kwargs_from_config()
@@ -189,6 +267,11 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         self.target_index = target_index
         self.delete_local_copy = kwargs.get(
             "delete_local_copy", conf.getboolean("logging", "delete_local_logs")
+        )
+        self.io = ElasticsearchRemoteLogIO(
+            client=self.client,
+            base_log_folder=pathlib.Path(base_log_folder),
+            delete_local_copy=self.delete_local_copy,
         )
 
         self.formatter: logging.Formatter
@@ -450,6 +533,7 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         return None
 
     def emit(self, record):
+        print("DEBUG: Emitting log record in ElasticsearchTaskHandler")
         if self.handler:
             setattr(record, self.offset_field, int(time.time() * (10**9)))
             self.handler.emit(record)
@@ -462,11 +546,17 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         :param identifier: if set, identifies the Airflow component which is relaying logs from
             exceptional scenarios related to the task instance
         """
+        print("DEBUG: Setting context for ElasticsearchTaskHandler")
+        print("DEBUG: ti:", ti)
+        print(ti.__dict__)
+
+        # ti = _ensure_ti(ti)
         is_trigger_log_context = getattr(ti, "is_trigger_log_context", None)
         is_ti_raw = getattr(ti, "raw", None)
         self.mark_end_on_close = not is_ti_raw and not is_trigger_log_context
         date_key = "logical_date" if AIRFLOW_V_3_0_PLUS else "execution_date"
         if self.json_format:
+            print("DEBUG: Setting up ElasticsearchJSONFormatter for ElasticsearchTaskHandler")
             self.formatter = ElasticsearchJSONFormatter(
                 fmt=self.formatter._fmt,
                 json_fields=[*self.json_fields, self.offset_field],
@@ -485,32 +575,40 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
 
         if self.write_stdout:
             if self.context_set:
+                print("DEBUG: Context already set for ElasticsearchTaskHandler")
                 # We don't want to re-set up the handler if this logger has
                 # already been initialized
                 return
 
+            print("DEBUG: Setting up StreamHandler for ElasticsearchTaskHandler")
             self.handler = logging.StreamHandler(stream=sys.__stdout__)
             self.handler.setLevel(self.level)
             self.handler.setFormatter(self.formatter)
         else:
             super().set_context(ti, identifier=identifier)
+            print("DEBUG: Setting up FileTaskHandler for ElasticsearchTaskHandler")
+            print("DEBUG: self.handler:", self.handler)
         self.context_set = True
 
     def close(self) -> None:
+        print("DEBUG: Closing ElasticsearchTaskHandler")
         # When application exit, system shuts down all handlers by
         # calling close method. Here we check if logger is already
         # closed to prevent uploading the log to remote storage multiple
         # times when `logging.shutdown` is called.
         if self.closed:
+            print("DEBUG: ElasticsearchTaskHandler is already closed, skipping close operation.")
             return
 
         if not self.mark_end_on_close:
             # when we're closing due to task deferral, don't mark end of log
+            print("DEBUG: Not marking end of log on close due to task deferral.")
             self.closed = True
             return
 
         # Case which context of the handler was not set.
         if self.handler is None:
+            print("DEBUG: No handler set, skipping close operation.")
             self.closed = True
             return
 
@@ -524,10 +622,14 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         self.emit(logging.makeLogRecord({"msg": self.end_of_log_mark}))
 
         if self.write_stdout:
+            print("DEBUG: Closing ElasticsearchTaskHandler at `if self.write_stdout:` block")
             self.handler.close()
             sys.stdout = sys.__stdout__
 
-        if self.write_to_es and not self.write_stdout:
+        if AIRFLOW_V_3_0_PLUS:
+
+        elif self.write_to_es and not self.write_stdout:
+            print("DEBUG: Writing logs to Elasticsearch.")
             full_path = self.handler.baseFilename  # type: ignore[union-attr]
             log_relative_path = pathlib.Path(full_path).relative_to(self.local_base).as_posix()
             local_loc = os.path.join(self.local_base, log_relative_path)
@@ -537,6 +639,7 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
                 log_lines = self._parse_raw_log(log)
                 success = self._write_to_es(log_lines)
                 if success and self.delete_local_copy:
+                    print("DEBUG: Removing local log file after writing to Elasticsearch.")
                     shutil.rmtree(os.path.dirname(local_loc))
 
         super().close()

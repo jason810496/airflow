@@ -37,8 +37,11 @@ REMOTE_TASK_LOG: RemoteLogIO | None
 
 def __getattr__(name: str):
     if name == "REMOTE_TASK_LOG":
+        print("DEBUG: Accessing REMOTE_TASK_LOG at module level. ")
         global REMOTE_TASK_LOG
-        load_logging_config()
+        logging_config, logging_class_path = load_logging_config()
+        print(f"DEBUG: Loaded logging config from {logging_class_path}")
+        print(f"DEBUG: Logging config: {logging_config}")
         return REMOTE_TASK_LOG
 
 
@@ -50,8 +53,10 @@ def load_logging_config() -> tuple[dict[str, Any], str]:
 
     # Sometimes we end up with `""` as the value!
     logging_class_path = logging_class_path or fallback
+    print(f"DEBUG: Using logging_class_path: {logging_class_path}")
 
     user_defined = logging_class_path != fallback
+    print(f"DEBUG: User defined logging config: {user_defined}")
 
     try:
         logging_config = import_string(logging_class_path)
@@ -72,8 +77,13 @@ def load_logging_config() -> tuple[dict[str, Any], str]:
     else:
         mod = logging_class_path.rsplit(".", 1)[0]
         try:
-            remote_task_log = import_string(f"{mod}.REMOTE_TASK_LOG")
+            # remote_task_log = import_string(f"{mod}.REMOTE_TASK_LOG")
+            # REMOTE_TASK_LOG = remote_task_log
+            from airflow.config_templates.airflow_local_settings import REMOTE_TASK_LOG as remote_task_log
+
             REMOTE_TASK_LOG = remote_task_log
+            print(f"DEBUG: Loaded REMOTE_TASK_LOG from {mod}.REMOTE_TASK_LOG")
+            print(f"DEBUG: REMOTE_TASK_LOG: {REMOTE_TASK_LOG}")
         except Exception as err:
             log.info("Remote task logs will not be available due to an error:  %s", err)
 

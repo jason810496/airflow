@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
     from airflow.logging_config import RemoteLogIO
     from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
+    from airflow.utils.log.file_task_handler import FileTaskHandler
 
 
 __all__ = [
@@ -518,9 +519,18 @@ def init_log_file(local_relative_path: str) -> Path:
 
 
 def load_remote_log_handler() -> RemoteLogIO | None:
-    import airflow.logging_config
+    # import airflow.logging_config
 
-    return airflow.logging_config.REMOTE_TASK_LOG
+    # return airflow.logging_config.REMOTE_TASK_LOG
+
+    from airflow.logging_config import REMOTE_TASK_LOG, load_logging_config
+
+    if REMOTE_TASK_LOG is None:
+        print("DEBUG: No remote log handler configured, loading logging config")
+        load_logging_config()
+
+    print(f"DEBUG: Using remote log handler: {REMOTE_TASK_LOG}")
+    return REMOTE_TASK_LOG
 
 
 def relative_path_from_logger(logger) -> Path | None:
@@ -544,16 +554,37 @@ def relative_path_from_logger(logger) -> Path | None:
 
 def upload_to_remote(logger: FilteringBoundLogger, ti: RuntimeTI):
     raw_logger = getattr(logger, "_logger")
+    print(f"DEBUG: Uploading logs for task instance {ti} using logger {raw_logger}")
 
     handler = load_remote_log_handler()
     if not handler:
-        return
+        from airflow.logging_config import load_logging_config
+        from logging import getLogger
+        logger = getLogger("airflow.task")
+
+        print(f"DEBUG: getLogger('airflow.task') returned {logger}")
+        print(f"DEBUG: logger name is {logger.__class__.__name__}")
+        print("DEBUG: No remote log handler configured, skipping upload")
+
+        print(f"DEBUG: handlers = {logger.handlers}")
+        if not logger.handlers:
+            print("DEBUG: No handlers found for logger, skipping upload")
+            return
+        elif len(logger.handlers) != 1:
+            print(f"DEBUG: Assuming single handler for logger, found {len(logger.handlers)} handlers")
+        else:
+            handler = logger.handlers[0]
+            handler = cast("FileTaskHandler", handler)
+            print(f"DEBUG: Using handler of type {type(handler).__name__}")
+            handler.set_context(ti)
 
     try:
         relative_path = relative_path_from_logger(raw_logger)
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Failed to get relative path from logger: {e}")
         return
     if not relative_path:
+        print("DEBUG: No relative path found for logger, skipping upload")
         return
 
     log_relative_path = relative_path.as_posix()

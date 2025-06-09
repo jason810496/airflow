@@ -496,6 +496,7 @@ class WatchedSubprocess:
         cls._close_unused_sockets(child_stdin, child_stdout, child_stderr, child_comms, child_logs)
 
         logger = logger or cast("FilteringBoundLogger", structlog.get_logger(logger_name="task").bind())
+        print(f"DEBUG: WatchedSubprocess.start logger={logger!r}")
         proc = cls(
             pid=pid,
             stdin=feed_stdin,
@@ -918,6 +919,15 @@ class ActivitySubprocess(WatchedSubprocess):
         from airflow.sdk.log import upload_to_remote
 
         upload_to_remote(self.process_log, self.ti)
+        # from airflow.sdk.log import upload_to_remote, load_remote_log_handler
+        # if not load_remote_log_handler():
+        #     upload_to_remote(self.process_log, self.ti)
+        # else:
+        #     from airflow.logging_config import load_logging_config
+        #     logging_config, logging_class_path = load_logging_config()
+        #     print(f"DEBUG: No remote logging configured, not uploading logs, {self.process_log}")
+        #     print(f"DEBUG: Logging config: {logging_config}")
+        #     print(f"DEBUG: Logging class path: {logging_class_path}")
 
     def _monitor_subprocess(self):
         """

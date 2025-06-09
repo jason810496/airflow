@@ -129,7 +129,9 @@ if EXTRA_LOGGER_NAMES:
 REMOTE_LOGGING: bool = conf.getboolean("logging", "remote_logging")
 REMOTE_TASK_LOG: RemoteLogIO | None = None
 
+print(f"DEBUG: Remote logging is set to {REMOTE_LOGGING}.")
 if REMOTE_LOGGING:
+    print("DEBUG: Remote logging is enabled.")
     ELASTICSEARCH_HOST: str | None = conf.get("elasticsearch", "HOST")
     OPENSEARCH_HOST: str | None = conf.get("opensearch", "HOST")
     # Storage bucket URL for remote logging
@@ -258,6 +260,7 @@ if REMOTE_LOGGING:
         )
         remote_task_handler_kwargs = {}
     elif ELASTICSEARCH_HOST:
+        print("DEBUG: Using Elasticsearch for remote logging.")
         ELASTICSEARCH_END_OF_LOG_MARK: str = conf.get_mandatory_value("elasticsearch", "END_OF_LOG_MARK")
         ELASTICSEARCH_FRONTEND: str = conf.get_mandatory_value("elasticsearch", "frontend")
         ELASTICSEARCH_WRITE_STDOUT: bool = conf.getboolean("elasticsearch", "WRITE_STDOUT")

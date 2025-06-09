@@ -753,6 +753,7 @@ class TaskInstance(Base, LoggingMixin):
             task_id=self.task_id,
             dag_id=self.dag_id,
             run_id=self.run_id,
+            logical_date=self.logical_date,
             try_numer=self.try_number,
             map_index=self.map_index,
             task=self.task,

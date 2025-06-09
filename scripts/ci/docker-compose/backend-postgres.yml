@@ -21,6 +21,30 @@ services:
       - BACKEND=postgres
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:airflow@postgres/airflow
       - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://postgres:airflow@postgres/airflow
+      # for elasticsearch remote logging
+      # - AIRFLOW__LOGGING__REMOTE_LOGGING=true
+      # - AIRFLOW__ELASTICSEARCH__HOST=http://elastic:9200
+      # - AIRFLOW__ELASTICSEARCH__JSON_FORMAT=true
+      # - AIRFLOW__ELASTICSEARCH__WRITE_STDOUT=false
+      # - AIRFLOW__ELASTICSEARCH__WRITE_TO_ES=true
+      # - AIRFLOW__ELASTICSEARCH__CELERY_LOGGING_LEVEL=DEBUG
+      # for s3 remote logging (use minio for local testing)
+      # - AIRFLOW__LOGGING__REMOTE_LOGGING=true
+      # - AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER=s3://airflow-logs/logs
+      # - AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID=s3_conn
+      # airflow connections delete s3_conn
+      # airflow connections get s3_conn
+      # airflow connections add s3_conn --conn-type aws --conn-extra '{"aws_access_key_id": "tVZqBCU6own1qd3vjsBA", "aws_secret_access_key": "uQVj5onzBd282gymyIUpSGRi51yl8F9DdbV10k4m", "endpoint_url": "http://minio:9000"}'
+      # airflow connections add s3_conn --conn-type aws --conn-extra '{"aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin", "endpoint_url": "http://minio:9000", "region_name": "us-east-1"}'
+      # - AIRFLOW_CONN_S3_CONN="{\"conn_type\":\"aws\",\"extra\":{\"aws_access_key_id\":\"tVZqBCU6own1qd3vjsBA\",\"aws_secret_access_key\":\"uQVj5onzBd282gymyIUpSGRi51yl8F9DdbV10k4m\",\"endpoint_url\":\"http://minio:9000\"}}"
+      # for Google Cloud Storage remote logging
+      - AIRFLOW__LOGGING__REMOTE_LOGGING=true
+      - AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER=gs://dev-airflow-logs/logs
+      - AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID=google_cloud_default
+      - AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT="{\"conn_type\":\"google_cloud_platform\",\"extra\":{\"keyfile_path\":\"/files/airflow-logs-462403-77a550e84a37.json\",\"project\":\"airflow-logs-462403\"}}"
+      - AIRFLOW__LOGGING__GOOGLE_KEY_PATH=/files/airflow-logs-462403-77a550e84a37.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/files/airflow-logs-462403-77a550e84a37.json 
+
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,3 +66,8 @@ services:
     restart: "on-failure"
 volumes:
   postgres-db-volume:
+
+networks:
+  default:
+    external: true
+    name: elastic-log-airflow_default

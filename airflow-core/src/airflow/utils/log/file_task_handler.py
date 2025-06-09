@@ -268,6 +268,7 @@ class FileTaskHandler(logging.Handler):
             to task logs from a context other than task or trigger run
         """
         local_loc = self._init_file(ti, identifier=identifier)
+        print(f"DEBUG: FileTaskHandler self.handler initialized")
         self.handler = NonCachingRotatingFileHandler(
             local_loc,
             encoding="utf-8",
@@ -640,4 +641,5 @@ class FileTaskHandler(logging.Handler):
         # Ideally we move all the read+combine logic in to TaskLogReader and out of the task handler.
         path = self._render_filename(ti, try_number)
         sources, logs = remote_io.read(path, ti)
+        print(f"DEBUG: FileTaskHandler _read_remote_logs called for {ti} with path {path}")
         return sources, logs or []

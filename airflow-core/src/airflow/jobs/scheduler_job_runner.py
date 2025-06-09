@@ -697,6 +697,8 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 ti.set_state(None, session=session)
                 continue
 
+            print("DEBUG: scheduler_job_runner.py: _enqueue_task_instances_with_queued_state")
+            print("DEBUG: ti:", ti)
             workload = workloads.ExecuteTask.make(ti, generator=executor.jwt_generator)
             executor.queue_workload(workload, session=session)
 

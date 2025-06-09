@@ -222,6 +222,7 @@ class S3TaskHandler(FileTaskHandler, LoggingMixin):
             return
 
         if hasattr(self, "ti"):
+            print(f"DEBUG: Uploading logs for TI {self.ti} to S3")
             self.io.upload(self.log_relative_path, self.ti)
 
         # Mark closed so we don't double write if close is called twice
