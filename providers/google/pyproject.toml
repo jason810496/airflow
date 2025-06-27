@@ -203,6 +203,9 @@ dependencies = [
 "http" = [
     "apache-airflow-providers-http"
 ]
+"common.messaging" = [
+    "apache-airflow-providers-common-messaging>=1.0.1"
+]
 
 [dependency-groups]
 dev = [
