@@ -16,15 +16,20 @@
 # under the License.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from airflow import settings
 from airflow.cli.commands.db_command import run_db_downgrade_command, run_db_migrate_command
 from airflow.providers.fab.auth_manager.models.db import _REVISION_HEADS_MAP, FABDBManager
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 @providers_configuration_loaded
-def resetdb(args):
+def resetdb(args: Namespace):
     """Reset the metadata database."""
     print(f"DB: {settings.engine.url!r}")
     if not (args.yes or input("This will drop existing tables if they exist. Proceed? (y/n)").upper() == "Y"):
@@ -34,7 +39,7 @@ def resetdb(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def migratedb(args):
+def migratedb(args: Namespace):
     """Migrates the metadata database."""
     session = settings.Session()
     upgrade_command = FABDBManager(session).upgradedb
@@ -43,7 +48,7 @@ def migratedb(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def downgrade(args):
+def downgrade(args: Namespace):
     """Downgrades the metadata database."""
     session = settings.Session()
     dwongrade_command = FABDBManager(session).downgrade

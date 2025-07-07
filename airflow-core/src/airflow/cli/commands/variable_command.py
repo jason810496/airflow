@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 from json import JSONDecodeError
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -33,10 +34,13 @@ from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.session import create_session, provide_session
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def variables_list(args):
+def variables_list(args: Namespace):
     """Display all the variables."""
     with create_session() as session:
         variables = session.scalars(select(Variable)).all()
@@ -45,7 +49,7 @@ def variables_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def variables_get(args):
+def variables_get(args: Namespace):
     """Display variable by a given name."""
     try:
         if args.default is None:
@@ -60,7 +64,7 @@ def variables_get(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def variables_set(args):
+def variables_set(args: Namespace):
     """Create new variable with a given name, value and description."""
     Variable.set(args.key, args.value, args.description, serialize_json=args.json)
     print(f"Variable {args.key} created")
@@ -68,7 +72,7 @@ def variables_set(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def variables_delete(args):
+def variables_delete(args: Namespace):
     """Delete variable by a given name."""
     Variable.delete(args.key)
     print(f"Variable {args.key} deleted")
@@ -119,7 +123,7 @@ def variables_import(args, session):
 
 
 @providers_configuration_loaded
-def variables_export(args):
+def variables_export(args: Namespace):
     """Export all the variables to the file."""
     var_dict = {}
     with create_session() as session:

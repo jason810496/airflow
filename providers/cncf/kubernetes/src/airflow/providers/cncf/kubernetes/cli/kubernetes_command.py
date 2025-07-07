@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from kubernetes import client
 from kubernetes.client.api_client import ApiClient
@@ -38,10 +39,13 @@ from airflow.utils.cli import get_dag
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.types import DagRunType
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def generate_pod_yaml(args):
+def generate_pod_yaml(args: Namespace):
     """Generate yaml files for each task in the DAG. Used for testing output of KubernetesExecutor."""
     logical_date = args.logical_date if AIRFLOW_V_3_0_PLUS else args.execution_date
     if AIRFLOW_V_3_0_PLUS:
@@ -97,7 +101,7 @@ def generate_pod_yaml(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def cleanup_pods(args):
+def cleanup_pods(args: Namespace):
     """Clean up k8s pods in evicted/failed/succeeded/pending states."""
     namespace = args.namespace
 

@@ -36,7 +36,7 @@ from airflow.utils.scheduler_health import serve_health_check
 log = logging.getLogger(__name__)
 
 
-def _run_scheduler_job(args) -> None:
+def _run_scheduler_job(args: Namespace) -> None:
     job_runner = SchedulerJobRunner(job=Job(), num_runs=args.num_runs)
     enable_health_check = conf.getboolean("scheduler", "ENABLE_HEALTH_CHECK")
     with _serve_logs(args.skip_serve_logs), _serve_health_check(enable_health_check):

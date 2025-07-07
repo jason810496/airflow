@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from airflow.cli.commands.daemon_utils import run_command_with_daemon_option
 from airflow.dag_processing.manager import DagFileProcessorManager, reload_configuration_for_dag_processing
@@ -27,6 +27,9 @@ from airflow.jobs.dag_processor_job_runner import DagProcessorJobRunner
 from airflow.jobs.job import Job, run_job
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +49,7 @@ def _create_dag_processor_job_runner(args: Any) -> DagProcessorJobRunner:
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_processor(args):
+def dag_processor(args: Namespace):
     """Start Airflow Dag Processor Job."""
     job_runner = _create_dag_processor_job_runner(args)
 

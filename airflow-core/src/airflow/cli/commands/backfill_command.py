@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import signal
+from typing import TYPE_CHECKING
 
 from airflow import settings
 from airflow.cli.simple_table import AirflowConsole
@@ -30,12 +31,15 @@ from airflow.utils.platform import getuser
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.session import create_session
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 log = logging.getLogger(__name__)
 
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def create_backfill(args) -> None:
+def create_backfill(args: Namespace) -> None:
     """Create backfill job or dry run for a DAG or list of DAGs using regex."""
     logging.basicConfig(level=settings.LOGGING_LEVEL, format=settings.SIMPLE_LOG_FORMAT)
     signal.signal(signal.SIGTERM, sigint_handler)

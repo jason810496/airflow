@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_list(args):
+def roles_list(args: Namespace):
     """List all existing roles."""
     with get_application_builder() as appbuilder:
         roles = appbuilder.sm.get_all_roles()
@@ -65,7 +65,7 @@ def roles_list(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_create(args):
+def roles_create(args: Namespace):
     """Create new empty role in DB."""
     with get_application_builder() as appbuilder:
         for role_name in args.role:
@@ -76,7 +76,7 @@ def roles_create(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_delete(args):
+def roles_delete(args: Namespace):
     """Delete role in DB."""
     with get_application_builder() as appbuilder:
         for role_name in args.role:
@@ -89,7 +89,7 @@ def roles_delete(args):
     print(f"Deleted {len(args.role)} role(s)")
 
 
-def __roles_add_or_remove_permissions(args):
+def __roles_add_or_remove_permissions(args: Namespace):
     with get_application_builder() as appbuilder:
         is_add: bool = args.subcommand.startswith("add")
 
@@ -123,14 +123,15 @@ def __roles_add_or_remove_permissions(args):
             args.role, args.resource, args.action or [None]
         ):
             res_key = (role_name, resource_name)
+            perm: Permission | None
             if is_add and action_name not in perm_map[res_key]:
-                perm: Permission | None = asm.create_permission(action_name, resource_name)
+                perm = asm.create_permission(action_name, resource_name)
                 asm.add_permission_to_role(role_map[role_name], perm)
                 print(f"Added {perm} to role {role_name}")
                 permission_count += 1
             elif not is_add and res_key in perm_map:
                 for _action_name in perm_map[res_key] if action_name is None else [action_name]:
-                    perm: Permission | None = asm.get_permission(_action_name, resource_name)
+                    perm = asm.get_permission(_action_name, resource_name)
                     asm.remove_permission_from_role(role_map[role_name], perm)
                     print(f"Deleted {perm} from role {role_name}")
                     permission_count += 1
@@ -141,7 +142,7 @@ def __roles_add_or_remove_permissions(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_add_perms(args):
+def roles_add_perms(args: Namespace):
     """Add permissions to role in DB."""
     __roles_add_or_remove_permissions(args)
 
@@ -149,14 +150,14 @@ def roles_add_perms(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_del_perms(args):
+def roles_del_perms(args: Namespace):
     """Delete permissions from role in DB."""
     __roles_add_or_remove_permissions(args)
 
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def roles_export(args):
+def roles_export(args: Namespace):
     """Export all the roles from the database to a file including permissions."""
     with get_application_builder() as appbuilder:
         roles = appbuilder.sm.get_all_roles()
@@ -174,9 +175,11 @@ def roles_export(args):
         {"name": role, "resource": resource, "action": ",".join(sorted(permissions))}
         for (role, resource), permissions in permission_map.items()
     ]
-    kwargs = {} if not args.pretty else {"sort_keys": False, "indent": 4}
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(export_data, f, **kwargs)
+        if args.pretty:
+            json.dump(export_data, f, sort_keys=False, indent=4)
+        else:
+            json.dump(export_data, f)
     print(
         f"{len(exporting_roles)} roles with {len(export_data)} linked permissions successfully exported to {filename}"
     )
@@ -184,7 +187,7 @@ def roles_export(args):
 
 @cli_utils.action_cli
 @suppress_logs_and_warning
-def roles_import(args):
+def roles_import(args: Namespace):
     """
     Import all the roles into the db from the given json file including their permissions.
 

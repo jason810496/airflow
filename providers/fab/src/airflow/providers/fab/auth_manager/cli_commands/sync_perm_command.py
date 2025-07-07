@@ -19,13 +19,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def sync_perm(args):
+def sync_perm(args: Namespace):
     """Update permissions for existing roles and DAGs."""
     from airflow.providers.fab.auth_manager.cli_commands.utils import get_application_builder
 

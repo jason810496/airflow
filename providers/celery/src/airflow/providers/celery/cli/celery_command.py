@@ -24,6 +24,7 @@ import sys
 import time
 from contextlib import contextmanager, suppress
 from multiprocessing import Process
+from typing import TYPE_CHECKING
 
 import psutil
 import sqlalchemy.exc
@@ -39,6 +40,9 @@ from airflow.exceptions import AirflowConfigException
 from airflow.providers.celery.version_compat import AIRFLOW_V_3_0_PLUS
 from airflow.utils import cli as cli_utils
 from airflow.utils.cli import setup_locations
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 WORKER_PROCESS_NAME = "worker"
 
@@ -76,7 +80,7 @@ def _providers_configuration_loaded(func):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def flower(args):
+def flower(args: Namespace):
     """Start Flower, Celery monitoring tool."""
     # This needs to be imported locally to not trigger Providers Manager initialization
     from airflow.providers.celery.executors.celery_executor import app as celery_app
@@ -188,7 +192,7 @@ def logger_setup_handler(logger, **kwargs):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def worker(args):
+def worker(args: Namespace):
     """Start Airflow Celery worker."""
     # This needs to be imported locally to not trigger Providers Manager initialization
     from airflow.providers.celery.executors.celery_executor import app as celery_app
@@ -290,7 +294,7 @@ def worker(args):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def stop_worker(args):
+def stop_worker(args: Namespace):
     """Send SIGTERM to Celery worker."""
     # Read PID from file
     if args.pid:
@@ -324,7 +328,7 @@ def _check_if_active_celery_worker(hostname: str):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def list_workers(args):
+def list_workers(args: Namespace):
     """List all active celery workers."""
     workers = []
     # This needs to be imported locally to not trigger Providers Manager initialization
@@ -345,7 +349,7 @@ def list_workers(args):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def shutdown_worker(args):
+def shutdown_worker(args: Namespace):
     """Request graceful shutdown of a celery worker."""
     _check_if_active_celery_worker(hostname=args.celery_hostname)
     # This needs to be imported locally to not trigger Providers Manager initialization
@@ -356,7 +360,7 @@ def shutdown_worker(args):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def shutdown_all_workers(args):
+def shutdown_all_workers(args: Namespace):
     """Request graceful shutdown all celery workers."""
     if not (
         args.yes
@@ -374,7 +378,7 @@ def shutdown_all_workers(args):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def add_queue(args):
+def add_queue(args: Namespace):
     """Subscribe a Celery worker to specified queues."""
     _check_if_active_celery_worker(hostname=args.celery_hostname)
     # This needs to be imported locally to not trigger Providers Manager initialization
@@ -387,7 +391,7 @@ def add_queue(args):
 
 @cli_utils.action_cli
 @_providers_configuration_loaded
-def remove_queue(args):
+def remove_queue(args: Namespace):
     """Unsubscribe a Celery worker from specified queues."""
     _check_if_active_celery_worker(hostname=args.celery_hostname)
     # This needs to be imported locally to not trigger Providers Manager initialization

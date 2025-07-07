@@ -25,7 +25,7 @@ import os
 import random
 import re
 import string
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from marshmallow import Schema, fields, validate
 from marshmallow.exceptions import ValidationError
@@ -36,6 +36,9 @@ from airflow.providers.fab.auth_manager.cli_commands.utils import get_applicatio
 from airflow.utils import cli as cli_utils
 from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 class UserSchema(Schema):
@@ -51,7 +54,7 @@ class UserSchema(Schema):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def users_list(args):
+def users_list(args: Namespace):
     """List users at the command line."""
     with get_application_builder() as appbuilder:
         users = appbuilder.sm.get_all_users()
@@ -64,7 +67,7 @@ def users_list(args):
 
 @cli_utils.action_cli(check_db=True)
 @providers_configuration_loaded
-def users_create(args):
+def users_create(args: Namespace):
     """Create new user in the DB."""
     with get_application_builder() as appbuilder:
         role = appbuilder.sm.find_role(args.role)
@@ -84,7 +87,7 @@ def users_create(args):
             raise SystemExit("Failed to create user")
 
 
-def _find_user(args):
+def _find_user(args: Namespace):
     if not args.username and not args.email:
         raise SystemExit("Missing args: must supply one of --username or --email")
 
@@ -100,7 +103,7 @@ def _find_user(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def user_reset_password(args):
+def user_reset_password(args: Namespace):
     """Reset user password user from DB."""
     user = _find_user(args)
     password = _create_password(args)
@@ -126,7 +129,7 @@ def _create_password(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def users_delete(args):
+def users_delete(args: Namespace):
     """Delete user from DB."""
     user = _find_user(args)
 
@@ -169,7 +172,7 @@ def users_manage_role(args, remove=False):
 
 
 @providers_configuration_loaded
-def users_export(args):
+def users_export(args: Namespace):
     """Export all users to the json file."""
     with get_application_builder() as appbuilder:
         users = appbuilder.sm.get_all_users()
@@ -197,7 +200,7 @@ def users_export(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def users_import(args):
+def users_import(args: Namespace):
     """Import users from the json file."""
     json_file = getattr(args, "import")
     if not os.path.exists(json_file):

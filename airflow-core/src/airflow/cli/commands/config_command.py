@@ -21,7 +21,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from io import StringIO
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pygments
 from pygments.lexers.configs import IniLexer
@@ -33,9 +33,12 @@ from airflow.utils.cli import should_use_colors
 from airflow.utils.code_utils import get_terminal_formatter
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 @providers_configuration_loaded
-def show_config(args):
+def show_config(args: Namespace) -> None:
     """Show current application configuration."""
     with StringIO() as output:
         conf.write(
@@ -56,7 +59,7 @@ def show_config(args):
 
 
 @providers_configuration_loaded
-def get_value(args):
+def get_value(args: Namespace) -> None:
     """Get one value from configuration."""
     # while this will make get_value quite a bit slower we must initialize configuration
     # for providers because we do not know what sections and options will be available after
@@ -815,7 +818,7 @@ CONFIGS_CHANGES = [
 
 
 @providers_configuration_loaded
-def lint_config(args) -> None:
+def lint_config(args: Namespace) -> None:
     """
     Lint the airflow.cfg file for removed, or renamed configurations.
 
@@ -902,7 +905,7 @@ def lint_config(args) -> None:
 
 
 @providers_configuration_loaded
-def update_config(args) -> None:
+def update_config(args: Namespace) -> None:
     """
     Update the airflow.cfg file to migrate configuration changes from Airflow 2.x to Airflow 3.
 

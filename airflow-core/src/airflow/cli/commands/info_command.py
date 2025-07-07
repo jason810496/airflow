@@ -25,7 +25,7 @@ import platform
 import subprocess
 import sys
 from enum import Enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -38,6 +38,9 @@ from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.platform import getuser
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.version import version as airflow_version
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 log = logging.getLogger(__name__)
 
@@ -379,7 +382,7 @@ def _send_report_to_fileio(info):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def show_info(args):
+def show_info(args: Namespace):
     """Show information related to Airflow, system and other."""
     # Enforce anonymization, when file_io upload is tuned on.
     anonymizer = PiiAnonymizer() if args.anonymize or args.file_io else NullAnonymizer()

@@ -23,7 +23,7 @@ import os
 import warnings
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select
@@ -41,6 +41,9 @@ from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.db import create_default_connections as db_create_default_connections
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.session import create_session
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 def _connection_mapper(conn: Connection) -> dict[str, Any]:
@@ -63,7 +66,7 @@ def _connection_mapper(conn: Connection) -> dict[str, Any]:
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def connections_get(args):
+def connections_get(args: Namespace):
     """Get a connection."""
     try:
         from airflow.sdk import BaseHook
@@ -80,7 +83,7 @@ def connections_get(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def connections_list(args):
+def connections_list(args: Namespace):
     """List all connections at the command line."""
     with create_session() as session:
         query = select(Connection)
@@ -109,7 +112,7 @@ def _connection_to_dict(conn: Connection) -> dict:
     }
 
 
-def create_default_connections(args):
+def create_default_connections(args: Namespace):
     db_create_default_connections()
 
 
@@ -159,7 +162,7 @@ def _get_connection_types() -> list[str]:
 
 
 @providers_configuration_loaded
-def connections_export(args):
+def connections_export(args: Namespace):
     """Export all connections to a file."""
     file_formats = [".yaml", ".json", ".env"]
     if args.format:
@@ -207,7 +210,7 @@ alternative_conn_specs = ["conn_type", "conn_host", "conn_login", "conn_password
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def connections_add(args):
+def connections_add(args: Namespace):
     """Add new connection."""
     has_uri = bool(args.conn_uri)
     has_json = bool(args.conn_json)
@@ -303,7 +306,7 @@ def connections_add(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def connections_delete(args):
+def connections_delete(args: Namespace):
     """Delete connection from DB."""
     with create_session() as session:
         try:
@@ -319,7 +322,7 @@ def connections_delete(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def connections_import(args):
+def connections_import(args: Namespace):
     """Import connections from a file."""
     if os.path.exists(args.file):
         _import_helper(args.file, args.overwrite)
@@ -358,7 +361,7 @@ def _import_helper(file_path: str, overwrite: bool) -> None:
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def connections_test(args) -> None:
+def connections_test(args: Namespace) -> None:
     """Test an Airflow connection."""
     console = AirflowConsole()
     if conf.get("core", "test_connection", fallback="Disabled").lower().strip() != "enabled":

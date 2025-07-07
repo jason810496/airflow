@@ -51,6 +51,8 @@ from airflow.utils.session import NEW_SESSION, create_session, provide_session
 from airflow.utils.state import DagRunState
 
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from graphviz.dot import Dot
     from sqlalchemy.orm import Session
 
@@ -64,7 +66,7 @@ log = logging.getLogger(__name__)
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_trigger(args) -> None:
+def dag_trigger(args: Namespace) -> None:
     """Create a dag run for the specified dag."""
     api_client = get_current_api_client()
     try:
@@ -91,7 +93,7 @@ def dag_trigger(args) -> None:
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_delete(args) -> None:
+def dag_delete(args: Namespace) -> None:
     """Delete all DB records related to the specified dag."""
     api_client = get_current_api_client()
     if (
@@ -110,14 +112,14 @@ def dag_delete(args) -> None:
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_pause(args) -> None:
+def dag_pause(args: Namespace) -> None:
     """Pauses a DAG."""
     set_is_paused(True, args)
 
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_unpause(args) -> None:
+def dag_unpause(args: Namespace) -> None:
     """Unpauses a DAG."""
     set_is_paused(False, args)
 
@@ -164,7 +166,7 @@ def set_is_paused(is_paused: bool, args) -> None:
 
 
 @providers_configuration_loaded
-def dag_dependencies_show(args) -> None:
+def dag_dependencies_show(args: Namespace) -> None:
     """Display DAG dependencies, save to file or show as imgcat image."""
     deduplicated_dag_dependencies = {
         dag_id: list(set(dag_dependencies))
@@ -188,7 +190,7 @@ def dag_dependencies_show(args) -> None:
 
 
 @providers_configuration_loaded
-def dag_show(args) -> None:
+def dag_show(args: Namespace) -> None:
     """Display DAG or saves its graphic representation to the file."""
     dag = get_dag(bundle_names=None, dag_id=args.dag_id, from_db=True)
     dot = render_dag(dag)
@@ -294,7 +296,7 @@ def dag_state(args, session: Session = NEW_SESSION) -> None:
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def dag_next_execution(args) -> None:
+def dag_next_execution(args: Namespace) -> None:
     """
     Return the next logical datetime of a DAG at the command line.
 
@@ -494,7 +496,7 @@ def dag_list_import_errors(args, session: Session = NEW_SESSION) -> None:
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def dag_report(args) -> None:
+def dag_report(args: Namespace) -> None:
     """Display dagbag stats at the command line."""
     manager = DagBundlesManager()
 

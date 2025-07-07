@@ -16,12 +16,17 @@
 # under the License.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from airflow import settings
 from airflow.cli.commands.db_command import run_db_downgrade_command, run_db_migrate_command
 from airflow.configuration import conf
 from airflow.utils import cli as cli_utils
 from airflow.utils.module_loading import import_string
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 def _get_db_manager(classpath: str):
@@ -33,7 +38,7 @@ def _get_db_manager(classpath: str):
 
 
 @providers_configuration_loaded
-def resetdb(args):
+def resetdb(args: Namespace):
     """Reset the metadata database."""
     db_manager = _get_db_manager(args.import_path)
     if not (args.yes or input("This will drop existing tables if they exist. Proceed? (y/n)").upper() == "Y"):
@@ -43,7 +48,7 @@ def resetdb(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def migratedb(args):
+def migratedb(args: Namespace):
     """Migrates the metadata database."""
     db_manager = _get_db_manager(args.import_path)
     session = settings.Session()
@@ -53,7 +58,7 @@ def migratedb(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def downgrade(args):
+def downgrade(args: Namespace):
     """Downgrades the metadata database."""
     db_manager = _get_db_manager(args.import_path)
     session = settings.Session()

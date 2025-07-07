@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _check_cli_args(args):
+def _check_cli_args(*args: [Namespace]) -> None:
     if not args:
         raise ValueError("Args should be set")
     if not isinstance(args[0], Namespace):
@@ -408,7 +408,7 @@ class ColorMode:
     AUTO = "auto"
 
 
-def should_use_colors(args) -> bool:
+def should_use_colors(args: Namespace) -> bool:
     """Process arguments and decide whether to enable color in output."""
     if args.color == ColorMode.ON:
         return True

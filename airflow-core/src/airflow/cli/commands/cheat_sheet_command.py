@@ -24,11 +24,13 @@ from airflow.cli.simple_table import AirflowConsole, SimpleTable
 from airflow.utils.cli import suppress_logs_and_warning
 
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from airflow.cli.cli_parser import ActionCommand
 
 
 @suppress_logs_and_warning
-def cheat_sheet(args):
+def cheat_sheet(args: Namespace) -> None:
     """Display cheat-sheet."""
     display_commands_index()
 

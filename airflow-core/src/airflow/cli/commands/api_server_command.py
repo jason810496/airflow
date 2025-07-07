@@ -22,6 +22,7 @@ import logging
 import os
 import subprocess
 import textwrap
+from typing import TYPE_CHECKING
 
 import uvicorn
 from gunicorn.util import daemonize
@@ -31,6 +32,9 @@ from airflow import settings
 from airflow.exceptions import AirflowConfigException
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +46,7 @@ log = logging.getLogger(__name__)
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def api_server(args):
+def api_server(args: Namespace) -> None:
     """Start Airflow API server."""
     print(settings.HEADER)
 
@@ -117,7 +121,7 @@ def api_server(args):
         )
 
 
-def _get_ssl_cert_and_key_filepaths(cli_arguments) -> tuple[str | None, str | None]:
+def _get_ssl_cert_and_key_filepaths(cli_arguments: Namespace) -> tuple[str | None, str | None]:
     error_template_1 = "Need both, have provided {} but not {}"
     error_template_2 = "SSL related file does not exist {}"
 

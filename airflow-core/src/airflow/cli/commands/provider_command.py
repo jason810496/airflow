@@ -20,11 +20,15 @@ from __future__ import annotations
 
 import re
 import sys
+from typing import TYPE_CHECKING
 
 from airflow.cli.simple_table import AirflowConsole
 from airflow.providers_manager import ProvidersManager
 from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 ERROR_IMPORTING_HOOK = "Error when importing hook!"
 
@@ -35,7 +39,7 @@ def _remove_rst_syntax(value: str) -> str:
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def provider_get(args):
+def provider_get(args: Namespace) -> None:
     """Get a provider info."""
     providers = ProvidersManager().providers
     if args.provider_name in providers:
@@ -57,7 +61,7 @@ def provider_get(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def providers_list(args):
+def providers_list(args: Namespace) -> None:
     """List all providers at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().providers.values()),
@@ -72,7 +76,7 @@ def providers_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def hooks_list(args):
+def hooks_list(args: Namespace) -> None:
     """List all hooks at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().hooks.items()),
@@ -89,7 +93,7 @@ def hooks_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def dialects_list(args):
+def dialects_list(args: Namespace) -> None:
     AirflowConsole().print_as(
         data=list(ProvidersManager().dialects.values()),
         output=args.output,
@@ -102,7 +106,7 @@ def dialects_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def triggers_list(args):
+def triggers_list(args: Namespace) -> None:
     AirflowConsole().print_as(
         data=ProvidersManager().trigger,
         output=args.output,
@@ -116,7 +120,7 @@ def triggers_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def notifications_list(args):
+def notifications_list(args: Namespace) -> None:
     AirflowConsole().print_as(
         data=ProvidersManager().notification,
         output=args.output,
@@ -128,7 +132,7 @@ def notifications_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def connection_form_widget_list(args):
+def connection_form_widget_list(args: Namespace) -> None:
     """List all custom connection form fields at the command line."""
     AirflowConsole().print_as(
         data=sorted(ProvidersManager().connection_form_widgets.items()),
@@ -144,7 +148,7 @@ def connection_form_widget_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def connection_field_behaviours(args):
+def connection_field_behaviours(args: Namespace) -> None:
     """List field behaviours."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().field_behaviours),
@@ -157,7 +161,7 @@ def connection_field_behaviours(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def extra_links_list(args):
+def extra_links_list(args: Namespace) -> None:
     """List all extra links at the command line."""
     AirflowConsole().print_as(
         data=ProvidersManager().extra_links_class_names,
@@ -170,7 +174,7 @@ def extra_links_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def logging_list(args):
+def logging_list(args: Namespace) -> None:
     """List all log task handlers at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().logging_class_names),
@@ -183,7 +187,7 @@ def logging_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def secrets_backends_list(args):
+def secrets_backends_list(args: Namespace) -> None:
     """List all secrets backends at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().secrets_backend_class_names),
@@ -196,7 +200,7 @@ def secrets_backends_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def auth_managers_list(args):
+def auth_managers_list(args: Namespace) -> None:
     """List all auth managers at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().auth_managers),
@@ -209,7 +213,7 @@ def auth_managers_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def executors_list(args):
+def executors_list(args: Namespace) -> None:
     """List all executors at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().executor_class_names),
@@ -222,7 +226,7 @@ def executors_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def queues_list(args):
+def queues_list(args: Namespace) -> None:
     """List all queues at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().queue_class_names),
@@ -235,7 +239,7 @@ def queues_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def config_list(args):
+def config_list(args: Namespace) -> None:
     """List all configurations at the command line."""
     AirflowConsole().print_as(
         data=list(ProvidersManager().provider_configs),
@@ -247,7 +251,7 @@ def config_list(args):
 
 
 @suppress_logs_and_warning
-def lazy_loaded(args):
+def lazy_loaded(args: Namespace) -> None:
     """
     Informs if providers manager has been initialized too early.
 

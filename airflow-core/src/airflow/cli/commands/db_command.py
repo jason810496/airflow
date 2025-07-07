@@ -36,13 +36,15 @@ from airflow.utils.process_utils import execute_interactive
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from tenacity import RetryCallState
 
 log = logging.getLogger(__name__)
 
 
 @providers_configuration_loaded
-def resetdb(args):
+def resetdb(args: Namespace):
     """Reset the metadata database."""
     print(f"DB: {settings.engine.url!r}")
     if not (args.yes or input("This will drop existing tables if they exist. Proceed? (y/n)").upper() == "Y"):
@@ -185,7 +187,7 @@ def run_db_downgrade_command(args, command, revision_heads_map: dict[str, str]):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def migratedb(args):
+def migratedb(args: Namespace):
     """Migrates the metadata database."""
     if args.from_version:
         try:
@@ -199,20 +201,20 @@ def migratedb(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def downgrade(args):
+def downgrade(args: Namespace):
     """Downgrades the metadata database."""
     run_db_downgrade_command(args, db.downgrade, _REVISION_HEADS_MAP)
 
 
 @providers_configuration_loaded
-def check_migrations(args):
+def check_migrations(args: Namespace):
     """Wait for all airflow migrations to complete. Used for launching airflow in k8s."""
     db.check_migrations(timeout=args.migration_wait_timeout)
 
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def shell(args):
+def shell(args: Namespace):
     """Run a shell that allows to access metadata database."""
     url = settings.engine.url
     print(f"DB: {url!r}")
@@ -249,7 +251,7 @@ def shell(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def check(args):
+def check(args: Namespace):
     """Run a check command that checks if db is available."""
     retries: int = args.retry
     retry_delay: int = args.retry_delay
@@ -274,7 +276,7 @@ all_tables = sorted(config_dict)
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def cleanup_tables(args):
+def cleanup_tables(args: Namespace):
     """Purges old records in metadata database."""
     run_cleanup(
         table_names=args.tables,
@@ -289,7 +291,7 @@ def cleanup_tables(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def export_archived(args):
+def export_archived(args: Namespace):
     """Export archived records from metadata database."""
     export_archived_records(
         export_format=args.export_format,
@@ -302,7 +304,7 @@ def export_archived(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def drop_archived(args):
+def drop_archived(args: Namespace):
     """Drop archived tables from metadata database."""
     drop_archived_tables(
         table_names=args.tables,

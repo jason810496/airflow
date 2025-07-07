@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import select
 
 from airflow.models import Connection, Trigger, Variable
@@ -26,10 +28,13 @@ from airflow.utils.providers_configuration_loader import providers_configuration
 from airflow.utils.session import create_session
 from airflow.utils.sqlalchemy import is_sqlalchemy_v1
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def rotate_fernet_key(args):
+def rotate_fernet_key(args: Namespace):
     """Rotates all encrypted connection credentials, triggers and variables."""
     batch_size = 100
     rotate_method = rotate_items_in_batches_v1 if is_sqlalchemy_v1() else rotate_items_in_batches_v2

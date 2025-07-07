@@ -55,6 +55,7 @@ from airflow.utils.task_instance_session import set_current_task_instance_sessio
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
 if TYPE_CHECKING:
+    from argparse import Namespace
     from typing import Literal
 
     from sqlalchemy.orm.session import Session
@@ -223,7 +224,7 @@ class TaskCommandMarker:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def task_failed_deps(args) -> None:
+def task_failed_deps(args: Namespace) -> None:
     """
     Get task instance dependencies that were not met.
 
@@ -253,7 +254,7 @@ def task_failed_deps(args) -> None:
 @cli_utils.action_cli(check_db=False)
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def task_state(args) -> None:
+def task_state(args: Namespace) -> None:
     """
     Return the state of a TaskInstance at the command line.
 
@@ -429,7 +430,7 @@ def task_render(args, dag: DAG | None = None) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def task_clear(args) -> None:
+def task_clear(args: Namespace) -> None:
     """Clear all task instances or only those matched by regex for a DAG(s)."""
     logging.basicConfig(level=settings.LOGGING_LEVEL, format=settings.SIMPLE_LOG_FORMAT)
     if args.dag_id and not args.bundle_name and not args.dag_regex and not args.task_regex:

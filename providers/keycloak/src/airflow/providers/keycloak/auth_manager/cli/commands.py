@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import get_args
+from typing import TYPE_CHECKING, get_args
 
 from keycloak import KeycloakAdmin, KeycloakError
 
@@ -35,12 +35,15 @@ from airflow.providers.keycloak.auth_manager.resources import KeycloakResource
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 
+if TYPE_CHECKING:
+    from argparse import Namespace
+
 log = logging.getLogger(__name__)
 
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def create_scopes_command(args):
+def create_scopes_command(args: Namespace):
     """Create Keycloak auth manager scopes in Keycloak."""
     client = _get_client(args)
     client_uuid = _get_client_uuid(args)
@@ -50,7 +53,7 @@ def create_scopes_command(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def create_resources_command(args):
+def create_resources_command(args: Namespace):
     """Create Keycloak auth manager resources in Keycloak."""
     client = _get_client(args)
     client_uuid = _get_client_uuid(args)
@@ -60,7 +63,7 @@ def create_resources_command(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def create_permissions_command(args):
+def create_permissions_command(args: Namespace):
     """Create Keycloak auth manager permissions in Keycloak."""
     client = _get_client(args)
     client_uuid = _get_client_uuid(args)
@@ -70,7 +73,7 @@ def create_permissions_command(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def create_all_command(args):
+def create_all_command(args: Namespace):
     """Create all Keycloak auth manager entities in Keycloak."""
     client = _get_client(args)
     client_uuid = _get_client_uuid(args)
@@ -80,7 +83,7 @@ def create_all_command(args):
     _create_permissions(client, client_uuid)
 
 
-def _get_client(args):
+def _get_client(args: Namespace):
     server_url = conf.get(CONF_SECTION_NAME, CONF_SERVER_URL_KEY)
     realm = conf.get(CONF_SECTION_NAME, CONF_REALM_KEY)
 
@@ -95,7 +98,7 @@ def _get_client(args):
     )
 
 
-def _get_client_uuid(args):
+def _get_client_uuid(args: Namespace):
     client = _get_client(args)
     clients = client.get_clients()
     client_id = conf.get(CONF_SECTION_NAME, CONF_CLIENT_ID_KEY)

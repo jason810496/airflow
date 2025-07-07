@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import boto3
 
@@ -36,6 +36,8 @@ except ImportError:
     )
 
 if TYPE_CHECKING:
+    from argparse import Namespace
+
     from botocore.client import BaseClient
 
 log = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ log = logging.getLogger(__name__)
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def init_avp(args):
+def init_avp(args: Namespace):
     """Initialize Amazon Verified Permissions resources."""
     client = _get_client()
 
@@ -58,6 +60,7 @@ def init_avp(args):
         )
     else:
         # Set the schema
+        policy_store_id = cast("str", policy_store_id)  # for mypy type checking
         _set_schema(client, policy_store_id, args)
 
     if not args.dry_run:
@@ -67,7 +70,7 @@ def init_avp(args):
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def update_schema(args):
+def update_schema(args: Namespace):
     """Update Amazon Verified Permissions policy store schema."""
     if not args.policy_store_id:
         raise ValueError("Parameter '--policy-store-id' is required.")
@@ -81,7 +84,7 @@ def _get_client():
     return boto3.client("verifiedpermissions", region_name=region_name)
 
 
-def _create_policy_store(client: BaseClient, args) -> tuple[str | None, bool]:
+def _create_policy_store(client: BaseClient, args: Namespace) -> tuple[str | None, bool]:
     """
     Create if needed the policy store.
 
@@ -124,7 +127,7 @@ def _create_policy_store(client: BaseClient, args) -> tuple[str | None, bool]:
     return response["policyStoreId"], True
 
 
-def _set_schema(client: BaseClient, policy_store_id: str, args) -> None:
+def _set_schema(client: BaseClient, policy_store_id: str, args: Namespace) -> None:
     """Set the policy store schema."""
     if args.dry_run:
         print(f"Dry run, not updating the schema of the policy store with ID '{policy_store_id}'.")

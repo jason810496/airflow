@@ -26,6 +26,7 @@ from datetime import datetime
 from getpass import getuser
 from pathlib import Path
 from time import sleep, time
+from typing import TYPE_CHECKING
 
 import psutil
 
@@ -47,6 +48,9 @@ from airflow.providers.edge3.models.edge_worker import EdgeWorkerState
 from airflow.utils import cli as cli_utils
 from airflow.utils.net import getfqdn
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 logger = logging.getLogger(__name__)
 EDGE_WORKER_HEADER = "\n".join(
@@ -85,7 +89,7 @@ force_use_internal_api_on_edge_worker()
 
 
 @providers_configuration_loaded
-def _launch_worker(args):
+def _launch_worker(args: Namespace):
     print(settings.HEADER)
     print(EDGE_WORKER_HEADER)
 
@@ -103,7 +107,7 @@ def _launch_worker(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def worker(args):
+def worker(args: Namespace):
     """Start Airflow Edge Worker."""
     umask = args.umask or conf.get("edge", "worker_umask", fallback=settings.DAEMON_UMASK)
 
@@ -119,7 +123,7 @@ def worker(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def status(args):
+def status(args: Namespace):
     """Check for Airflow Local Edge Worker status."""
     pid = get_pid(args.pid)
 
@@ -145,7 +149,7 @@ def status(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def maintenance(args):
+def maintenance(args: Namespace):
     """Set or Unset maintenance mode of local edge worker."""
     if args.maintenance == "on" and not args.comments:
         logger.error("Comments are required when setting maintenance mode.")
@@ -216,7 +220,7 @@ def maintenance(args):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def stop(args):
+def stop(args: Namespace):
     """Stop a running local Airflow Edge Worker."""
     pid = get_pid(args.pid)
     # Send SIGINT
@@ -251,7 +255,7 @@ def _check_if_registered_edge_host(hostname: str):
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def list_edge_workers(args) -> None:
+def list_edge_workers(args: Namespace) -> None:
     """Query the db to list all registered edge workers."""
     _check_valid_db_connection()
     from airflow.providers.edge3.models.edge_worker import get_registered_edge_hosts
@@ -287,7 +291,7 @@ def list_edge_workers(args) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def put_remote_worker_on_maintenance(args) -> None:
+def put_remote_worker_on_maintenance(args: Namespace) -> None:
     """Put remote edge worker on maintenance."""
     _check_valid_db_connection()
     _check_if_registered_edge_host(hostname=args.edge_hostname)
@@ -299,7 +303,7 @@ def put_remote_worker_on_maintenance(args) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def remove_remote_worker_from_maintenance(args) -> None:
+def remove_remote_worker_from_maintenance(args: Namespace) -> None:
     """Remove remote edge worker from maintenance."""
     _check_valid_db_connection()
     _check_if_registered_edge_host(hostname=args.edge_hostname)
@@ -311,7 +315,7 @@ def remove_remote_worker_from_maintenance(args) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def remote_worker_update_maintenance_comment(args) -> None:
+def remote_worker_update_maintenance_comment(args: Namespace) -> None:
     """Update maintenance comments of the remote edge worker."""
     _check_valid_db_connection()
     _check_if_registered_edge_host(hostname=args.edge_hostname)
@@ -326,7 +330,7 @@ def remote_worker_update_maintenance_comment(args) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def remove_remote_worker(args) -> None:
+def remove_remote_worker(args: Namespace) -> None:
     """Remove remote edge worker entry from db."""
     _check_valid_db_connection()
     _check_if_registered_edge_host(hostname=args.edge_hostname)
@@ -341,7 +345,7 @@ def remove_remote_worker(args) -> None:
 
 @cli_utils.action_cli(check_db=False)
 @providers_configuration_loaded
-def remote_worker_request_shutdown(args) -> None:
+def remote_worker_request_shutdown(args: Namespace) -> None:
     """Initiate the shutdown of the remote edge worker."""
     _check_valid_db_connection()
     _check_if_registered_edge_host(hostname=args.edge_hostname)

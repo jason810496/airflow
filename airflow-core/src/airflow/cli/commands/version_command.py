@@ -18,9 +18,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import airflow
 
+if TYPE_CHECKING:
+    from argparse import Namespace
 
-def version(args):
+
+def version(args: Namespace) -> None:
     """Display Airflow version at the command line."""
     print(airflow.__version__)

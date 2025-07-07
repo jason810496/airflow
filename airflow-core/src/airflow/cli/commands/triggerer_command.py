@@ -22,6 +22,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from functools import partial
 from multiprocessing import Process
+from typing import TYPE_CHECKING
 
 from airflow import settings
 from airflow.cli.commands.daemon_utils import run_command_with_daemon_option
@@ -30,6 +31,9 @@ from airflow.jobs.job import Job, run_job
 from airflow.jobs.triggerer_job_runner import TriggererJobRunner
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 @contextmanager
@@ -57,7 +61,7 @@ def triggerer_run(skip_serve_logs: bool, capacity: int, triggerer_heartrate: flo
 
 @cli_utils.action_cli
 @providers_configuration_loaded
-def triggerer(args):
+def triggerer(args: Namespace):
     """Start Airflow Triggerer."""
     settings.MASK_SECRETS_IN_LOGS = True
     print(settings.HEADER)

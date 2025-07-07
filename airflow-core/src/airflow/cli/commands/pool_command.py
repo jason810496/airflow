@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 from json import JSONDecodeError
+from typing import TYPE_CHECKING
 
 from airflow.api.client import get_current_api_client
 from airflow.cli.simple_table import AirflowConsole
@@ -29,6 +30,9 @@ from airflow.exceptions import PoolNotFound
 from airflow.utils import cli as cli_utils
 from airflow.utils.cli import suppress_logs_and_warning
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+if TYPE_CHECKING:
+    from argparse import Namespace
 
 
 def _show_pools(pools, output):
@@ -46,7 +50,7 @@ def _show_pools(pools, output):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def pool_list(args):
+def pool_list(args: Namespace):
     """Display info of all the pools."""
     api_client = get_current_api_client()
     pools = api_client.get_pools()
@@ -55,7 +59,7 @@ def pool_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def pool_get(args):
+def pool_get(args: Namespace):
     """Display pool info by a given name."""
     api_client = get_current_api_client()
     try:
@@ -68,7 +72,7 @@ def pool_get(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def pool_set(args):
+def pool_set(args: Namespace):
     """Create new pool with a given name and slots."""
     api_client = get_current_api_client()
     api_client.create_pool(
@@ -80,7 +84,7 @@ def pool_set(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def pool_delete(args):
+def pool_delete(args: Namespace):
     """Delete pool by a given name."""
     api_client = get_current_api_client()
     try:
@@ -93,7 +97,7 @@ def pool_delete(args):
 @cli_utils.action_cli
 @suppress_logs_and_warning
 @providers_configuration_loaded
-def pool_import(args):
+def pool_import(args: Namespace):
     """Import pools from the file."""
     if not os.path.exists(args.file):
         raise SystemExit(f"Missing pools file {args.file}")
@@ -104,7 +108,7 @@ def pool_import(args):
 
 
 @providers_configuration_loaded
-def pool_export(args):
+def pool_export(args: Namespace):
     """Export all the pools to the file."""
     pools = pool_export_helper(args.file)
     print(f"Exported {len(pools)} pools to {args.file}")
