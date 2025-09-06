@@ -879,8 +879,22 @@ def test__stream_lines_by_chunk_error_handling(seekable, closed, unexpected_exce
         assert result == [], "Expected no lines to be yield from a stream that raised an exception."
 
 
-def test__log_stream_to_parsed_log_stream():
-    parsed_log_stream = _log_stream_to_parsed_log_stream(io.StringIO(log_sample))
+@pytest.mark.parametrize("line_type", ["dict", "str"])
+def test__log_stream_to_parsed_log_stream(line_type: str):
+    if line_type == "str":
+        parsed_log_stream = _log_stream_to_parsed_log_stream(io.StringIO(log_sample))
+    else:
+        # for dict, we convert each line to a dict with a 'timestamp' and 'event' key
+        log_dict_lines = []
+        for line in log_sample.splitlines():
+            timestamp_str = line.strip().split("]")[0].strip("[")
+            log_dict_lines.append(
+                {
+                    "timestamp": timestamp_str,
+                    "event": line,
+                }
+            )
+        parsed_log_stream = _log_stream_to_parsed_log_stream(log_dict_lines)
 
     actual_timestamps = []
     last_idx = -1
