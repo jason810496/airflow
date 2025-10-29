@@ -29,7 +29,6 @@ from pydantic import NonNegativeInt
 from airflow.api_fastapi.app import get_auth_manager
 from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_TOKEN
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
-from airflow.api_fastapi.common.auth_manager import AuthManagerDep
 from airflow.api_fastapi.auth.managers.models.batch_apis import (
     IsAuthorizedConnectionRequest,
     IsAuthorizedPoolRequest,
@@ -47,6 +46,7 @@ from airflow.api_fastapi.auth.managers.models.resource_details import (
     PoolDetails,
     VariableDetails,
 )
+from airflow.api_fastapi.common.auth_manager import AuthManagerDep
 from airflow.api_fastapi.core_api.base import OrmClause
 from airflow.api_fastapi.core_api.datamodels.common import (
     BulkAction,

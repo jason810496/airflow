@@ -16,12 +16,11 @@
 # under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, Request
 
-if TYPE_CHECKING:
-    from airflow.api_fastapi.auth.managers.base_auth_manager import BaseAuthManager
+from airflow.api_fastapi.auth.managers.base_auth_manager import BaseAuthManager
 
 
 def auth_manager_from_app(request: Request) -> BaseAuthManager:
