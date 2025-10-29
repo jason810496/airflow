@@ -301,6 +301,15 @@ def resolve_pr_number_to_repo_branch(pr_number: str, github_repository: str) -> 
             sys.exit(1)
 
         pr_data = response.json()
+        
+        # Check if the head repo exists (could be None if fork was deleted)
+        if pr_data.get("head", {}).get("repo") is None:
+            console.print(
+                f"[error]PR #{pr_number} head repository is not available. "
+                "This can happen if the fork has been deleted."
+            )
+            sys.exit(1)
+        
         owner = pr_data["head"]["repo"]["owner"]["login"]
         repo = pr_data["head"]["repo"]["name"]
         branch = pr_data["head"]["ref"]

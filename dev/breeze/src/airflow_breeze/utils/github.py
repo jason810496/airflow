@@ -347,6 +347,15 @@ def get_repo_and_branch_from_pr(
             sys.exit(1)
 
         pr_data = response.json()
+        
+        # Check if the head repo exists (could be None if fork was deleted)
+        if pr_data.get("head", {}).get("repo") is None:
+            get_console().print(
+                f"[error]PR #{pr_number} head repository is not available. "
+                "This can happen if the fork has been deleted."
+            )
+            sys.exit(1)
+        
         owner = pr_data["head"]["repo"]["owner"]["login"]
         repo = pr_data["head"]["repo"]["name"]
         branch = pr_data["head"]["ref"]
