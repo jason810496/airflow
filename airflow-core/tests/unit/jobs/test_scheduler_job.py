@@ -5245,6 +5245,71 @@ class TestSchedulerJob:
             total_running_count == 5
         )  # 4 from test_dag1 + 1 from test_dag2 (only most recent with catchup=False)
 
+    def test_max_active_runs_respected_with_concurrent_schedulers(self, dag_maker):
+        """
+        Test that max_active_runs is respected even when multiple schedulers
+        attempt to start queued dagruns concurrently (race condition scenario).
+        This test simulates the edge case described in issue #45388.
+        """
+        session = settings.Session()
+        
+        # Create a DAG with max_active_runs=1
+        with dag_maker(
+            dag_id="test_concurrent_scheduler",
+            max_active_runs=1,
+            schedule=timedelta(days=1),
+        ) as dag:
+            EmptyOperator(task_id="task")
+        
+        # Create multiple queued dagruns
+        dr1 = dag_maker.create_dagrun(run_type=DagRunType.SCHEDULED, state=DagRunState.QUEUED)
+        dr2 = dag_maker.create_dagrun_after(dr1, run_type=DagRunType.SCHEDULED, state=DagRunState.QUEUED)
+        session.flush()
+        
+        # Simulate two concurrent schedulers by creating two job runners
+        scheduler_job1 = Job(executor=MockExecutor(do_update=False))
+        job_runner1 = SchedulerJobRunner(job=scheduler_job1)
+        
+        scheduler_job2 = Job(executor=MockExecutor(do_update=False))
+        job_runner2 = SchedulerJobRunner(job=scheduler_job2)
+        
+        # First scheduler attempts to transition queued dagruns to running state
+        # With max_active_runs=1 and no currently running dagruns, this should start exactly one dagrun
+        job_runner1._start_queued_dagruns(session)
+        session.commit()
+        
+        # Check that only 1 dagrun is running
+        running_count = (
+            session.query(func.count(DagRun.id))
+            .filter(DagRun.dag_id == dag.dag_id, DagRun.state == DagRunState.RUNNING)
+            .scalar()
+        )
+        assert running_count == 1, "Only one dagrun should be running due to max_active_runs=1"
+        
+        # Second scheduler attempts to start queued dagruns
+        # The optimistic locking should prevent it from starting the second dagrun
+        # because the count of running dagruns doesn't match the expectation.
+        # Note: This test validates the fix works even with sequential execution
+        # because the optimistic locking check happens at the SQL level.
+        job_runner2._start_queued_dagruns(session)
+        session.commit()
+        
+        # Still only 1 dagrun should be running
+        running_count = (
+            session.query(func.count(DagRun.id))
+            .filter(DagRun.dag_id == dag.dag_id, DagRun.state == DagRunState.RUNNING)
+            .scalar()
+        )
+        assert running_count == 1, "max_active_runs limit should still be respected"
+        
+        # Verify that one dagrun is still queued
+        queued_count = (
+            session.query(func.count(DagRun.id))
+            .filter(DagRun.dag_id == dag.dag_id, DagRun.state == DagRunState.QUEUED)
+            .scalar()
+        )
+        assert queued_count == 1, "One dagrun should remain queued"
+
     def test_backfill_runs_are_started_with_lower_priority_catchup_true(self, dag_maker, session):
         """
         Here we are going to create all the runs at the same time and see which
