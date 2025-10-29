@@ -20,8 +20,7 @@ import re
 
 import pytest
 
-PR_NUMBER_PATTERN = r"^\d+$"
-GITHUB_REPO_BRANCH_PATTERN = r"^([^/]+)/([^/:]+):([^:]+)$"
+from airflow_breeze.global_constants import GITHUB_REPO_BRANCH_PATTERN, PR_NUMBER_PATTERN
 
 
 @pytest.mark.parametrize(
