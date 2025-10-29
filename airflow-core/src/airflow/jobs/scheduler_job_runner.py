@@ -1889,9 +1889,14 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 max_active = None
 
             # Optimistic locking: use an UPDATE statement that only succeeds if the
-            # count of running dagruns hasn't changed. This prevents race conditions
-            # in HA scheduler setups where multiple schedulers might try to start
-            # dagruns simultaneously.
+            # count of running dagruns hasn't changed since we checked. This prevents
+            # race conditions in HA scheduler setups where multiple schedulers might
+            # try to start dagruns simultaneously, which could violate max_active_runs.
+            # 
+            # The UPDATE statement includes a WHERE clause with a subquery that counts
+            # the current running dagruns. If this count doesn't match our expectation
+            # (active_runs), the UPDATE will affect 0 rows and we skip starting this dagrun.
+            # This ensures atomicity without requiring pessimistic locks at the DAG level.
             start_date = timezone.utcnow()
             
             # Build the count subquery for the current count of running dagruns
@@ -1930,9 +1935,11 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
             # If no rows were updated, another scheduler beat us to it or the count changed
             if result.rowcount == 0:
                 self.log.info(
-                    "Dagrun %s for dag %s was not started due to max_active_runs race condition",
+                    "Dagrun %s for dag %s was not started because the count of running "
+                    "dagruns changed (expected %d). This is normal in HA scheduler setups.",
                     run_id,
                     dag_id,
+                    active_runs,
                 )
                 continue
             
