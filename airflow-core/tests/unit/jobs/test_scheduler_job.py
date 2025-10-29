@@ -5273,9 +5273,8 @@ class TestSchedulerJob:
         scheduler_job2 = Job(executor=MockExecutor(do_update=False))
         job_runner2 = SchedulerJobRunner(job=scheduler_job2)
         
-        # Both schedulers try to start queued dagruns
-        # In the old implementation without optimistic locking, both would succeed
-        # With optimistic locking, only one should succeed
+        # First scheduler starts queued dagruns
+        # This should start one dagrun since max_active_runs=1
         job_runner1._start_queued_dagruns(session)
         session.commit()
         
@@ -5287,7 +5286,9 @@ class TestSchedulerJob:
         )
         assert running_count == 1, "Only one dagrun should be running due to max_active_runs=1"
         
-        # The second scheduler should not be able to start another dagrun
+        # Second scheduler attempts to start queued dagruns
+        # The optimistic locking should prevent it from starting the second dagrun
+        # because the count of running dagruns doesn't match the expectation
         job_runner2._start_queued_dagruns(session)
         session.commit()
         
