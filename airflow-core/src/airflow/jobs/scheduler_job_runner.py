@@ -1803,7 +1803,8 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
         active_runs_of_dags = Counter({(dag_id, br_id): num for dag_id, br_id, num in session.execute(query)})
 
         @add_debug_span
-        def _update_state(dag: SerializedDAG, dag_run: DagRun):
+        def _record_metrics(dag: SerializedDAG, dag_run: DagRun):
+            """Record metrics for the dagrun being started."""
             span = Trace.get_current_span()
             span.set_attributes(
                 {
@@ -1814,8 +1815,6 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 }
             )
 
-            dag_run.state = DagRunState.RUNNING
-            dag_run.start_date = timezone.utcnow()
             if (
                 dag.timetable.periodic
                 and dag_run.run_type != DagRunType.MANUAL
@@ -1861,7 +1860,8 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 continue
             active_runs = active_runs_of_dags[(dag_id, backfill_id)]
             if backfill_id is not None:
-                if active_runs >= backfill.max_active_runs:
+                max_active = backfill.max_active_runs
+                if active_runs >= max_active:
                     # todo: delete all "candidate dag runs" from list for this dag right now
                     self.log.info(
                         "dag cannot be started due to backfill max_active_runs constraint; "
@@ -1873,7 +1873,8 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                     )
                     continue
             elif dag.max_active_runs:
-                if active_runs >= dag.max_active_runs:
+                max_active = dag.max_active_runs
+                if active_runs >= max_active:
                     # todo: delete all candidate dag runs for this dag from list right now
                     self.log.info(
                         "dag cannot be started due to dag max_active_runs constraint; "
@@ -1884,6 +1885,60 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                         dag_run.run_id,
                     )
                     continue
+            else:
+                max_active = None
+
+            # Optimistic locking: use an UPDATE statement that only succeeds if the
+            # count of running dagruns hasn't changed. This prevents race conditions
+            # in HA scheduler setups where multiple schedulers might try to start
+            # dagruns simultaneously.
+            start_date = timezone.utcnow()
+            
+            # Build the count subquery for the current count of running dagruns
+            running_count_subquery = (
+                select(func.count(DagRun.id))
+                .where(
+                    DagRun.dag_id == dag_id,
+                    DagRun.state == DagRunState.RUNNING,
+                )
+            )
+            
+            # Add backfill_id condition if applicable
+            if backfill_id is not None:
+                running_count_subquery = running_count_subquery.where(
+                    DagRun.backfill_id == backfill_id
+                )
+            else:
+                running_count_subquery = running_count_subquery.where(
+                    DagRun.backfill_id.is_(None)
+                )
+            
+            # Execute the UPDATE with optimistic locking
+            update_stmt = (
+                update(DagRun)
+                .where(
+                    DagRun.id == dag_run.id,
+                    DagRun.state == DagRunState.QUEUED,
+                    # Only update if the current count matches our expectation
+                    running_count_subquery.scalar_subquery() == active_runs,
+                )
+                .values(state=DagRunState.RUNNING, start_date=start_date)
+            )
+            
+            result = session.execute(update_stmt)
+            
+            # If no rows were updated, another scheduler beat us to it or the count changed
+            if result.rowcount == 0:
+                self.log.info(
+                    "Dagrun %s for dag %s was not started due to max_active_runs race condition",
+                    run_id,
+                    dag_id,
+                )
+                continue
+            
+            # Refresh the dag_run object to get the updated state
+            session.refresh(dag_run)
+            
             if span.is_recording():
                 span.add_event(
                     name="dag_run",
@@ -1894,7 +1949,7 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                     },
                 )
             active_runs_of_dags[(dag_run.dag_id, backfill_id)] += 1
-            _update_state(dag, dag_run)
+            _record_metrics(dag, dag_run)
             dag_run.notify_dagrun_state_changed()
 
     @retry_db_transaction
