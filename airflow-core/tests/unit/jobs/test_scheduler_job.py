@@ -5273,8 +5273,8 @@ class TestSchedulerJob:
         scheduler_job2 = Job(executor=MockExecutor(do_update=False))
         job_runner2 = SchedulerJobRunner(job=scheduler_job2)
         
-        # First scheduler starts queued dagruns
-        # This should start one dagrun since max_active_runs=1
+        # First scheduler attempts to transition queued dagruns to running state
+        # With max_active_runs=1 and no currently running dagruns, this should start exactly one dagrun
         job_runner1._start_queued_dagruns(session)
         session.commit()
         
@@ -5288,7 +5288,9 @@ class TestSchedulerJob:
         
         # Second scheduler attempts to start queued dagruns
         # The optimistic locking should prevent it from starting the second dagrun
-        # because the count of running dagruns doesn't match the expectation
+        # because the count of running dagruns doesn't match the expectation.
+        # Note: This test validates the fix works even with sequential execution
+        # because the optimistic locking check happens at the SQL level.
         job_runner2._start_queued_dagruns(session)
         session.commit()
         
