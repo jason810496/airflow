@@ -174,11 +174,22 @@ def get_dags(
 @dags_router.get(
     "/{dag_id}",
     responses=create_openapi_http_exception_doc(
-        [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        ]
+        {
+            status.HTTP_400_BAD_REQUEST: [],
+            status.HTTP_404_NOT_FOUND: [
+                {
+                    "summary": "DAG not found in DagBag",
+                    "description": "The DAG with the specified ID was not found in the DagBag",
+                    "value": {"detail": "The Dag with ID: `example_dag` was not found"},
+                },
+                {
+                    "summary": "DAG not found in session",
+                    "description": "The DAG with the specified ID was not found in the database session",
+                    "value": {"detail": "Unable to obtain dag with id example_dag from session"},
+                },
+            ],
+            status.HTTP_422_UNPROCESSABLE_ENTITY: [],
+        }
     ),
     dependencies=[Depends(requires_access_dag(method="GET"))],
 )
@@ -398,11 +409,24 @@ def unfavorite_dag(dag_id: str, session: SessionDep, user: GetUserDep):
 @dags_router.delete(
     "/{dag_id}",
     responses=create_openapi_http_exception_doc(
-        [
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        ]
+        {
+            status.HTTP_400_BAD_REQUEST: [],
+            status.HTTP_404_NOT_FOUND: [
+                {
+                    "summary": "DAG not found",
+                    "description": "The DAG with the specified ID does not exist",
+                    "value": {"detail": "Dag with id: example_dag was not found"},
+                }
+            ],
+            status.HTTP_409_CONFLICT: [
+                {
+                    "summary": "DAG has running task instances",
+                    "description": "Cannot delete DAG because it has task instances that are still running",
+                    "value": {"detail": "Task instances of dag with id: 'example_dag' are still running"},
+                }
+            ],
+            status.HTTP_422_UNPROCESSABLE_ENTITY: [],
+        }
     ),
     dependencies=[Depends(requires_access_dag(method="DELETE")), Depends(action_logging())],
 )
