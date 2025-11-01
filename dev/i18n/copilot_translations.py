@@ -133,8 +133,32 @@ class CopilotTranslator:
             self.console.print(f"[red]Error checking gh extensions: {e}[/red]")
             sys.exit(1)
     
+    def _get_copilot_token(self) -> str | None:
+        """Get Copilot token using gh CLI.
+        
+        :return: The Copilot token or None if failed.
+        """
+        try:
+            result = subprocess.run(
+                ["gh", "api", "/copilot_internal/v2/token"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode != 0:
+                self.console.print(f"[red]Failed to get Copilot token: {result.stderr}[/red]")
+                return None
+            
+            response = json.loads(result.stdout)
+            return response.get("token")
+            
+        except Exception as e:
+            self.console.print(f"[red]Error getting Copilot token: {e}[/red]")
+            return None
+    
     def _copilot_complete(self, prompt: str, retries: int = 0) -> str:
-        """Get completion from GitHub Copilot CLI.
+        """Get completion from GitHub Copilot using gh CLI to call the API.
 
         :param prompt: The prompt to send to Copilot.
         :param retries: The current number of retries attempted.
@@ -150,37 +174,63 @@ class CopilotTranslator:
             )
         
         try:
-            # Use gh copilot suggest command to get translation
-            # The prompt is passed via stdin to avoid command-line length limits
+            # Get Copilot token
+            token = self._get_copilot_token()
+            if not token:
+                return ""
+            
+            # Prepare the request payload
+            payload = {
+                "prompt": prompt,
+                "suffix": "",
+                "max_tokens": 2000,
+                "temperature": 0.1,
+                "top_p": 1,
+                "n": 1,
+                "stop": ["\n"],
+                "nwo": "github/copilot.vim",
+                "stream": True,
+                "extra": {"language": "text"}
+            }
+            
+            # Use gh api to call Copilot completions endpoint
+            # We use curl via subprocess since gh api doesn't support streaming well
             result = subprocess.run(
-                ["gh", "copilot", "suggest", "-t", "shell"],
-                input=prompt,
+                [
+                    "curl", "-s",
+                    "https://copilot-proxy.githubusercontent.com/v1/engines/copilot-codex/completions",
+                    "-H", f"authorization: Bearer {token}",
+                    "-H", "content-type: application/json",
+                    "-d", json.dumps(payload)
+                ],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
             if result.returncode != 0:
-                self.console.print(f"[red]Copilot CLI error: {result.stderr}[/red]")
+                self.console.print(f"[red]Copilot API error: {result.stderr}[/red]")
                 if retries < self.max_retries:
                     return self._copilot_complete(prompt, retries + 1)
                 return ""
             
-            # Extract the suggestion from the output
-            # gh copilot suggest returns the suggestion in its stdout
+            # Parse the streaming response
             output = result.stdout.strip()
+            translation_parts = []
             
-            # Clean up the output - remove any command-line formatting
-            # The actual translation should be the last line or main content
-            lines = [line for line in output.split("\n") if line.strip()]
-            if lines:
-                translation = lines[-1].strip()
-                # Remove any markdown formatting or quotes if present
-                if translation.startswith("`") and translation.endswith("`"):
-                    translation = translation[1:-1]
-                return translation
+            for line in output.split("\n"):
+                if line.startswith("data: {"):
+                    try:
+                        json_data = json.loads(line[6:])  # Remove "data: " prefix
+                        choices = json_data.get("choices", [])
+                        if choices:
+                            text = choices[0].get("text", "")
+                            if text:
+                                translation_parts.append(text)
+                    except json.JSONDecodeError:
+                        continue
             
-            return ""
+            return "".join(translation_parts).strip()
             
         except subprocess.TimeoutExpired:
             self.console.print("[red]Copilot CLI timed out.[/red]")
