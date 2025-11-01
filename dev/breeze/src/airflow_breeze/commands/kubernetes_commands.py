@@ -488,7 +488,7 @@ def _restart(component: str, python: str, kubernetes_version: str, executor: str
 
 
 @kubernetes_group.command(
-    name="reload-code", help="Copy airflow-core code to airflow_code PVC and restart all deployment"
+    name="reload-code", help="Copy airflow-core code to airflow_code PVC and restart all deployments"
 )
 @option_python
 @option_kubernetes_version
