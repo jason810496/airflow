@@ -33,7 +33,7 @@ class HTTPExceptionExample(TypedDict, total=False):
 
     summary: str
     description: str
-    value: dict[str, str]
+    value: dict
 
 
 def create_openapi_http_exception_doc(
