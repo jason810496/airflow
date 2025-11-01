@@ -21,6 +21,7 @@
 # dependencies = [
 #   "rich>=13.6.0",
 #   "rich-click",
+#   "jinja2>=3.1.5",
 # ]
 # ///
 from __future__ import annotations
