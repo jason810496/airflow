@@ -98,13 +98,13 @@ class CopilotTranslator:
             autoescape=False,
         )
         self.template_cache: dict[str, Template] = {}
-        
+
         # Check for gh CLI and copilot extension availability
         self._check_cli_availability()
 
     def _check_cli_availability(self) -> None:
         """Check if gh CLI and copilot extension are available.
-        
+
         Exits with instructions if not available.
         """
         # Check if gh CLI is installed
@@ -124,7 +124,7 @@ class CopilotTranslator:
                 text=True,
                 check=True
             )
-            if "copilot" not in result.stdout.lower():
+            if "github/gh-copilot" not in result.stdout.lower():
                 self.console.print("[yellow]GitHub Copilot extension is not installed.[/yellow]")
                 self.console.print("\n[cyan]Installing GitHub Copilot extension...[/cyan]")
                 subprocess.run(["gh", "extension", "install", "github/gh-copilot"], check=True)
@@ -135,7 +135,7 @@ class CopilotTranslator:
     
     def _get_copilot_token(self) -> str | None:
         """Get Copilot token using gh CLI.
-        
+
         :return: The Copilot token or None if failed.
         """
         try:
@@ -405,8 +405,6 @@ class CopilotTranslator:
 
 # Example usage if we want to run this script directly
 if __name__ == "__main__":
-    import sys
-
     if len(sys.argv) < 2:
         print("Usage: uv run dev/i18n/copilot_translations.py <path_to_translation_file>")
         sys.exit(1)
