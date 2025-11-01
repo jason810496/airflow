@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from functools import partial
@@ -30,6 +31,8 @@ from airflow.jobs.job import Job, run_job
 from airflow.jobs.triggerer_job_runner import TriggererJobRunner
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
+
+log = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -65,6 +68,13 @@ def triggerer(args):
 
     print(settings.HEADER)
     triggerer_heartrate = conf.getfloat("triggerer", "JOB_HEARTBEAT_SEC")
+
+    if hasattr(args, "dev") and args.dev:
+        log.info("Starting triggerer in development mode with hot-reload enabled")
+        from airflow.utils.hot_reload import run_with_reloader
+
+        run_with_reloader(lambda: triggerer_run(args.skip_serve_logs, args.capacity, triggerer_heartrate))
+        return
 
     run_command_with_daemon_option(
         args=args,
