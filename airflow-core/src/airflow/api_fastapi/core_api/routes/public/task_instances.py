@@ -99,7 +99,24 @@ task_instances_prefix = "/dagRuns/{dag_run_id}/taskInstances"
 
 @task_instances_router.get(
     task_instances_prefix + "/{task_id}",
-    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND]),
+    responses=create_openapi_http_exception_doc(
+        {
+            status.HTTP_404_NOT_FOUND: [
+                {
+                    "summary": "Task instance not found",
+                    "description": "The requested task instance does not exist in the database",
+                    "value": {
+                        "detail": "The Task Instance with dag_id: `example_dag`, run_id: `example_run` and task_id: `example_task` was not found"
+                    },
+                },
+                {
+                    "summary": "Task instance is mapped",
+                    "description": "The task instance is a mapped task and requires a map_index in the URL",
+                    "value": {"detail": "Task instance is mapped, add the map_index value to the URL"},
+                },
+            ]
+        }
+    ),
     dependencies=[Depends(requires_access_dag(method="GET", access_entity=DagAccessEntity.TASK_INSTANCE))],
 )
 def get_task_instance(
@@ -133,7 +150,22 @@ def get_task_instance(
 
 @task_instances_router.get(
     task_instances_prefix + "/{task_id}/listMapped",
-    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND]),
+    responses=create_openapi_http_exception_doc(
+        {
+            status.HTTP_404_NOT_FOUND: [
+                {
+                    "summary": "Task not found",
+                    "description": "The specified task does not exist in the DAG",
+                    "value": {"detail": "Task id example_task not found"},
+                },
+                {
+                    "summary": "Task is not mapped",
+                    "description": "The task exists but is not a mapped task",
+                    "value": {"detail": "Task id example_task is not mapped"},
+                },
+            ]
+        }
+    ),
     dependencies=[Depends(requires_access_dag(method="GET", access_entity=DagAccessEntity.TASK_INSTANCE))],
 )
 def get_mapped_task_instances(
