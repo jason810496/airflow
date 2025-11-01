@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TypedDict
 
 from pydantic import BaseModel
@@ -105,12 +106,16 @@ def create_openapi_http_exception_doc(
                     example_key = f"example_{i}"
                 else:
                     # Keep only alphanumeric and underscore, replace other chars with underscore
-                    example_key = "".join(c if c.isalnum() or c == "_" else "_" for c in summary.lower())
-                    # Remove consecutive underscores and strip trailing/leading ones
-                    example_key = "_".join(filter(None, example_key.split("_")))
-                    # Ensure key isn't empty after processing and doesn't start with a number
-                    if not example_key or example_key[0].isdigit():
-                        example_key = f"example_{i}_{example_key}" if example_key else f"example_{i}"
+                    # Use regex for better performance: replace non-alphanumeric with underscore,
+                    # then collapse multiple underscores into one
+                    example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
+                    example_key = re.sub(r"_+", "_", example_key).strip("_")
+                    # Ensure key isn't empty after processing
+                    if not example_key:
+                        example_key = f"example_{i}"
+                    # Ensure key doesn't start with a number
+                    elif example_key[0].isdigit():
+                        example_key = f"example_{i}_{example_key}"
                 
                 examples_dict[example_key] = {
                     "summary": example.get("summary", ""),
