@@ -212,7 +212,7 @@ class PermittedTagFilter(PermittedDagFilter):
 
 def permitted_dag_filter_factory(
     method: ResourceMethod, filter_class=PermittedDagFilter
-) -> Callable[[BaseUser, BaseAuthManager], PermittedDagFilter]:
+) -> Callable[[BaseAuthManager, BaseUser], PermittedDagFilter]:
     """
     Create a callable for Depends in FastAPI that returns a filter of the permitted dags for the user.
 
@@ -221,8 +221,8 @@ def permitted_dag_filter_factory(
     """
 
     def depends_permitted_dags_filter(
-        user: GetUserDep,
         auth_manager: AuthManagerDep,
+        user: GetUserDep,
     ) -> PermittedDagFilter:
         authorized_dags: set[str] = auth_manager.get_authorized_dag_ids(user=user, method=method)
         return filter_class(authorized_dags)
@@ -275,7 +275,7 @@ class PermittedPoolFilter(OrmClause[set[str]]):
 
 def permitted_pool_filter_factory(
     method: ResourceMethod,
-) -> Callable[[BaseUser, BaseAuthManager], PermittedPoolFilter]:
+) -> Callable[[BaseAuthManager, BaseUser], PermittedPoolFilter]:
     """
     Create a callable for Depends in FastAPI that returns a filter of the permitted pools for the user.
 
@@ -283,8 +283,8 @@ def permitted_pool_filter_factory(
     """
 
     def depends_permitted_pools_filter(
-        user: GetUserDep,
         auth_manager: AuthManagerDep,
+        user: GetUserDep,
     ) -> PermittedPoolFilter:
         authorized_pools: set[str] = auth_manager.get_authorized_pools(user=user, method=method)
         return PermittedPoolFilter(authorized_pools)
@@ -367,7 +367,7 @@ class PermittedConnectionFilter(OrmClause[set[str]]):
 
 def permitted_connection_filter_factory(
     method: ResourceMethod,
-) -> Callable[[BaseUser, BaseAuthManager], PermittedConnectionFilter]:
+) -> Callable[[BaseAuthManager, BaseUser], PermittedConnectionFilter]:
     """
     Create a callable for Depends in FastAPI that returns a filter of the permitted connections for the user.
 
@@ -375,8 +375,8 @@ def permitted_connection_filter_factory(
     """
 
     def depends_permitted_connections_filter(
-        user: GetUserDep,
         auth_manager: AuthManagerDep,
+        user: GetUserDep,
     ) -> PermittedConnectionFilter:
         authorized_connections: set[str] = auth_manager.get_authorized_connections(user=user, method=method)
         return PermittedConnectionFilter(authorized_connections)
@@ -483,12 +483,12 @@ class PermittedTeamFilter(OrmClause[set[str]]):
         return select.where(Team.name.in_(self.value))
 
 
-def permitted_team_filter_factory() -> Callable[[BaseUser, BaseAuthManager], PermittedTeamFilter]:
+def permitted_team_filter_factory() -> Callable[[BaseAuthManager, BaseUser], PermittedTeamFilter]:
     """Create a callable for Depends in FastAPI that returns a filter of the permitted teams for the user."""
 
     def depends_permitted_teams_filter(
-        user: GetUserDep,
         auth_manager: AuthManagerDep,
+        user: GetUserDep,
     ) -> PermittedTeamFilter:
         authorized_teams: set[str] = auth_manager.get_authorized_teams(user=user, method="GET")
         return PermittedTeamFilter(authorized_teams)
@@ -508,7 +508,7 @@ class PermittedVariableFilter(OrmClause[set[str]]):
 
 def permitted_variable_filter_factory(
     method: ResourceMethod,
-) -> Callable[[BaseUser, BaseAuthManager], PermittedVariableFilter]:
+) -> Callable[[BaseAuthManager, BaseUser], PermittedVariableFilter]:
     """
     Create a callable for Depends in FastAPI that returns a filter of the permitted variables for the user.
 
@@ -516,8 +516,8 @@ def permitted_variable_filter_factory(
     """
 
     def depends_permitted_variables_filter(
-        user: GetUserDep,
         auth_manager: AuthManagerDep,
+        user: GetUserDep,
     ) -> PermittedVariableFilter:
         authorized_variables: set[str] = auth_manager.get_authorized_variables(user=user, method=method)
         return PermittedVariableFilter(authorized_variables)
