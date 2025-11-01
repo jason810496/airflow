@@ -99,14 +99,18 @@ def create_openapi_http_exception_doc(
             examples_dict = {}
             for i, example in enumerate(examples):
                 # Generate a safe key from summary or use indexed fallback
-                summary = example.get("summary", f"example_{i}")
-                # Keep only alphanumeric and underscore, replace other chars with underscore
-                example_key = "".join(c if c.isalnum() or c == "_" else "_" for c in summary.lower())
-                # Ensure key doesn't start with a number and isn't empty
-                if not example_key or example_key[0].isdigit():
-                    example_key = f"example_{example_key}"
-                # Remove consecutive underscores and strip trailing ones
-                example_key = "_".join(filter(None, example_key.split("_")))
+                summary = example.get("summary", "")
+                if not summary:
+                    # If no summary, use indexed example name
+                    example_key = f"example_{i}"
+                else:
+                    # Keep only alphanumeric and underscore, replace other chars with underscore
+                    example_key = "".join(c if c.isalnum() or c == "_" else "_" for c in summary.lower())
+                    # Remove consecutive underscores and strip trailing/leading ones
+                    example_key = "_".join(filter(None, example_key.split("_")))
+                    # Ensure key isn't empty after processing and doesn't start with a number
+                    if not example_key or example_key[0].isdigit():
+                        example_key = f"example_{i}_{example_key}" if example_key else f"example_{i}"
                 
                 examples_dict[example_key] = {
                     "summary": example.get("summary", ""),
