@@ -89,15 +89,25 @@ def create_openapi_http_exception_doc(
         elif len(examples) == 1:
             # Single example: use simple format with description
             example = examples[0]
+            description = example.get("description") or example.get("summary") or "Error response"
             result[status_code] = {
                 "model": HTTPExceptionResponse,
-                "description": example.get("description", example.get("summary", "")),
+                "description": description,
             }
         else:
             # Multiple examples: use content with examples
             examples_dict = {}
             for i, example in enumerate(examples):
-                example_key = example.get("summary", f"example_{i}").lower().replace(" ", "_")
+                # Generate a safe key from summary or use indexed fallback
+                summary = example.get("summary", f"example_{i}")
+                # Keep only alphanumeric and underscore, replace other chars with underscore
+                example_key = "".join(c if c.isalnum() or c == "_" else "_" for c in summary.lower())
+                # Ensure key doesn't start with a number and isn't empty
+                if not example_key or example_key[0].isdigit():
+                    example_key = f"example_{example_key}"
+                # Remove consecutive underscores and strip trailing ones
+                example_key = "_".join(filter(None, example_key.split("_")))
+                
                 examples_dict[example_key] = {
                     "summary": example.get("summary", ""),
                     "description": example.get("description", ""),
