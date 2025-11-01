@@ -425,11 +425,21 @@ def find_installation_spec(
         airflow_ctl_distribution = None
         airflow_ctl_constraints_location = None
         compile_ui_assets = False
-    elif re.match(PR_NUMBER_PATTERN, use_airflow_version):
-        # Handle PR number format
-        owner, repo, branch = resolve_pr_number_to_repo_branch(use_airflow_version, github_repository)
-        resolved_version = f"{owner}/{repo}:{branch}"
-        console.print(f"\nInstalling airflow from GitHub PR #{use_airflow_version}: {resolved_version}\n")
+    elif re.match(PR_NUMBER_PATTERN, use_airflow_version) or (
+        repo_match := re.match(GITHUB_REPO_BRANCH_PATTERN, use_airflow_version)
+    ):
+        # Handle PR number format - resolve to owner/repo:branch first
+        if re.match(PR_NUMBER_PATTERN, use_airflow_version):
+            owner, repo, branch = resolve_pr_number_to_repo_branch(use_airflow_version, github_repository)
+            resolved_version = f"{owner}/{repo}:{branch}"
+            console.print(f"\nInstalling airflow from GitHub PR #{use_airflow_version}: {resolved_version}\n")
+        else:
+            # Handle owner/repo:branch format
+            owner, repo, branch = repo_match.groups()
+            resolved_version = use_airflow_version
+            console.print(f"\nInstalling airflow from GitHub: {use_airflow_version}\n")
+        
+        # Common logic for both PR number and repo:branch formats
         vcs_url = f"git+https://github.com/{owner}/{repo}.git@{branch}"
         if airflow_extras:
             airflow_distribution_spec = f"apache-airflow{airflow_extras} @ {vcs_url}"
@@ -448,7 +458,7 @@ def find_installation_spec(
             python_version=python_version,
         )
         compile_ui_assets = True
-        console.print(f"\nInstalling airflow task-sdk from GitHub PR #{use_airflow_version}\n")
+        console.print(f"\nInstalling airflow task-sdk from GitHub {resolved_version}\n")
         airflow_task_sdk_distribution = f"apache-airflow-task-sdk @ {vcs_url}#subdirectory=task-sdk"
         airflow_constraints_location = get_airflow_constraints_location(
             install_airflow_with_constraints=install_airflow_with_constraints,
@@ -460,7 +470,7 @@ def find_installation_spec(
             github_repository=github_repository,
             python_version=python_version,
         )
-        console.print(f"\nInstalling airflow ctl from GitHub PR #{use_airflow_version}\n")
+        console.print(f"\nInstalling airflow ctl from GitHub {resolved_version}\n")
         airflow_ctl_distribution = f"apache-airflow-ctl @ {vcs_url}#subdirectory=airflow-ctl"
         airflow_ctl_constraints_location = get_airflow_constraints_location(
             install_airflow_with_constraints=install_airflow_with_constraints,
@@ -468,51 +478,6 @@ def find_installation_spec(
             airflow_constraints_location=airflow_constraints_location,
             airflow_constraints_reference=airflow_constraints_reference,
             airflow_package_version=resolved_version,
-            default_constraints_branch=default_constraints_branch,
-            github_repository=github_repository,
-            python_version=python_version,
-        )
-    elif repo_match := re.match(GITHUB_REPO_BRANCH_PATTERN, use_airflow_version):
-        owner, repo, branch = repo_match.groups()
-        console.print(f"\nInstalling airflow from GitHub: {use_airflow_version}\n")
-        vcs_url = f"git+https://github.com/{owner}/{repo}.git@{branch}"
-        if airflow_extras:
-            airflow_distribution_spec = f"apache-airflow{airflow_extras} @ {vcs_url}"
-            airflow_core_distribution_spec = f"apache-airflow-core @ {vcs_url}#subdirectory=airflow-core"
-        else:
-            airflow_distribution_spec = f"apache-airflow @ {vcs_url}"
-            airflow_core_distribution_spec = f"apache-airflow-core @ {vcs_url}#subdirectory=airflow-core"
-        airflow_constraints_location = get_airflow_constraints_location(
-            install_airflow_with_constraints=install_airflow_with_constraints,
-            airflow_constraints_mode=airflow_constraints_mode,
-            airflow_constraints_location=airflow_constraints_location,
-            airflow_constraints_reference=airflow_constraints_reference,
-            airflow_package_version=use_airflow_version,
-            default_constraints_branch=default_constraints_branch,
-            github_repository=github_repository,
-            python_version=python_version,
-        )
-        compile_ui_assets = True
-        console.print(f"\nInstalling airflow task-sdk from GitHub {use_airflow_version}\n")
-        airflow_task_sdk_distribution = f"apache-airflow-task-sdk @ {vcs_url}#subdirectory=task-sdk"
-        airflow_constraints_location = get_airflow_constraints_location(
-            install_airflow_with_constraints=install_airflow_with_constraints,
-            airflow_constraints_mode=airflow_constraints_mode,
-            airflow_constraints_location=airflow_constraints_location,
-            airflow_constraints_reference=airflow_constraints_reference,
-            airflow_package_version=use_airflow_version,
-            default_constraints_branch=default_constraints_branch,
-            github_repository=github_repository,
-            python_version=python_version,
-        )
-        console.print(f"\nInstalling airflow ctl from remote spec {use_airflow_version}\n")
-        airflow_ctl_distribution = f"apache-airflow-ctl @ {vcs_url}#subdirectory=airflow-ctl"
-        airflow_ctl_constraints_location = get_airflow_constraints_location(
-            install_airflow_with_constraints=install_airflow_with_constraints,
-            airflow_constraints_mode=airflow_constraints_mode,
-            airflow_constraints_location=airflow_constraints_location,
-            airflow_constraints_reference=airflow_constraints_reference,
-            airflow_package_version=use_airflow_version,
             default_constraints_branch=default_constraints_branch,
             github_repository=github_repository,
             python_version=python_version,
