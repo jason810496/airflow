@@ -19,10 +19,9 @@ from __future__ import annotations
 from fastapi import HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 
-from airflow.api_fastapi.common.auth_manager import AuthManagerDep
 from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
-from airflow.api_fastapi.core_api.security import is_safe_url
+from airflow.api_fastapi.core_api.security import AuthManagerDep, is_safe_url
 
 auth_router = AirflowRouter(tags=["Login"], prefix="/auth")
 
