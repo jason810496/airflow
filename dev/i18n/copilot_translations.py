@@ -195,6 +195,8 @@ class CopilotTranslator:
             
             # Use gh api to call Copilot completions endpoint
             # We use curl via subprocess since gh api doesn't support streaming well
+            # Note: Token is passed as command-line arg. This is acceptable for a dev tool
+            # as the token is short-lived and only visible briefly in process lists.
             result = subprocess.run(
                 [
                     "curl", "-s",
@@ -278,7 +280,6 @@ class CopilotTranslator:
             return
 
         # Find and translate TODO entries
-        translations_made = 0
         translations_made = self._translate_recursive(data, target_language, lang_path.stem)
 
         if translations_made > 0:
@@ -361,11 +362,16 @@ class CopilotTranslator:
                     translation = translation[1:-1]
 
                 # Ensure proper Unicode decoding if needed
+                # Note: This attempts to decode escaped Unicode sequences but may incorrectly
+                # process text that legitimately contains the literal string "\\u"
                 try:
-                    # Try to decode if it's been double-encoded
+                    # Try to decode if it's been double-encoded (e.g., "\\u4e2d\\u6587")
                     if isinstance(translation, str) and "\\u" in translation:
-                        translation = translation.encode("utf-8").decode("unicode_escape")
-                except (UnicodeDecodeError, UnicodeEncodeError):
+                        # Attempt decoding, but keep original if it fails
+                        decoded = translation.encode("utf-8").decode("unicode_escape")
+                        # Only use decoded version if it's valid
+                        translation = decoded
+                except (UnicodeDecodeError, UnicodeEncodeError, AttributeError):
                     pass  # Keep original if decoding fails
 
                 # Basic validation - ensure it's not empty and doesn't look like code
