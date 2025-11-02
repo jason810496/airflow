@@ -29,12 +29,18 @@ class HTTPExceptionResponse(BaseModel):
     detail: str | dict
 
 
+class HTTPExceptionValue(TypedDict):
+    """Structure for the value field in an HTTP exception example."""
+
+    detail: str | dict
+
+
 class HTTPExceptionExample(TypedDict, total=False):
     """Structure for a single HTTP exception example."""
 
     summary: str
     description: str
-    value: dict
+    value: HTTPExceptionValue
 
 
 def create_openapi_http_exception_doc(
@@ -49,14 +55,12 @@ def create_openapi_http_exception_doc(
 
     Validation error i.e 422 are natively added to the openapi documentation by FastAPI.
 
-    Args:
-        responses_status_code: Either a list of status codes (for backward compatibility)
-            or a dict mapping status codes to lists of HTTPExceptionExample objects.
+    :param responses_status_code: Either a list of status codes (for backward compatibility)
+        or a dict mapping status codes to lists of HTTPExceptionExample objects.
+    :return: A dict suitable for use in FastAPI's `responses` parameter.
 
-    Returns:
-        A dict suitable for use in FastAPI's `responses` parameter.
+    **Examples**::
 
-    Examples:
         Simple usage (backward compatible):
             responses=create_openapi_http_exception_doc([404, 400])
 
