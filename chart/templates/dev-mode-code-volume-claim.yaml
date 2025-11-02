@@ -20,7 +20,7 @@
 ######################################
 ## Airflow Source Code PersistentVolumeClaim, used for mounting source code with `dev` mode
 ######################################
-{{- if .Values.devMode.enabled }}
+{{- if and (not .Values.devMode.persistence.existingClaim) .Values.devMode.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -34,12 +34,9 @@ metadata:
     {{- with .Values.labels }}
       {{- toYaml . | nindent 4 }}
     {{- end }}
-  annotations:
-    helm.sh/hook: "pre-install"
-    helm.sh/hook-weight: "-10"
-    {{- with .Values.devMode.persistence.annotations }}
-      {{- toYaml . | nindent 4 }}
-    {{- end }}
+  {{- with .Values.devMode.persistence.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
