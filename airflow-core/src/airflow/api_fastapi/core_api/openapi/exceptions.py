@@ -35,7 +35,7 @@ class HTTPExceptionValue(TypedDict):
     detail: str | dict
 
 
-class HTTPExceptionExample(TypedDict, total=False):
+class HTTPExceptionExample(TypedDict, total=True):
     """Structure for a single HTTP exception example."""
 
     summary: str
@@ -70,12 +70,15 @@ def create_openapi_http_exception_doc(
     **Examples**::
 
         Simple usage (backward compatible):
-            responses=create_openapi_http_exception_doc([404, 400])
+            responses=create_openapi_http_exception_doc([
+                status.HTTP_404_NOT_FOUND,
+                status.HTTP_400_BAD_REQUEST
+            ])
 
         Multiple examples for same status code:
             responses=create_openapi_http_exception_doc([
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Task instance not found",
@@ -93,9 +96,9 @@ def create_openapi_http_exception_doc(
 
         Mixed usage:
             responses=create_openapi_http_exception_doc([
-                400,  # Simple status code
+                status.HTTP_400_BAD_REQUEST,  # Simple status code
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Not found",
@@ -124,7 +127,7 @@ def create_openapi_http_exception_doc(
             elif len(examples) == 1:
                 # Single example: use simple format with description
                 example = examples[0]
-                description = example.get("description") or example.get("summary") or "Error response"
+                description = example["description"] or example["summary"]
                 result[status_code] = {
                     "model": HTTPExceptionResponse,
                     "description": description,
@@ -133,28 +136,24 @@ def create_openapi_http_exception_doc(
                 # Multiple examples: use content with examples
                 examples_dict = {}
                 for i, example in enumerate(examples):
-                    # Generate a safe key from summary or use indexed fallback
-                    summary = example.get("summary", "")
-                    if not summary:
-                        # If no summary, use indexed example name
+                    # Generate a safe key from summary
+                    summary = example["summary"]
+                    # Keep only alphanumeric and underscore, replace other chars with underscore
+                    # Use regex for better performance: replace non-alphanumeric with underscore,
+                    # then collapse multiple underscores into one
+                    example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
+                    example_key = re.sub(r"_+", "_", example_key).strip("_")
+                    # Ensure key doesn't start with a number
+                    if example_key and example_key[0].isdigit():
+                        example_key = f"example_{i}_{example_key}"
+                    # Fallback to indexed name if key is empty after processing
+                    if not example_key:
                         example_key = f"example_{i}"
-                    else:
-                        # Keep only alphanumeric and underscore, replace other chars with underscore
-                        # Use regex for better performance: replace non-alphanumeric with underscore,
-                        # then collapse multiple underscores into one
-                        example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
-                        example_key = re.sub(r"_+", "_", example_key).strip("_")
-                        # Ensure key isn't empty after processing
-                        if not example_key:
-                            example_key = f"example_{i}"
-                        # Ensure key doesn't start with a number
-                        elif example_key[0].isdigit():
-                            example_key = f"example_{i}_{example_key}"
                     
                     examples_dict[example_key] = {
-                        "summary": example.get("summary", ""),
-                        "description": example.get("description", ""),
-                        "value": example.get("value", {"detail": ""}),
+                        "summary": example["summary"],
+                        "description": example["description"],
+                        "value": example["value"],
                     }
 
                 result[status_code] = {
