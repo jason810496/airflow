@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 from airflow.api_fastapi.core_api.openapi.exceptions import (
+    HTTPExceptionDoc,
     HTTPExceptionResponse,
     create_openapi_http_exception_doc,
 )
@@ -43,15 +44,16 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         """Test with a single example per status code."""
         result = create_openapi_http_exception_doc(
             [
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Not found",
                             "description": "Resource not found",
                             "value": {"detail": "Resource not found"},
                         }
                     ]
-                }
+                )
             ]
         )
 
@@ -63,8 +65,9 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         """Test with multiple examples for the same status code."""
         result = create_openapi_http_exception_doc(
             [
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Task instance not found",
                             "description": "The requested task instance does not exist",
@@ -76,7 +79,7 @@ class TestCreateOpenAPIHTTPExceptionDoc:
                             "value": {"detail": "Task instance is mapped, add the map_index value to the URL"},
                         },
                     ]
-                }
+                )
             ]
         )
 
@@ -106,17 +109,19 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         """Test with mixed examples: some status codes with multiple examples, some with single."""
         result = create_openapi_http_exception_doc(
             [
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Not found",
                             "description": "Resource not found",
                             "value": {"detail": "Resource not found"},
                         }
                     ]
-                },
-                {
-                    400: [
+                ),
+                HTTPExceptionDoc(
+                    status_code=400,
+                    examples=[
                         {
                             "summary": "Invalid parameter",
                             "description": "The provided parameter is invalid",
@@ -128,7 +133,7 @@ class TestCreateOpenAPIHTTPExceptionDoc:
                             "value": {"detail": "Missing required parameter"},
                         },
                     ]
-                },
+                ),
             ]
         )
 
@@ -148,26 +153,27 @@ class TestCreateOpenAPIHTTPExceptionDoc:
 
     def test_empty_examples_list(self):
         """Test with an empty examples list."""
-        result = create_openapi_http_exception_doc([{404: []}])
+        result = create_openapi_http_exception_doc([HTTPExceptionDoc(status_code=404, examples=[])])
 
         assert 404 in result
         assert result[404] == {"model": HTTPExceptionResponse}
 
-    def test_mixed_int_and_dict(self):
-        """Test mixing simple ints and dicts with examples in the same list."""
+    def test_mixed_int_and_namedtuple(self):
+        """Test mixing simple ints and HTTPExceptionDoc with examples in the same list."""
         result = create_openapi_http_exception_doc(
             [
                 400,  # Simple int
                 422,  # Another simple int
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Not found",
                             "description": "Resource not found",
                             "value": {"detail": "Resource not found"},
                         }
                     ]
-                },
+                ),
             ]
         )
 
@@ -177,7 +183,7 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         assert 422 in result
         assert result[422] == {"model": HTTPExceptionResponse}
 
-        # Check dict with examples
+        # Check HTTPExceptionDoc with examples
         assert 404 in result
         assert result[404]["model"] == HTTPExceptionResponse
         assert result[404]["description"] == "Resource not found"

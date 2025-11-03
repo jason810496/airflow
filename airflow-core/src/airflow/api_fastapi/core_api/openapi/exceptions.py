@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import re
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from pydantic import BaseModel
 
@@ -43,8 +43,15 @@ class HTTPExceptionExample(TypedDict, total=False):
     value: HTTPExceptionValue
 
 
+class HTTPExceptionDoc(NamedTuple):
+    """Structure for documenting HTTP exceptions with examples for a status code."""
+
+    status_code: int
+    examples: list[HTTPExceptionExample]
+
+
 def create_openapi_http_exception_doc(
-    responses_status_code: list[int | dict[int, list[HTTPExceptionExample]]],
+    responses_status_code: list[int | HTTPExceptionDoc],
 ) -> dict:
     """
     Will create additional response example for errors raised by the endpoint.
@@ -57,7 +64,7 @@ def create_openapi_http_exception_doc(
 
     :param responses_status_code: A list where each element can be either:
         - An int representing a simple status code (for backward compatibility)
-        - A dict mapping status codes to lists of HTTPExceptionExample objects
+        - An HTTPExceptionDoc NamedTuple with status_code and examples
     :return: A dict suitable for use in FastAPI's `responses` parameter.
 
     **Examples**::
@@ -67,8 +74,9 @@ def create_openapi_http_exception_doc(
 
         Multiple examples for same status code:
             responses=create_openapi_http_exception_doc([
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Task instance not found",
                             "description": "The requested task instance does not exist",
@@ -80,21 +88,22 @@ def create_openapi_http_exception_doc(
                             "value": {"detail": "Task instance is mapped, add the map_index value to the URL"}
                         }
                     ]
-                }
+                )
             ])
 
         Mixed usage:
             responses=create_openapi_http_exception_doc([
                 400,  # Simple status code
-                {
-                    404: [
+                HTTPExceptionDoc(
+                    status_code=404,
+                    examples=[
                         {
                             "summary": "Not found",
                             "description": "Resource not found",
                             "value": {"detail": "Resource not found"}
                         }
                     ]
-                }
+                )
             ])
     """
     result = {}
@@ -104,55 +113,57 @@ def create_openapi_http_exception_doc(
         if isinstance(item, int):
             # Simple status code without examples
             result[item] = {"model": HTTPExceptionResponse}
-        elif isinstance(item, dict):
-            # Dict with status codes and examples
-            for status_code, examples in item.items():
-                if not examples:
-                    # If no examples provided, use simple format
-                    result[status_code] = {"model": HTTPExceptionResponse}
-                elif len(examples) == 1:
-                    # Single example: use simple format with description
-                    example = examples[0]
-                    description = example.get("description") or example.get("summary") or "Error response"
-                    result[status_code] = {
-                        "model": HTTPExceptionResponse,
-                        "description": description,
-                    }
-                else:
-                    # Multiple examples: use content with examples
-                    examples_dict = {}
-                    for i, example in enumerate(examples):
-                        # Generate a safe key from summary or use indexed fallback
-                        summary = example.get("summary", "")
-                        if not summary:
-                            # If no summary, use indexed example name
+        elif isinstance(item, HTTPExceptionDoc):
+            # HTTPExceptionDoc with status code and examples
+            status_code = item.status_code
+            examples = item.examples
+            
+            if not examples:
+                # If no examples provided, use simple format
+                result[status_code] = {"model": HTTPExceptionResponse}
+            elif len(examples) == 1:
+                # Single example: use simple format with description
+                example = examples[0]
+                description = example.get("description") or example.get("summary") or "Error response"
+                result[status_code] = {
+                    "model": HTTPExceptionResponse,
+                    "description": description,
+                }
+            else:
+                # Multiple examples: use content with examples
+                examples_dict = {}
+                for i, example in enumerate(examples):
+                    # Generate a safe key from summary or use indexed fallback
+                    summary = example.get("summary", "")
+                    if not summary:
+                        # If no summary, use indexed example name
+                        example_key = f"example_{i}"
+                    else:
+                        # Keep only alphanumeric and underscore, replace other chars with underscore
+                        # Use regex for better performance: replace non-alphanumeric with underscore,
+                        # then collapse multiple underscores into one
+                        example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
+                        example_key = re.sub(r"_+", "_", example_key).strip("_")
+                        # Ensure key isn't empty after processing
+                        if not example_key:
                             example_key = f"example_{i}"
-                        else:
-                            # Keep only alphanumeric and underscore, replace other chars with underscore
-                            # Use regex for better performance: replace non-alphanumeric with underscore,
-                            # then collapse multiple underscores into one
-                            example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
-                            example_key = re.sub(r"_+", "_", example_key).strip("_")
-                            # Ensure key isn't empty after processing
-                            if not example_key:
-                                example_key = f"example_{i}"
-                            # Ensure key doesn't start with a number
-                            elif example_key[0].isdigit():
-                                example_key = f"example_{i}_{example_key}"
-                        
-                        examples_dict[example_key] = {
-                            "summary": example.get("summary", ""),
-                            "description": example.get("description", ""),
-                            "value": example.get("value", {"detail": ""}),
-                        }
-
-                    result[status_code] = {
-                        "model": HTTPExceptionResponse,
-                        "content": {
-                            "application/json": {
-                                "examples": examples_dict,
-                            }
-                        },
+                        # Ensure key doesn't start with a number
+                        elif example_key[0].isdigit():
+                            example_key = f"example_{i}_{example_key}"
+                    
+                    examples_dict[example_key] = {
+                        "summary": example.get("summary", ""),
+                        "description": example.get("description", ""),
+                        "value": example.get("value", {"detail": ""}),
                     }
+
+                result[status_code] = {
+                    "model": HTTPExceptionResponse,
+                    "content": {
+                        "application/json": {
+                            "examples": examples_dict,
+                        }
+                    },
+                }
 
     return result
