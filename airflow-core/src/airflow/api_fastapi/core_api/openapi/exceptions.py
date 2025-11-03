@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import NamedTuple, TypedDict
 
 from pydantic import BaseModel
@@ -136,19 +135,9 @@ def create_openapi_http_exception_doc(
                 # Multiple examples: use content with examples
                 examples_dict = {}
                 for i, example in enumerate(examples):
-                    # Generate a safe key from summary
+                    # Generate a key from summary (converted to snake_case)
                     summary = example["summary"]
-                    # Keep only alphanumeric and underscore, replace other chars with underscore
-                    # Use regex for better performance: replace non-alphanumeric with underscore,
-                    # then collapse multiple underscores into one
-                    example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
-                    example_key = re.sub(r"_+", "_", example_key).strip("_")
-                    # Ensure key doesn't start with a number
-                    if example_key and example_key[0].isdigit():
-                        example_key = f"example_{i}_{example_key}"
-                    # Fallback to indexed name if key is empty after processing
-                    if not example_key:
-                        example_key = f"example_{i}"
+                    example_key = summary.lower().replace(" ", "_")
                     
                     examples_dict[example_key] = {
                         "summary": example["summary"],

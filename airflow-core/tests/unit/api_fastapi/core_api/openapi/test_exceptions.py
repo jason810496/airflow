@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import pytest
+from fastapi import status
 
 from airflow.api_fastapi.core_api.openapi.exceptions import (
     HTTPExceptionDoc,
@@ -31,21 +32,25 @@ class TestCreateOpenAPIHTTPExceptionDoc:
 
     def test_backward_compatibility_simple_list(self):
         """Test that the function works with a simple list of status codes (backward compatibility)."""
-        result = create_openapi_http_exception_doc([404, 400, 422])
+        result = create_openapi_http_exception_doc([
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_422_UNPROCESSABLE_ENTITY
+        ])
 
-        assert 400 in result
-        assert 404 in result
-        assert 422 in result
-        assert result[404] == {"model": HTTPExceptionResponse}
-        assert result[400] == {"model": HTTPExceptionResponse}
-        assert result[422] == {"model": HTTPExceptionResponse}
+        assert status.HTTP_400_BAD_REQUEST in result
+        assert status.HTTP_404_NOT_FOUND in result
+        assert status.HTTP_422_UNPROCESSABLE_ENTITY in result
+        assert result[status.HTTP_404_NOT_FOUND] == {"model": HTTPExceptionResponse}
+        assert result[status.HTTP_400_BAD_REQUEST] == {"model": HTTPExceptionResponse}
+        assert result[status.HTTP_422_UNPROCESSABLE_ENTITY] == {"model": HTTPExceptionResponse}
 
     def test_single_example_per_status_code(self):
         """Test with a single example per status code."""
         result = create_openapi_http_exception_doc(
             [
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Not found",
@@ -57,16 +62,16 @@ class TestCreateOpenAPIHTTPExceptionDoc:
             ]
         )
 
-        assert 404 in result
-        assert result[404]["model"] == HTTPExceptionResponse
-        assert result[404]["description"] == "Resource not found"
+        assert status.HTTP_404_NOT_FOUND in result
+        assert result[status.HTTP_404_NOT_FOUND]["model"] == HTTPExceptionResponse
+        assert result[status.HTTP_404_NOT_FOUND]["description"] == "Resource not found"
 
     def test_multiple_examples_per_status_code(self):
         """Test with multiple examples for the same status code."""
         result = create_openapi_http_exception_doc(
             [
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Task instance not found",
@@ -83,13 +88,13 @@ class TestCreateOpenAPIHTTPExceptionDoc:
             ]
         )
 
-        assert 404 in result
-        assert result[404]["model"] == HTTPExceptionResponse
-        assert "content" in result[404]
-        assert "application/json" in result[404]["content"]
-        assert "examples" in result[404]["content"]["application/json"]
+        assert status.HTTP_404_NOT_FOUND in result
+        assert result[status.HTTP_404_NOT_FOUND]["model"] == HTTPExceptionResponse
+        assert "content" in result[status.HTTP_404_NOT_FOUND]
+        assert "application/json" in result[status.HTTP_404_NOT_FOUND]["content"]
+        assert "examples" in result[status.HTTP_404_NOT_FOUND]["content"]["application/json"]
 
-        examples = result[404]["content"]["application/json"]["examples"]
+        examples = result[status.HTTP_404_NOT_FOUND]["content"]["application/json"]["examples"]
         assert "task_instance_not_found" in examples
         assert "task_instance_is_mapped" in examples
 
@@ -110,7 +115,7 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         result = create_openapi_http_exception_doc(
             [
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Not found",
@@ -120,7 +125,7 @@ class TestCreateOpenAPIHTTPExceptionDoc:
                     ]
                 ),
                 HTTPExceptionDoc(
-                    status_code=400,
+                    status_code=status.HTTP_400_BAD_REQUEST,
                     examples=[
                         {
                             "summary": "Invalid parameter",
@@ -138,34 +143,36 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         )
 
         # Check single example (404)
-        assert 404 in result
-        assert result[404]["model"] == HTTPExceptionResponse
-        assert result[404]["description"] == "Resource not found"
-        assert "content" not in result[404]
+        assert status.HTTP_404_NOT_FOUND in result
+        assert result[status.HTTP_404_NOT_FOUND]["model"] == HTTPExceptionResponse
+        assert result[status.HTTP_404_NOT_FOUND]["description"] == "Resource not found"
+        assert "content" not in result[status.HTTP_404_NOT_FOUND]
 
         # Check multiple examples (400)
-        assert 400 in result
-        assert result[400]["model"] == HTTPExceptionResponse
-        assert "content" in result[400]
-        examples = result[400]["content"]["application/json"]["examples"]
+        assert status.HTTP_400_BAD_REQUEST in result
+        assert result[status.HTTP_400_BAD_REQUEST]["model"] == HTTPExceptionResponse
+        assert "content" in result[status.HTTP_400_BAD_REQUEST]
+        examples = result[status.HTTP_400_BAD_REQUEST]["content"]["application/json"]["examples"]
         assert "invalid_parameter" in examples
         assert "missing_parameter" in examples
 
     def test_empty_examples_list(self):
         """Test with an empty examples list."""
-        result = create_openapi_http_exception_doc([HTTPExceptionDoc(status_code=404, examples=[])])
+        result = create_openapi_http_exception_doc([
+            HTTPExceptionDoc(status_code=status.HTTP_404_NOT_FOUND, examples=[])
+        ])
 
-        assert 404 in result
-        assert result[404] == {"model": HTTPExceptionResponse}
+        assert status.HTTP_404_NOT_FOUND in result
+        assert result[status.HTTP_404_NOT_FOUND] == {"model": HTTPExceptionResponse}
 
     def test_mixed_int_and_namedtuple(self):
         """Test mixing simple ints and HTTPExceptionDoc with examples in the same list."""
         result = create_openapi_http_exception_doc(
             [
-                400,  # Simple int
-                422,  # Another simple int
+                status.HTTP_400_BAD_REQUEST,  # Simple int
+                status.HTTP_422_UNPROCESSABLE_ENTITY,  # Another simple int
                 HTTPExceptionDoc(
-                    status_code=404,
+                    status_code=status.HTTP_404_NOT_FOUND,
                     examples=[
                         {
                             "summary": "Not found",
@@ -178,12 +185,12 @@ class TestCreateOpenAPIHTTPExceptionDoc:
         )
 
         # Check simple ints
-        assert 400 in result
-        assert result[400] == {"model": HTTPExceptionResponse}
-        assert 422 in result
-        assert result[422] == {"model": HTTPExceptionResponse}
+        assert status.HTTP_400_BAD_REQUEST in result
+        assert result[status.HTTP_400_BAD_REQUEST] == {"model": HTTPExceptionResponse}
+        assert status.HTTP_422_UNPROCESSABLE_ENTITY in result
+        assert result[status.HTTP_422_UNPROCESSABLE_ENTITY] == {"model": HTTPExceptionResponse}
 
         # Check HTTPExceptionDoc with examples
-        assert 404 in result
-        assert result[404]["model"] == HTTPExceptionResponse
-        assert result[404]["description"] == "Resource not found"
+        assert status.HTTP_404_NOT_FOUND in result
+        assert result[status.HTTP_404_NOT_FOUND]["model"] == HTTPExceptionResponse
+        assert result[status.HTTP_404_NOT_FOUND]["description"] == "Resource not found"
