@@ -42,15 +42,17 @@ class TestCreateOpenAPIHTTPExceptionDoc:
     def test_single_example_per_status_code(self):
         """Test with a single example per status code."""
         result = create_openapi_http_exception_doc(
-            {
-                404: [
-                    {
-                        "summary": "Not found",
-                        "description": "Resource not found",
-                        "value": {"detail": "Resource not found"},
-                    }
-                ]
-            }
+            [
+                {
+                    404: [
+                        {
+                            "summary": "Not found",
+                            "description": "Resource not found",
+                            "value": {"detail": "Resource not found"},
+                        }
+                    ]
+                }
+            ]
         )
 
         assert 404 in result
@@ -60,20 +62,22 @@ class TestCreateOpenAPIHTTPExceptionDoc:
     def test_multiple_examples_per_status_code(self):
         """Test with multiple examples for the same status code."""
         result = create_openapi_http_exception_doc(
-            {
-                404: [
-                    {
-                        "summary": "Task instance not found",
-                        "description": "The requested task instance does not exist",
-                        "value": {"detail": "Task instance with id X not found"},
-                    },
-                    {
-                        "summary": "Task instance is mapped",
-                        "description": "Task instance is mapped, map_index required",
-                        "value": {"detail": "Task instance is mapped, add the map_index value to the URL"},
-                    },
-                ]
-            }
+            [
+                {
+                    404: [
+                        {
+                            "summary": "Task instance not found",
+                            "description": "The requested task instance does not exist",
+                            "value": {"detail": "Task instance with id X not found"},
+                        },
+                        {
+                            "summary": "Task instance is mapped",
+                            "description": "Task instance is mapped, map_index required",
+                            "value": {"detail": "Task instance is mapped, add the map_index value to the URL"},
+                        },
+                    ]
+                }
+            ]
         )
 
         assert 404 in result
@@ -101,27 +105,31 @@ class TestCreateOpenAPIHTTPExceptionDoc:
     def test_mixed_examples(self):
         """Test with mixed examples: some status codes with multiple examples, some with single."""
         result = create_openapi_http_exception_doc(
-            {
-                404: [
-                    {
-                        "summary": "Not found",
-                        "description": "Resource not found",
-                        "value": {"detail": "Resource not found"},
-                    }
-                ],
-                400: [
-                    {
-                        "summary": "Invalid parameter",
-                        "description": "The provided parameter is invalid",
-                        "value": {"detail": "Invalid parameter value"},
-                    },
-                    {
-                        "summary": "Missing parameter",
-                        "description": "Required parameter is missing",
-                        "value": {"detail": "Missing required parameter"},
-                    },
-                ],
-            }
+            [
+                {
+                    404: [
+                        {
+                            "summary": "Not found",
+                            "description": "Resource not found",
+                            "value": {"detail": "Resource not found"},
+                        }
+                    ]
+                },
+                {
+                    400: [
+                        {
+                            "summary": "Invalid parameter",
+                            "description": "The provided parameter is invalid",
+                            "value": {"detail": "Invalid parameter value"},
+                        },
+                        {
+                            "summary": "Missing parameter",
+                            "description": "Required parameter is missing",
+                            "value": {"detail": "Missing required parameter"},
+                        },
+                    ]
+                },
+            ]
         )
 
         # Check single example (404)
@@ -140,7 +148,36 @@ class TestCreateOpenAPIHTTPExceptionDoc:
 
     def test_empty_examples_list(self):
         """Test with an empty examples list."""
-        result = create_openapi_http_exception_doc({404: []})
+        result = create_openapi_http_exception_doc([{404: []}])
 
         assert 404 in result
         assert result[404] == {"model": HTTPExceptionResponse}
+
+    def test_mixed_int_and_dict(self):
+        """Test mixing simple ints and dicts with examples in the same list."""
+        result = create_openapi_http_exception_doc(
+            [
+                400,  # Simple int
+                422,  # Another simple int
+                {
+                    404: [
+                        {
+                            "summary": "Not found",
+                            "description": "Resource not found",
+                            "value": {"detail": "Resource not found"},
+                        }
+                    ]
+                },
+            ]
+        )
+
+        # Check simple ints
+        assert 400 in result
+        assert result[400] == {"model": HTTPExceptionResponse}
+        assert 422 in result
+        assert result[422] == {"model": HTTPExceptionResponse}
+
+        # Check dict with examples
+        assert 404 in result
+        assert result[404]["model"] == HTTPExceptionResponse
+        assert result[404]["description"] == "Resource not found"

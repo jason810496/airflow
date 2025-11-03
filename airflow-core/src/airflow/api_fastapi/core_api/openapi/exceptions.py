@@ -44,7 +44,7 @@ class HTTPExceptionExample(TypedDict, total=False):
 
 
 def create_openapi_http_exception_doc(
-    responses_status_code: list[int] | dict[int, list[HTTPExceptionExample]],
+    responses_status_code: list[int | dict[int, list[HTTPExceptionExample]]],
 ) -> dict:
     """
     Will create additional response example for errors raised by the endpoint.
@@ -55,8 +55,9 @@ def create_openapi_http_exception_doc(
 
     Validation error i.e 422 are natively added to the openapi documentation by FastAPI.
 
-    :param responses_status_code: Either a list of status codes (for backward compatibility)
-        or a dict mapping status codes to lists of HTTPExceptionExample objects.
+    :param responses_status_code: A list where each element can be either:
+        - An int representing a simple status code (for backward compatibility)
+        - A dict mapping status codes to lists of HTTPExceptionExample objects
     :return: A dict suitable for use in FastAPI's `responses` parameter.
 
     **Examples**::
@@ -65,75 +66,93 @@ def create_openapi_http_exception_doc(
             responses=create_openapi_http_exception_doc([404, 400])
 
         Multiple examples for same status code:
-            responses=create_openapi_http_exception_doc({
-                404: [
-                    {
-                        "summary": "Task instance not found",
-                        "description": "The requested task instance does not exist",
-                        "value": {"detail": "Task instance with id X not found"}
-                    },
-                    {
-                        "summary": "Task instance is mapped",
-                        "description": "Task instance is mapped, map_index required",
-                        "value": {"detail": "Task instance is mapped, add the map_index value to the URL"}
-                    }
-                ]
-            })
-    """
-    # Handle backward compatibility: list of status codes
-    if isinstance(responses_status_code, list):
-        responses_status_code = sorted(responses_status_code)
-        return {status_code: {"model": HTTPExceptionResponse} for status_code in responses_status_code}
-
-    # Handle new format: dict with examples
-    result = {}
-    for status_code, examples in responses_status_code.items():
-        if not examples:
-            # If no examples provided, use simple format
-            result[status_code] = {"model": HTTPExceptionResponse}
-        elif len(examples) == 1:
-            # Single example: use simple format with description
-            example = examples[0]
-            description = example.get("description") or example.get("summary") or "Error response"
-            result[status_code] = {
-                "model": HTTPExceptionResponse,
-                "description": description,
-            }
-        else:
-            # Multiple examples: use content with examples
-            examples_dict = {}
-            for i, example in enumerate(examples):
-                # Generate a safe key from summary or use indexed fallback
-                summary = example.get("summary", "")
-                if not summary:
-                    # If no summary, use indexed example name
-                    example_key = f"example_{i}"
-                else:
-                    # Keep only alphanumeric and underscore, replace other chars with underscore
-                    # Use regex for better performance: replace non-alphanumeric with underscore,
-                    # then collapse multiple underscores into one
-                    example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
-                    example_key = re.sub(r"_+", "_", example_key).strip("_")
-                    # Ensure key isn't empty after processing
-                    if not example_key:
-                        example_key = f"example_{i}"
-                    # Ensure key doesn't start with a number
-                    elif example_key[0].isdigit():
-                        example_key = f"example_{i}_{example_key}"
-                
-                examples_dict[example_key] = {
-                    "summary": example.get("summary", ""),
-                    "description": example.get("description", ""),
-                    "value": example.get("value", {"detail": ""}),
+            responses=create_openapi_http_exception_doc([
+                {
+                    404: [
+                        {
+                            "summary": "Task instance not found",
+                            "description": "The requested task instance does not exist",
+                            "value": {"detail": "Task instance with id X not found"}
+                        },
+                        {
+                            "summary": "Task instance is mapped",
+                            "description": "Task instance is mapped, map_index required",
+                            "value": {"detail": "Task instance is mapped, add the map_index value to the URL"}
+                        }
+                    ]
                 }
+            ])
 
-            result[status_code] = {
-                "model": HTTPExceptionResponse,
-                "content": {
-                    "application/json": {
-                        "examples": examples_dict,
+        Mixed usage:
+            responses=create_openapi_http_exception_doc([
+                400,  # Simple status code
+                {
+                    404: [
+                        {
+                            "summary": "Not found",
+                            "description": "Resource not found",
+                            "value": {"detail": "Resource not found"}
+                        }
+                    ]
+                }
+            ])
+    """
+    result = {}
+    
+    # Process each element in the list
+    for item in responses_status_code:
+        if isinstance(item, int):
+            # Simple status code without examples
+            result[item] = {"model": HTTPExceptionResponse}
+        elif isinstance(item, dict):
+            # Dict with status codes and examples
+            for status_code, examples in item.items():
+                if not examples:
+                    # If no examples provided, use simple format
+                    result[status_code] = {"model": HTTPExceptionResponse}
+                elif len(examples) == 1:
+                    # Single example: use simple format with description
+                    example = examples[0]
+                    description = example.get("description") or example.get("summary") or "Error response"
+                    result[status_code] = {
+                        "model": HTTPExceptionResponse,
+                        "description": description,
                     }
-                },
-            }
+                else:
+                    # Multiple examples: use content with examples
+                    examples_dict = {}
+                    for i, example in enumerate(examples):
+                        # Generate a safe key from summary or use indexed fallback
+                        summary = example.get("summary", "")
+                        if not summary:
+                            # If no summary, use indexed example name
+                            example_key = f"example_{i}"
+                        else:
+                            # Keep only alphanumeric and underscore, replace other chars with underscore
+                            # Use regex for better performance: replace non-alphanumeric with underscore,
+                            # then collapse multiple underscores into one
+                            example_key = re.sub(r"[^a-z0-9_]+", "_", summary.lower())
+                            example_key = re.sub(r"_+", "_", example_key).strip("_")
+                            # Ensure key isn't empty after processing
+                            if not example_key:
+                                example_key = f"example_{i}"
+                            # Ensure key doesn't start with a number
+                            elif example_key[0].isdigit():
+                                example_key = f"example_{i}_{example_key}"
+                        
+                        examples_dict[example_key] = {
+                            "summary": example.get("summary", ""),
+                            "description": example.get("description", ""),
+                            "value": example.get("value", {"detail": ""}),
+                        }
+
+                    result[status_code] = {
+                        "model": HTTPExceptionResponse,
+                        "content": {
+                            "application/json": {
+                                "examples": examples_dict,
+                            }
+                        },
+                    }
 
     return result
