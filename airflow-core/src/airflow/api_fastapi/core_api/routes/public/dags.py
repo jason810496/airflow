@@ -63,7 +63,10 @@ from airflow.api_fastapi.core_api.datamodels.dags import (
     DAGPatchBody,
     DAGResponse,
 )
-from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
+from airflow.api_fastapi.core_api.openapi.exceptions import (
+    HTTPExceptionDoc,
+    create_openapi_http_exception_doc,
+)
 from airflow.api_fastapi.core_api.security import (
     EditableDagsFilterDep,
     GetUserDep,
@@ -176,7 +179,21 @@ def get_dags(
     responses=create_openapi_http_exception_doc(
         [
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
+            HTTPExceptionDoc(
+                status_code=status.HTTP_404_NOT_FOUND,
+                examples=[
+                    {
+                        "summary": "DAG not found in DagBag",
+                        "description": "The DAG with the specified ID was not found in the DagBag",
+                        "value": {"detail": "The Dag with ID: `example_dag` was not found"},
+                    },
+                    {
+                        "summary": "DAG not found in session",
+                        "description": "The DAG with the specified ID was not found in the database session",
+                        "value": {"detail": "Unable to obtain dag with id example_dag from session"},
+                    },
+                ]
+            ),
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         ]
     ),
@@ -400,7 +417,26 @@ def unfavorite_dag(dag_id: str, session: SessionDep, user: GetUserDep):
     responses=create_openapi_http_exception_doc(
         [
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_404_NOT_FOUND,
+            HTTPExceptionDoc(
+                status_code=status.HTTP_404_NOT_FOUND,
+                examples=[
+                    {
+                        "summary": "DAG not found",
+                        "description": "The DAG with the specified ID does not exist",
+                        "value": {"detail": "Dag with id: example_dag was not found"},
+                    }
+                ]
+            ),
+            HTTPExceptionDoc(
+                status_code=status.HTTP_409_CONFLICT,
+                examples=[
+                    {
+                        "summary": "DAG has running task instances",
+                        "description": "Cannot delete DAG because it has task instances that are still running",
+                        "value": {"detail": "Task instances of dag with id: 'example_dag' are still running"},
+                    }
+                ]
+            ),
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         ]
     ),
