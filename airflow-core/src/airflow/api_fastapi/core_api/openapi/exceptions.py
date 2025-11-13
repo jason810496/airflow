@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple, TypedDict
+from typing import Any, NamedTuple, TypedDict
 
 from pydantic import BaseModel
 
@@ -51,7 +51,7 @@ class HTTPExceptionDoc(NamedTuple):
 
 def create_openapi_http_exception_doc(
     responses_status_code: list[int | HTTPExceptionDoc],
-) -> dict:
+) -> dict[int, dict[str, Any]]:
     """
     Will create additional response example for errors raised by the endpoint.
 
