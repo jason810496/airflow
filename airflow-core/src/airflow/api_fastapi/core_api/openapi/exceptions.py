@@ -154,4 +154,5 @@ def create_openapi_http_exception_doc(
                     },
                 }
 
-    return result
+    # Sort by status code for consistent ordering
+    return dict(sorted(result.items()))
