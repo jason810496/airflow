@@ -701,9 +701,18 @@ def compile_ui_assets(
         )
         # Add bun to PATH for the current process
         bun_bin_path = os.path.expanduser("~/.bun/bin")
-        if bun_bin_path not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = f"{bun_bin_path}:{os.environ.get('PATH', '')}"
-            console.print(f"[bright_blue]Added {bun_bin_path} to PATH")
+        if os.path.exists(bun_bin_path):
+            path_entries = os.environ.get("PATH", "").split(os.pathsep)
+            if bun_bin_path not in path_entries:
+                os.environ["PATH"] = f"{bun_bin_path}{os.pathsep}{os.environ.get('PATH', '')}"
+                console.print(f"[bright_blue]Added {bun_bin_path} to PATH")
+        # Verify bun is now available
+        if shutil.which("bun") is None:
+            console.print(
+                "[red]Failed to find bun in PATH after installation. "
+                "Please ensure bun is properly installed."
+            )
+            sys.exit(1)
     else:
         console.print("[bright_blue]bun already installed")
 
