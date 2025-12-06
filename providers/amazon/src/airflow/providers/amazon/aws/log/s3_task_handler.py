@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     from airflow.utils.log.file_task_handler import LogMessages, LogSourceInfo
 
 
+    from airflow.utils.log.file_task_handler import (
+        RawLogStream,
+        StreamingLogResponse,
+    )
+
+
+
 @attrs.define
 class S3RemoteLogIO(LoggingMixin):  # noqa: D101
     remote_base: str
@@ -98,6 +105,26 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
             if return_error:
                 return msg
         return ""
+    
+    def s3_stream_read(self, remote_log_location: str, return_error: bool = False) -> RawLogStream:
+        """
+        Stream the log found at the remote_log_location or '' if no logs are found or there is an error.
+
+        :param remote_log_location: the log's location in remote storage
+        :param return_error: if True, yields a string error message if an
+            error occurs. Otherwise yields nothing when an error occurs.
+        :return: an iterator that yields the log found at the remote_log_location
+        """
+        try:
+            return self.hook.stream_read_key(remote_log_location)
+        except Exception as error:
+            msg = f"Could not stream logs from {remote_log_location} with error: {error}"
+            self.log.exception(msg)
+            # yield error message
+            if return_error:
+                yield msg
+
+        return 
 
     def write(
         self,
@@ -127,6 +154,8 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
         # Default to a single retry attempt because s3 upload failures are
         # rare but occasionally occur.  Multiple retry attempts are unlikely
         # to help as they usually indicate non-ephemeral errors.
+        print(f"Writing logs to S3 at {remote_log_location}")
+        print(f"Log content: {log}")
         for try_num in range(1 + max_retry):
             try:
                 self.hook.load_string(
@@ -145,9 +174,12 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
                 else:
                     self.log.exception("Could not write logs to %s", remote_log_location)
                     return False
+                
+        print(f"Successfully wrote logs to S3 at {remote_log_location}")
         return True
 
     def read(self, relative_path: str, ti: RuntimeTI) -> tuple[LogSourceInfo, LogMessages | None]:
+        print("Reading logs from S3 for %s", relative_path)
         logs: list[str] = []
         messages = []
         bucket, prefix = self.hook.parse_s3_url(s3url=os.path.join(self.remote_base, relative_path))
@@ -163,6 +195,29 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
                 logs.append(self.s3_read(key, return_error=True))
             return messages, logs
         return messages, None
+    
+    def stream(self, relative_path: str, ti: RuntimeTI) -> StreamingLogResponse:
+        print(f"Streaming logs from S3 for {relative_path}")
+        logs: list[RawLogStream] = []
+        messages = []
+        bucket, prefix = self.hook.parse_s3_url(s3url=os.path.join(self.remote_base, relative_path))
+        print(f"Parsed bucket: {bucket}, prefix: {prefix}")
+        keys = self.hook.list_keys(bucket_name=bucket, prefix=prefix)
+        print(f"Found keys: {keys}")
+        if keys:
+            keys = sorted(f"s3://{bucket}/{key}" for key in keys)
+            if AIRFLOW_V_3_0_PLUS:
+                messages = keys
+            else:
+                messages.append("Found logs in s3:")
+                messages.extend(f"  * {key}" for key in keys)
+            for key in keys:
+                print(f"Streaming log from key: {key}")
+                logs.append(self.s3_stream_read(key))
+            return messages, logs
+        
+        return messages, []
+
 
 
 class S3TaskHandler(FileTaskHandler, LoggingMixin):

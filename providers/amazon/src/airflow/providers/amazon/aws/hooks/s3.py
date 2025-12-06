@@ -29,7 +29,7 @@ import re
 import shutil
 import time
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator, Generator
 from contextlib import suppress
 from copy import deepcopy
 from datetime import datetime
@@ -1077,6 +1077,34 @@ class S3Hook(AwsBaseHook):
         """
         obj = self.get_key(key, bucket_name)
         return obj.get()["Body"].read().decode("utf-8")
+    
+    @unify_bucket_name_and_key
+    @provide_bucket_name
+    def stream_read_key(self, key: str, bucket_name: str | None = None) -> Generator[str, None, None]:
+        """
+        Read a key from S3 as a stream.
+
+        .. seealso::
+            - :external+boto3:py:meth:`S3.Object.get`
+
+        :param key: S3 key that will point to the file
+        :param bucket_name: Name of the bucket in which the file is stored
+        :return: a generator that yields lines from the content of the key
+        """
+        print("stream_read_key called")
+        obj = self.get_key(key, bucket_name)
+        buffer = b''
+
+        for chunk in obj.get()["Body"].iter_chunks():
+            buffer += chunk
+            while b'\n' in buffer:
+                line, buffer = buffer.split(b'\n', 1)
+                print(line.decode('utf-8'))
+                yield line.decode('utf-8')
+
+        if buffer:
+            print(buffer.decode('utf-8'))
+            yield buffer.decode('utf-8')
 
     @unify_bucket_name_and_key
     @provide_bucket_name

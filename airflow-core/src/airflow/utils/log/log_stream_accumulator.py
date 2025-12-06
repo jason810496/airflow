@@ -85,8 +85,10 @@ class LogStreamAccumulator:
         while True:
             # `islice` will try to get up to `self._threshold` lines from the stream.
             self._buffer.extend(islice(self._stream, self._threshold))
+            print(f"Captured {len(self._buffer)} lines in buffer.")
             # If there are no more lines to capture, exit the loop.
             if len(self._buffer) < self._threshold:
+                print("No more lines to capture from stream.")
                 break
             self._flush_buffer_to_disk()
 
@@ -122,11 +124,14 @@ class LogStreamAccumulator:
         try:
             if not self._tmpfile:
                 # if no temporary file was created, return from the buffer
+                print("No temporary file created; yielding from buffer.")
+                print(f"Buffer size: {len(self._buffer)}")
                 yield from self._buffer
             else:
                 # avoid circular import
                 from airflow.utils.log.file_task_handler import StructuredLogMessage
 
+                print(f"Yielding from temporary file: {self._tmpfile.name}")
                 with open(self._tmpfile.name, encoding="utf-8") as f:
                     yield from (StructuredLogMessage.model_validate_json(line.strip()) for line in f)
                 # yield the remaining buffer

@@ -134,6 +134,7 @@ class TaskLogReader:
 
         while True:
             log_stream, out_metadata = self.read_log_chunks(ti, try_number, metadata)
+            print(f"LogReader: {log_stream=}, {out_metadata=}")
             yield from (f"{log.model_dump_json()}\n" for log in log_stream)
 
             if not out_metadata.get("end_of_log", False) and ti.state not in (

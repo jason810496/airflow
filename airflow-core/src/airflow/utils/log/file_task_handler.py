@@ -614,6 +614,7 @@ class FileTaskHandler(logging.Handler):
         with suppress(NotImplementedError):
             sources, logs = self._read_remote_logs(ti, try_number, metadata)
             if not logs:
+                print("No remote logs found.")
                 remote_logs = []
             elif isinstance(logs, list) and isinstance(logs[0], str):
                 # If the logs are in legacy format, convert them to a generator of log lines
@@ -623,6 +624,7 @@ class FileTaskHandler(logging.Handler):
                 ]
             elif isinstance(logs, list) and _is_logs_stream_like(logs[0]):
                 # If the logs are already in a stream-like format, we can use them directly
+                print("Remote logs are stream-like.")
                 remote_logs = cast("list[RawLogStream]", logs)
             else:
                 # If the logs are in a different format, raise an error
@@ -942,3 +944,30 @@ class FileTaskHandler(logging.Handler):
         # Fallback to .read interface
         sources, logs = remote_io.read(path, ti)
         return sources, logs or []
+
+
+# def print_s3_object_content(s3_uri):
+#     """
+#     Prints the content of an S3 object given its S3 URI.
+
+#     Args:
+#         s3_uri (str): The S3 URI of the object (e.g., "s3://your-bucket-name/your-object-key.txt").
+#     """
+#     if not s3_uri.startswith("s3://"):
+#         print("Invalid S3 URI format. It should start with 's3://'.")
+#         return
+
+#     # Extract bucket name and object key from the S3 URI
+#     s3_uri = "s3://test-airflow-logs/dag_id=large_task_logs_0_1MB/run_id=manual__2025-12-05T12:50:10+00:00/task_id=two/attempt=1.log"
+#     parts = s3_uri[5:].split('/', 1)
+#     bucket_name = parts[0]
+#     object_key = parts[1] if len(parts) > 1 else ""
+
+#     s3_client = boto3.client('s3')
+#     response = s3_client.get_object(Bucket=bucket_name, Key=object_key)
+
+#     # Read and decode the object's content
+#     object_content = response['Body'].read().decode('utf-8')
+
+#     print(f"Content of {s3_uri}:\n")
+#     print(object_content)

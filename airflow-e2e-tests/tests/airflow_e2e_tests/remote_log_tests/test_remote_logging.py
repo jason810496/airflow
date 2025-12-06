@@ -55,14 +55,15 @@ class TestRemoteLogging:
         )
 
         # This bucket will be created part of the docker-compose setup in
-        bucket_name = "test-airflow-logs"
-        s3_client = boto3.client(
-            "s3",
-            endpoint_url="http://localhost:4566",
-            aws_access_key_id="test",
-            aws_secret_access_key="test",
-            region_name="us-east-1",
-        )
+bucket_name = "test-airflow-logs"
+s3_client = boto3.client(
+"s3",
+# endpoint_url="http://localhost:4566",
+endpoint_url="http://localstack-main:4566",
+aws_access_key_id="test",
+aws_secret_access_key="test",
+region_name="us-east-1",
+)
 
         # Wait for logs to be available in S3 before we call `get_task_logs`
         for _ in range(self.max_retries):
