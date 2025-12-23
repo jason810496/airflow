@@ -787,7 +787,10 @@ def copy_mounted_ui_dist(mounted_ui_dist_source: Path | None, dist_prefix: str):
     The UI dist is mounted via docker-compose from host to /opt/airflow/.build/ui-dist/.
     """
     if mounted_ui_dist_source is None:
-        console.print("[red]No mounted UI dist source provided")
+        console.print(
+            "[red]No mounted UI dist source provided. "
+            "This is an internal error - please report this issue."
+        )
         return
 
     # Target dist directory in the installed airflow package
@@ -796,7 +799,10 @@ def copy_mounted_ui_dist(mounted_ui_dist_source: Path | None, dist_prefix: str):
     if not mounted_ui_dist_source.exists():
         console.print(
             f"[yellow]Mounted UI dist directory not found at '{mounted_ui_dist_source}'. "
-            "Please build UI assets on host first using 'pnpm build'."
+            "Please build UI assets on host:\n"
+            "  cd airflow-core/src/airflow/ui\n"
+            "  pnpm install\n"
+            "  pnpm build"
         )
         return
 
@@ -808,7 +814,10 @@ def copy_mounted_ui_dist(mounted_ui_dist_source: Path | None, dist_prefix: str):
 
     # Remove existing dist directory if it exists
     if dist_directory.exists():
-        shutil.rmtree(dist_directory)
+        if dist_directory.is_symlink():
+            dist_directory.unlink()
+        else:
+            shutil.rmtree(dist_directory)
 
     # Create parent directory if it doesn't exist
     dist_directory.parent.mkdir(parents=True, exist_ok=True)
