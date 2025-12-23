@@ -44,6 +44,37 @@ Note
 This command requires the ``prek`` tool, which should be installed by following
 `this guide <../../../contributing-docs/03b_contributors_quick_start_seasoned_developers.rst#configuring-prek>`__.
 
+Mounting pre-built UI assets
+"""""""""""""""""""""""""""""
+
+If you have already built the UI assets on your host machine and want to avoid rebuilding them inside the
+container, you can use the ``--mount-ui-dist`` flag with ``breeze start-airflow`` or ``breeze shell`` commands.
+This flag will mount the pre-built UI dist directories from your host machine to the container, skipping the
+time-consuming UI compilation process and avoiding the need to install Node.js and frontend dependencies
+in the container.
+
+Prerequisites:
+
+1. Build UI assets on your host machine first:
+
+.. code-block:: bash
+
+   cd airflow-core/src/airflow/ui
+   pnpm install
+   pnpm build
+
+2. Start Airflow with the ``--mount-ui-dist`` flag:
+
+.. code-block:: bash
+
+   breeze start-airflow --mount-ui-dist
+
+This approach is especially useful when:
+
+* You are frequently restarting the Breeze environment
+* You want to iterate quickly on backend changes without rebuilding UI assets
+* You want to reduce container startup time
+
 
 Check translation completeness
 """"""""""""""""""""""""""""""

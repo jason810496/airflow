@@ -32,6 +32,23 @@ Adding the ``--dev-mode`` flag will automatically run the vite dev server for ho
 
 In certain WSL environments, you will need to set ``CHOKIDAR_USEPOLLING=true`` in your environment variables for hot reloading to work.
 
+Using pre-built UI assets
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you have already built the UI assets on your host machine, you can use the ``--mount-ui-dist`` flag to mount them
+directly into the Breeze container, avoiding the need to rebuild UI assets inside the container. This significantly
+reduces container startup time and eliminates the need to install Node.js and frontend dependencies in the container.
+
+.. code-block:: bash
+
+    # First, build UI assets on your host machine
+    cd airflow-core/src/airflow/ui
+    pnpm install
+    pnpm build
+
+    # Then start Airflow with pre-built assets
+    breeze start-airflow --mount-ui-dist
+
 pnpm commands
 -------------
 
