@@ -784,6 +784,16 @@ def mount_ui_dist_from_host(source_ui_directory: Path, dist_prefix: str):
     # Source dist directory from the host (mounted source) - use absolute path
     dist_source_directory = (source_ui_directory / UI_DIST_DIR_NAME).resolve()
 
+    # Validate that the source directory is within the expected Airflow root path to prevent path traversal
+    try:
+        dist_source_directory.relative_to(AIRFLOW_ROOT_PATH)
+    except ValueError:
+        console.print(
+            f"[red]Security: UI dist directory '{dist_source_directory}' is outside the expected Airflow root path. "
+            "This could be a security risk. Skipping UI mounting."
+        )
+        return
+
     # Target dist directory in the installed airflow package
     dist_directory = get_airflow_installation_path() / dist_prefix
 
@@ -791,6 +801,12 @@ def mount_ui_dist_from_host(source_ui_directory: Path, dist_prefix: str):
         console.print(
             f"[yellow]UI dist directory not found at '{dist_source_directory}'. "
             "Please build UI assets on host first using 'pnpm build'."
+        )
+        return
+
+    if not dist_source_directory.is_dir():
+        console.print(
+            f"[red]UI dist path '{dist_source_directory}' exists but is not a directory. Skipping UI mounting."
         )
         return
 
