@@ -560,11 +560,17 @@ def find_installation_spec(
     return installation_spec
 
 
-def download_airflow_source_tarball(installation_spec: InstallationSpec):
+def download_airflow_source_tarball(installation_spec: InstallationSpec, mount_ui_dist: bool = False):
     """Download Airflow source tarball from GitHub."""
     if not installation_spec.compile_ui_assets:
         console.print(
             "[bright_blue]Skipping downloading Airflow source tarball since UI assets compilation is disabled."
+        )
+        return
+
+    if mount_ui_dist:
+        console.print(
+            "[bright_blue]Skipping downloading Airflow source tarball - using mounted UI dist from host."
         )
         return
 
@@ -654,9 +660,16 @@ def compile_ui_assets(
     source_prefix: str,
     source_ui_directory: Path,
     dist_prefix: str,
+    mount_ui_dist: bool = False,
 ):
     if not installation_spec.compile_ui_assets:
         console.print("[bright_blue]Skipping UI assets compilation")
+        return
+
+    # Check if UI dist is mounted from host
+    if mount_ui_dist:
+        console.print("[bright_blue]Mounting pre-built UI dist from host instead of compiling")
+        mount_ui_dist_from_host(source_ui_directory, dist_prefix)
         return
 
     # Copy UI directories from extracted tarball source to core source directory
@@ -760,6 +773,41 @@ def compile_ui_assets(
     )
     shutil.copytree(dist_source_directory, dist_directory)
     console.print("[bright_blue]UI assets compiled successfully")
+
+
+def mount_ui_dist_from_host(source_ui_directory: Path, dist_prefix: str):
+    """
+    Create a symlink from the installed airflow package to the host's pre-built UI dist directory.
+    This allows us to use pre-built UI assets without compiling them in the container.
+    """
+    # Source dist directory from the host (mounted source)
+    dist_source_directory = source_ui_directory / "dist"
+    
+    # Target dist directory in the installed airflow package
+    dist_directory = get_airflow_installation_path() / dist_prefix
+    
+    if not dist_source_directory.exists():
+        console.print(
+            f"[yellow]UI dist directory not found at '{dist_source_directory}'. "
+            "Please build UI assets on host first using 'pnpm build'."
+        )
+        return
+    
+    # Remove existing dist directory if it exists
+    if dist_directory.exists():
+        if dist_directory.is_symlink():
+            dist_directory.unlink()
+        else:
+            shutil.rmtree(dist_directory)
+    
+    # Create parent directory if it doesn't exist
+    dist_directory.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Create symlink from installed package to host's dist directory
+    dist_directory.symlink_to(dist_source_directory)
+    console.print(
+        f"[bright_blue]Mounted UI dist from '{dist_source_directory}' to '{dist_directory}'"
+    )
 
 
 ALLOWED_DISTRIBUTION_FORMAT = ["wheel", "sdist", "both"]
@@ -895,6 +943,14 @@ FUTURE_CONTENT = "from __future__ import annotations"
     help="What sources are mounted .",
 )
 @click.option(
+    "--mount-ui-dist",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    envvar="MOUNT_UI_DIST",
+    help="Mount pre-built UI dist directories from host to container to skip UI assets compilation.",
+)
+@click.option(
     "--install-airflow-with-constraints",
     is_flag=True,
     default=False,
@@ -912,6 +968,7 @@ def install_airflow_and_providers(
     github_repository: str,
     install_selected_providers: str,
     mount_sources: str,
+    mount_ui_dist: bool,
     distribution_format: str,
     providers_constraints_mode: str,
     providers_constraints_location: str,
@@ -1028,13 +1085,16 @@ def install_airflow_and_providers(
             airflow_providers_common_init_py.write_text(INIT_CONTENT + "\n")
 
     # compile ui assets
-    download_airflow_source_tarball(installation_spec)
-    compile_ui_assets(installation_spec, CORE_SOURCE_UI_PREFIX, CORE_SOURCE_UI_DIRECTORY, CORE_UI_DIST_PREFIX)
+    download_airflow_source_tarball(installation_spec, mount_ui_dist)
+    compile_ui_assets(
+        installation_spec, CORE_SOURCE_UI_PREFIX, CORE_SOURCE_UI_DIRECTORY, CORE_UI_DIST_PREFIX, mount_ui_dist
+    )
     compile_ui_assets(
         installation_spec,
         SIMPLE_AUTH_MANAGER_SOURCE_UI_PREFIX,
         SIMPLE_AUTH_MANAGER_SOURCE_UI_DIRECTORY,
         SIMPLE_AUTH_MANAGER_UI_DIST_PREFIX,
+        mount_ui_dist,
     )
     console.print("\n[green]Done!")
 

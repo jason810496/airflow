@@ -204,6 +204,7 @@ class ShellParams:
     load_default_connections: bool = False
     load_example_dags: bool = False
     mount_sources: str = MOUNT_SELECTED
+    mount_ui_dist: bool = False
     mysql_version: str = ALLOWED_MYSQL_VERSIONS[0]
     no_db_cleanup: bool = False
     num_runs: str = ""
@@ -644,6 +645,7 @@ class ShellParams:
         _set_var(_env, "MYSQL_HOST_PORT", None, MYSQL_HOST_PORT)
         _set_var(_env, "MYSQL_VERSION", self.mysql_version)
         _set_var(_env, "MOUNT_SOURCES", self.mount_sources)
+        _set_var(_env, "MOUNT_UI_DIST", self.mount_ui_dist)
         _set_var(_env, "NUM_RUNS", self.num_runs)
         _set_var(_env, "ONLY_MIN_VERSION_UPDATE", self.only_min_version_update)
         _set_var(_env, "DISTRIBUTION_FORMAT", self.distribution_format)
