@@ -98,6 +98,7 @@ from airflow_breeze.utils.path_utils import (
     SCRIPTS_CI_DOCKER_COMPOSE_INTEGRATION_KERBEROS_PATH,
     SCRIPTS_CI_DOCKER_COMPOSE_LOCAL_ALL_SOURCES_PATH,
     SCRIPTS_CI_DOCKER_COMPOSE_LOCAL_YAML_PATH,
+    SCRIPTS_CI_DOCKER_COMPOSE_MOUNT_UI_DIST_PATH,
     SCRIPTS_CI_DOCKER_COMPOSE_MYPY_PATH,
     SCRIPTS_CI_DOCKER_COMPOSE_PATH,
     SCRIPTS_CI_DOCKER_COMPOSE_PROVIDERS_AND_TESTS_SOURCES_PATH,
@@ -419,6 +420,8 @@ class ShellParams:
             compose_file_list.append(SCRIPTS_CI_DOCKER_COMPOSE_PROVIDERS_AND_TESTS_SOURCES_PATH)
         elif self.mount_sources == MOUNT_REMOVE:
             compose_file_list.append(SCRIPTS_CI_DOCKER_COMPOSE_REMOVE_SOURCES_PATH)
+        if self.mount_ui_dist:
+            compose_file_list.append(SCRIPTS_CI_DOCKER_COMPOSE_MOUNT_UI_DIST_PATH)
         if self.forward_credentials:
             compose_file_list.append(SCRIPTS_CI_DOCKER_COMPOSE_FORWARD_CREDENTIALS_PATH)
         if self.include_mypy_volume:

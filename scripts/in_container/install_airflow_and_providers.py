@@ -39,6 +39,10 @@ from in_container_utils import (
 
 SOURCE_TARBALL = AIRFLOW_ROOT_PATH / ".build" / "airflow.tar.gz"
 EXTRACTED_SOURCE_DIR = AIRFLOW_ROOT_PATH / ".build" / "airflow_source"
+# Mounted UI dist directories (from docker-compose mount-ui-dist.yml)
+MOUNTED_UI_DIST_DIR = AIRFLOW_ROOT_PATH / ".build" / "ui-dist"
+MOUNTED_MAIN_UI_DIST = MOUNTED_UI_DIST_DIR / "main"
+MOUNTED_SIMPLE_AUTH_UI_DIST = MOUNTED_UI_DIST_DIR / "simple-auth"
 CORE_UI_DIST_PREFIX = "ui/dist"
 CORE_SOURCE_UI_PREFIX = "airflow-core/src/airflow/ui"
 CORE_SOURCE_UI_DIRECTORY = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "ui"
@@ -662,11 +666,12 @@ def compile_ui_assets(
     source_ui_directory: Path,
     dist_prefix: str,
     mount_ui_dist: bool = False,
+    mounted_ui_dist_source: Path | None = None,
 ):
     # Check if UI dist is mounted from host first (before other checks)
     if mount_ui_dist:
-        console.print("[bright_blue]Mounting pre-built UI dist from host instead of compiling")
-        mount_ui_dist_from_host(source_ui_directory, dist_prefix)
+        console.print("[bright_blue]Copying pre-built UI dist from mounted location")
+        copy_mounted_ui_dist(mounted_ui_dist_source, dist_prefix)
         return
 
     if not installation_spec.compile_ui_assets:
@@ -776,68 +781,46 @@ def compile_ui_assets(
     console.print("[bright_blue]UI assets compiled successfully")
 
 
-def mount_ui_dist_from_host(source_ui_directory: Path, dist_prefix: str):
+def copy_mounted_ui_dist(mounted_ui_dist_source: Path | None, dist_prefix: str):
     """
-    Create a symlink from the installed airflow package to the host's pre-built UI dist directory.
-    This allows us to use pre-built UI assets without compiling them in the container.
+    Copy pre-built UI dist from the mounted location to the installed airflow package.
+    The UI dist is mounted via docker-compose from host to /opt/airflow/.build/ui-dist/.
     """
-    # Source dist directory from the host (mounted source) - use absolute path
-    dist_source_directory = (source_ui_directory / UI_DIST_DIR_NAME).resolve()
-
-    # Validate that the source directory is within the expected Airflow root path to prevent path traversal
-    try:
-        dist_source_directory.relative_to(AIRFLOW_ROOT_PATH)
-    except ValueError:
-        console.print(
-            f"[red]Security: UI dist directory '{dist_source_directory}' is outside the expected Airflow root path. "
-            "This could be a security risk. Skipping UI mounting."
-        )
+    if mounted_ui_dist_source is None:
+        console.print("[red]No mounted UI dist source provided")
         return
 
     # Target dist directory in the installed airflow package
     dist_directory = get_airflow_installation_path() / dist_prefix
 
-    if not dist_source_directory.exists():
+    if not mounted_ui_dist_source.exists():
         console.print(
-            f"[yellow]UI dist directory not found at '{dist_source_directory}'. "
+            f"[yellow]Mounted UI dist directory not found at '{mounted_ui_dist_source}'. "
             "Please build UI assets on host first using 'pnpm build'."
         )
         return
 
-    if not dist_source_directory.is_dir():
+    if not mounted_ui_dist_source.is_dir():
         console.print(
-            f"[red]UI dist path '{dist_source_directory}' exists but is not a directory. Skipping UI mounting."
+            f"[red]Mounted UI dist path '{mounted_ui_dist_source}' exists but is not a directory."
         )
         return
 
     # Remove existing dist directory if it exists
     if dist_directory.exists():
-        if dist_directory.is_symlink():
-            dist_directory.unlink()
-        else:
-            shutil.rmtree(dist_directory)
+        shutil.rmtree(dist_directory)
 
     # Create parent directory if it doesn't exist
     dist_directory.parent.mkdir(parents=True, exist_ok=True)
 
-    # Create symlink from installed package to host's dist directory using absolute paths
+    # Copy from mounted location to installed package
     try:
-        os.symlink(str(dist_source_directory), str(dist_directory))
+        shutil.copytree(mounted_ui_dist_source, dist_directory)
         console.print(
-            f"[bright_blue]Mounted UI dist from '{dist_source_directory}' to '{dist_directory}'"
+            f"[bright_blue]Copied UI dist from '{mounted_ui_dist_source}' to '{dist_directory}'"
         )
-    except OSError as e:
-        console.print(
-            f"[red]Failed to create symlink from '{dist_directory}' to '{dist_source_directory}': {e}"
-        )
-        console.print("[yellow]Falling back to copying UI assets instead of symlinking")
-        try:
-            shutil.copytree(dist_source_directory, dist_directory)
-            console.print(
-                f"[bright_blue]Copied UI dist from '{dist_source_directory}' to '{dist_directory}'"
-            )
-        except Exception as copy_error:
-            console.print(f"[red]Failed to copy UI assets: {copy_error}")
+    except Exception as copy_error:
+        console.print(f"[red]Failed to copy UI assets: {copy_error}")
 
 
 ALLOWED_DISTRIBUTION_FORMAT = ["wheel", "sdist", "both"]
@@ -1117,7 +1100,12 @@ def install_airflow_and_providers(
     # compile ui assets
     download_airflow_source_tarball(installation_spec, mount_ui_dist)
     compile_ui_assets(
-        installation_spec, CORE_SOURCE_UI_PREFIX, CORE_SOURCE_UI_DIRECTORY, CORE_UI_DIST_PREFIX, mount_ui_dist
+        installation_spec,
+        CORE_SOURCE_UI_PREFIX,
+        CORE_SOURCE_UI_DIRECTORY,
+        CORE_UI_DIST_PREFIX,
+        mount_ui_dist,
+        MOUNTED_MAIN_UI_DIST,
     )
     compile_ui_assets(
         installation_spec,
@@ -1125,6 +1113,7 @@ def install_airflow_and_providers(
         SIMPLE_AUTH_MANAGER_SOURCE_UI_DIRECTORY,
         SIMPLE_AUTH_MANAGER_UI_DIST_PREFIX,
         mount_ui_dist,
+        MOUNTED_SIMPLE_AUTH_UI_DIST,
     )
     console.print("\n[green]Done!")
 
