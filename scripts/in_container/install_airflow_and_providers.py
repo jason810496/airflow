@@ -782,27 +782,27 @@ def mount_ui_dist_from_host(source_ui_directory: Path, dist_prefix: str):
     """
     # Source dist directory from the host (mounted source)
     dist_source_directory = source_ui_directory / "dist"
-    
+
     # Target dist directory in the installed airflow package
     dist_directory = get_airflow_installation_path() / dist_prefix
-    
+
     if not dist_source_directory.exists():
         console.print(
             f"[yellow]UI dist directory not found at '{dist_source_directory}'. "
             "Please build UI assets on host first using 'pnpm build'."
         )
         return
-    
+
     # Remove existing dist directory if it exists
     if dist_directory.exists():
         if dist_directory.is_symlink():
             dist_directory.unlink()
         else:
             shutil.rmtree(dist_directory)
-    
+
     # Create parent directory if it doesn't exist
     dist_directory.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Create symlink from installed package to host's dist directory
     dist_directory.symlink_to(dist_source_directory)
     console.print(
