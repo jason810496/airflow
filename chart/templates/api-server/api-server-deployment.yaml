@@ -162,7 +162,14 @@ spec:
           command: {{ tpl (toYaml .Values.apiServer.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.apiServer.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow api-server --dev
+          {{- else }}
           args: {{- tpl (toYaml .Values.apiServer.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.apiServer.resources | nindent 12 }}
           volumeMounts:

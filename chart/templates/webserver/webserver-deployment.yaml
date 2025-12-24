@@ -180,7 +180,14 @@ spec:
           command: {{ tpl (toYaml .Values.webserver.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.webserver.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow webserver --dev
+          {{- else }}
           args: {{- tpl (toYaml .Values.webserver.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.webserver.resources | nindent 12 }}
           volumeMounts:

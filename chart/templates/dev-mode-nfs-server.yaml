@@ -18,55 +18,73 @@
 */}}
 
 ######################################
-## Airflow Source Code PersistentVolumeClaim, used for mounting source code with `dev` mode
+## Airflow Dev Mode NFS Server
 ######################################
-{{- if and (not .Values.devMode.persistence.existingClaim) .Values.devMode.enabled }}
+{{- if .Values.devMode.enabled }}
 ---
 apiVersion: v1
-kind: PersistentVolume
+kind: Service
 metadata:
-  name: {{ .Release.Name }}-code-pv
+  name: {{ .Release.Name }}-nfs-server
   labels:
     tier: airflow
-    component: code-pv
+    component: nfs-server
     release: {{ .Release.Name }}
     chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
     heritage: {{ .Release.Service }}
 spec:
-  capacity:
-    storage: {{ .Values.devMode.persistence.size | quote }}
-  accessModes:
-    - ReadWriteMany
-  nfs:
-    server: {{ .Release.Name }}-nfs-server.{{ .Release.Namespace }}.svc.cluster.local
-    path: "/"
+  ports:
+    - name: nfs
+      port: 2049
+    - name: mountd
+      port: 20048
+    - name: rpcbind
+      port: 111
+  selector:
+    tier: airflow
+    component: nfs-server
+    release: {{ .Release.Name }}
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: {{ template "airflow_code_volume_claim" . }}
+  name: {{ .Release.Name }}-nfs-server
   labels:
     tier: airflow
-    component: code-pvc
+    component: nfs-server
     release: {{ .Release.Name }}
     chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
     heritage: {{ .Release.Service }}
-    {{- with .Values.labels }}
-      {{- toYaml . | nindent 4 }}
-    {{- end }}
-  {{- with .Values.devMode.persistence.annotations }}
-  annotations: {{- toYaml . | nindent 4 }}
-  {{- end }}
 spec:
-  accessModes: ["ReadWriteMany"]
-  resources:
-    requests:
-      storage: {{ .Values.devMode.persistence.size | quote }}
-  {{- if .Values.devMode.persistence.storageClassName }}
-  {{- if (eq "-" .Values.devMode.persistence.storageClassName) }}
-  storageClassName: ""
-  {{- else }}
-  storageClassName: {{ tpl .Values.devMode.persistence.storageClassName . | quote }}
-  {{- end }}
-  {{- end }}
+  replicas: 1
+  selector:
+    matchLabels:
+      tier: airflow
+      component: nfs-server
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        tier: airflow
+        component: nfs-server
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+      - name: nfs-server
+        image: gcr.io/google_containers/volume-nfs:0.8
+        ports:
+          - name: nfs
+            containerPort: 2049
+          - name: mountd
+            containerPort: 20048
+          - name: rpcbind
+            containerPort: 111
+        securityContext:
+          privileged: true
+        volumeMounts:
+          - mountPath: /exports
+            name: nfs-export-volume
+      volumes:
+        - name: nfs-export-volume
+          emptyDir: {}
 {{- end }}

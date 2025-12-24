@@ -196,7 +196,14 @@ spec:
           command: {{ tpl (toYaml .Values.scheduler.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.scheduler.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow scheduler --dev
+          {{- else }}
           args: {{ tpl (toYaml .Values.scheduler.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           envFrom: {{- include "custom_airflow_environment_from" . | default "\n  []" | indent 10 }}
           env:
@@ -368,6 +375,7 @@ spec:
                     apiVersion: v1
                     fieldPath: metadata.namespace
                   path: namespace
+        {{- end }}
         {{- if .Values.devMode.enabled }}
         - name: code
           persistentVolumeClaim:

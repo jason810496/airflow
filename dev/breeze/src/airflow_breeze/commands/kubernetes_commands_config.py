@@ -30,7 +30,7 @@ KUBERNETES_CLUSTER_COMMANDS: dict[str, str | list[str]] = {
 }
 KUBERNETES_DEVELOPMENT_COMMANDS: dict[str, str | list[str]] = {
     "name": "K8S development commands",
-    "commands": ["reload-code", "restart"],
+    "commands": ["restart"],
 }
 KUBERNETES_INSPECTION_COMMANDS: dict[str, str | list[str]] = {
     "name": "K8S inspection commands",
@@ -186,12 +186,6 @@ KUBERNETES_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             "name": "K8S cluster delete flags",
             "options": ["--python", "--kubernetes-version", "--all"],
         },
-    ],
-    "breeze k8s reload-code": [
-        {
-            "name": "K8S reload code flags",
-            "options": ["--python", "--kubernetes-version", "--component", "--executor"],
-        }
     ],
     "breeze k8s restart": [
         {

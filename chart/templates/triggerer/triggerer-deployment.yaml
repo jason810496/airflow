@@ -182,7 +182,14 @@ spec:
           command: {{ tpl (toYaml .Values.triggerer.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.triggerer.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow triggerer --dev
+          {{- else }}
           args: {{ tpl (toYaml .Values.triggerer.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.triggerer.resources | nindent 12 }}
           volumeMounts:
