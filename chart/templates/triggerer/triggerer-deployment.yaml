@@ -182,7 +182,14 @@ spec:
           command: {{ tpl (toYaml .Values.triggerer.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.triggerer.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow triggerer --dev
+          {{- else }}
           args: {{ tpl (toYaml .Values.triggerer.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.triggerer.resources | nindent 12 }}
           volumeMounts:
@@ -260,6 +267,9 @@ spec:
               {{- tpl (toYaml .Values.triggerer.logGroomerSidecar.env) $ | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if .Values.devMode.enabled }}
+              {{- include "airflow_code_mount" . | nindent 12 }}
+            {{- end }}
             - name: logs
               mountPath: {{ template "airflow_logs" . }}
               {{- if .Values.logs.persistence.subPath }}
@@ -303,6 +313,11 @@ spec:
         {{- end }}
         {{- if .Values.triggerer.extraVolumes }}
           {{- tpl (toYaml .Values.triggerer.extraVolumes) . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.devMode.enabled }}
+        - name: code
+          persistentVolumeClaim:
+            claimName: {{ template "airflow_code_volume_claim" . }}
         {{- end }}
   {{- if .Values.logs.persistence.enabled }}
         - name: logs

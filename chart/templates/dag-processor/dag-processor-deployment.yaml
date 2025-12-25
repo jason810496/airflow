@@ -159,7 +159,14 @@ spec:
           command: {{ tpl (toYaml .Values.dagProcessor.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.dagProcessor.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow dag-processor --dev
+          {{- else }}
           args: {{ tpl (toYaml .Values.dagProcessor.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.dagProcessor.resources | nindent 12 }}
           volumeMounts:
@@ -168,6 +175,9 @@ spec:
             {{- end }}
             {{- if .Values.dagProcessor.extraVolumeMounts }}
               {{- tpl (toYaml .Values.dagProcessor.extraVolumeMounts) . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.devMode.enabled }}
+              {{- include "airflow_code_mount" . | nindent 12 }}
             {{- end }}
             - name: logs
               mountPath: {{ template "airflow_logs" . }}
@@ -268,6 +278,11 @@ spec:
         {{- end }}
         {{- if .Values.dagProcessor.extraVolumes }}
           {{- tpl (toYaml .Values.dagProcessor.extraVolumes) . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.devMode.enabled }}
+        - name: code
+          persistentVolumeClaim:
+            claimName: {{ template "airflow_code_volume_claim" . }}
         {{- end }}
         {{- if .Values.logs.persistence.enabled }}
         - name: logs

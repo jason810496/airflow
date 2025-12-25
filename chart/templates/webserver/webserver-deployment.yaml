@@ -147,6 +147,9 @@ spec:
             {{- if .Values.webserver.extraVolumeMounts }}
               {{- tpl (toYaml .Values.webserver.extraVolumeMounts) . | nindent 12 }}
             {{- end }}
+            {{- if .Values.devMode.enabled }}
+              {{- include "airflow_code_mount" . | nindent 12 }}
+            {{- end }}
             {{- if or .Values.webserver.webserverConfig .Values.webserver.webserverConfigConfigMapName }}
               {{- include "airflow_webserver_config_mount" . | nindent 12 }}
             {{- end }}
@@ -177,7 +180,14 @@ spec:
           command: {{ tpl (toYaml .Values.webserver.command) . | nindent 12 }}
           {{- end }}
           {{- if .Values.webserver.args }}
+          {{- if .Values.devMode.enabled }}
+          args:
+            - bash
+            - -c
+            - exec airflow webserver --dev
+          {{- else }}
           args: {{- tpl (toYaml .Values.webserver.args) . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources: {{- toYaml .Values.webserver.resources | nindent 12 }}
           volumeMounts:
@@ -284,6 +294,11 @@ spec:
           {{- include "git_sync_ssh_key_volume" . | indent 8 }}
         {{- end }}
         {{- end }}
+        {{- end }}
+        {{- if .Values.devMode.enabled }}
+        - name: code
+          persistentVolumeClaim:
+            claimName: {{ template "airflow_code_volume_claim" . }}
         {{- end }}
         {{- if .Values.logs.persistence.enabled }}
         - name: logs
