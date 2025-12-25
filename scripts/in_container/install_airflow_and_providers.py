@@ -39,6 +39,10 @@ from in_container_utils import (
 
 SOURCE_TARBALL = AIRFLOW_ROOT_PATH / ".build" / "airflow.tar.gz"
 EXTRACTED_SOURCE_DIR = AIRFLOW_ROOT_PATH / ".build" / "airflow_source"
+# Mounted UI dist directories (from docker-compose mount-ui-dist.yml)
+MOUNTED_UI_DIST_DIR = AIRFLOW_ROOT_PATH / ".build" / "ui-dist"
+MOUNTED_MAIN_UI_DIST = MOUNTED_UI_DIST_DIR / "main"
+MOUNTED_SIMPLE_AUTH_UI_DIST = MOUNTED_UI_DIST_DIR / "simple-auth"
 CORE_UI_DIST_PREFIX = "ui/dist"
 CORE_SOURCE_UI_PREFIX = "airflow-core/src/airflow/ui"
 CORE_SOURCE_UI_DIRECTORY = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "ui"
@@ -48,6 +52,7 @@ SIMPLE_AUTH_MANAGER_SOURCE_UI_DIRECTORY = (
     AIRFLOW_CORE_SOURCES_PATH / "airflow" / "api_fastapi" / "auth" / "managers" / "simple" / "ui"
 )
 INTERNAL_SERVER_ERROR = "500 Internal Server Error"
+UI_DIST_DIR_NAME = "dist"
 
 
 def get_provider_name(package_name: str) -> str:
@@ -560,11 +565,17 @@ def find_installation_spec(
     return installation_spec
 
 
-def download_airflow_source_tarball(installation_spec: InstallationSpec):
+def download_airflow_source_tarball(installation_spec: InstallationSpec, mount_ui_dist: bool = False):
     """Download Airflow source tarball from GitHub."""
     if not installation_spec.compile_ui_assets:
         console.print(
             "[bright_blue]Skipping downloading Airflow source tarball since UI assets compilation is disabled."
+        )
+        return
+
+    if mount_ui_dist:
+        console.print(
+            "[bright_blue]Skipping downloading Airflow source tarball - using mounted UI dist from host."
         )
         return
 
@@ -654,7 +665,15 @@ def compile_ui_assets(
     source_prefix: str,
     source_ui_directory: Path,
     dist_prefix: str,
+    mount_ui_dist: bool = False,
+    mounted_ui_dist_source: Path | None = None,
 ):
+    # Check if UI dist is mounted from host first (before other checks)
+    if mount_ui_dist:
+        console.print("[bright_blue]Copying pre-built UI dist from mounted location")
+        copy_mounted_ui_dist(mounted_ui_dist_source, dist_prefix)
+        return
+
     if not installation_spec.compile_ui_assets:
         console.print("[bright_blue]Skipping UI assets compilation")
         return
@@ -754,12 +773,63 @@ def compile_ui_assets(
         cwd=os.fspath(source_ui_directory),
     )
     # copy compiled assets to installation directory
-    dist_source_directory = source_ui_directory / "dist"
+    dist_source_directory = source_ui_directory / UI_DIST_DIR_NAME
     console.print(
         f"[bright_blue]Copying compiled UI assets from '{dist_source_directory}' to '{dist_directory}'"
     )
     shutil.copytree(dist_source_directory, dist_directory)
     console.print("[bright_blue]UI assets compiled successfully")
+
+
+def copy_mounted_ui_dist(mounted_ui_dist_source: Path | None, dist_prefix: str):
+    """
+    Copy pre-built UI dist from the mounted location to the installed airflow package.
+    The UI dist is mounted via docker-compose from host to /opt/airflow/.build/ui-dist/.
+    """
+    if mounted_ui_dist_source is None:
+        console.print(
+            "[red]No mounted UI dist source provided. "
+            "This is an internal error - please report this issue."
+        )
+        return
+
+    # Target dist directory in the installed airflow package
+    dist_directory = get_airflow_installation_path() / dist_prefix
+
+    if not mounted_ui_dist_source.exists():
+        console.print(
+            f"[yellow]Mounted UI dist directory not found at '{mounted_ui_dist_source}'. "
+            "Please build UI assets on host:\n"
+            "  cd airflow-core/src/airflow/ui\n"
+            "  pnpm install\n"
+            "  pnpm build"
+        )
+        return
+
+    if not mounted_ui_dist_source.is_dir():
+        console.print(
+            f"[red]Mounted UI dist path '{mounted_ui_dist_source}' exists but is not a directory."
+        )
+        return
+
+    # Remove existing dist directory if it exists
+    if dist_directory.exists():
+        if dist_directory.is_symlink():
+            dist_directory.unlink()
+        else:
+            shutil.rmtree(dist_directory)
+
+    # Create parent directory if it doesn't exist
+    dist_directory.parent.mkdir(parents=True, exist_ok=True)
+
+    # Copy from mounted location to installed package
+    try:
+        shutil.copytree(mounted_ui_dist_source, dist_directory)
+        console.print(
+            f"[bright_blue]Copied UI dist from '{mounted_ui_dist_source}' to '{dist_directory}'"
+        )
+    except Exception as copy_error:
+        console.print(f"[red]Failed to copy UI assets: {copy_error}")
 
 
 ALLOWED_DISTRIBUTION_FORMAT = ["wheel", "sdist", "both"]
@@ -895,6 +965,14 @@ FUTURE_CONTENT = "from __future__ import annotations"
     help="What sources are mounted .",
 )
 @click.option(
+    "--mount-ui-dist",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    envvar="MOUNT_UI_DIST",
+    help="Mount pre-built UI dist directories from host to container to skip UI assets compilation.",
+)
+@click.option(
     "--install-airflow-with-constraints",
     is_flag=True,
     default=False,
@@ -912,6 +990,7 @@ def install_airflow_and_providers(
     github_repository: str,
     install_selected_providers: str,
     mount_sources: str,
+    mount_ui_dist: bool,
     distribution_format: str,
     providers_constraints_mode: str,
     providers_constraints_location: str,
@@ -1027,13 +1106,22 @@ def install_airflow_and_providers(
             airflow_providers_common_init_py.write_text(INIT_CONTENT + "\n")
 
     # compile ui assets
-    download_airflow_source_tarball(installation_spec)
-    compile_ui_assets(installation_spec, CORE_SOURCE_UI_PREFIX, CORE_SOURCE_UI_DIRECTORY, CORE_UI_DIST_PREFIX)
+    download_airflow_source_tarball(installation_spec, mount_ui_dist)
+    compile_ui_assets(
+        installation_spec,
+        CORE_SOURCE_UI_PREFIX,
+        CORE_SOURCE_UI_DIRECTORY,
+        CORE_UI_DIST_PREFIX,
+        mount_ui_dist,
+        MOUNTED_MAIN_UI_DIST,
+    )
     compile_ui_assets(
         installation_spec,
         SIMPLE_AUTH_MANAGER_SOURCE_UI_PREFIX,
         SIMPLE_AUTH_MANAGER_SOURCE_UI_DIRECTORY,
         SIMPLE_AUTH_MANAGER_UI_DIST_PREFIX,
+        mount_ui_dist,
+        MOUNTED_SIMPLE_AUTH_UI_DIST,
     )
     console.print("\n[green]Done!")
 
