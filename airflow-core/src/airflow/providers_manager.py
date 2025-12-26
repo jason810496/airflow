@@ -421,6 +421,8 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         )
         # Set of plugins contained in providers
         self._plugins_set: set[PluginInfo] = set()
+        # CLI command functions from providers
+        self._cli_command_function_names: list[str] = []
         self._init_airflow_core_hooks()
 
     def _init_airflow_core_hooks(self):
@@ -573,6 +575,12 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
     def initialize_providers_plugins(self):
         self.initialize_providers_list()
         self._discover_plugins()
+
+    @provider_info_cache("cli_commands")
+    def initialize_providers_cli_commands(self):
+        """Lazy initialization of providers CLI commands."""
+        self.initialize_providers_list()
+        self._discover_cli_commands()
 
     def _discover_all_providers_from_packages(self) -> None:
         """
@@ -1138,6 +1146,16 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                     )
                 )
 
+    def _discover_cli_commands(self) -> None:
+        """Retrieve all CLI command functions defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            cli_items = provider.data.get("cli", [])
+            if cli_items:
+                for cli_item in cli_items:
+                    # cli_item is now a string directly
+                    if isinstance(cli_item, str):
+                        self._cli_command_function_names.append(cli_item)
+
     @provider_info_cache("triggers")
     def initialize_providers_triggers(self):
         """Initialize providers triggers."""
@@ -1283,6 +1301,12 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
     def already_initialized_provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
         return sorted(self._provider_configs.items(), key=lambda x: x[0])
 
+    @property
+    def cli_command_function_names(self) -> list[str]:
+        """Returns list of CLI command function names from providers."""
+        self.initialize_providers_cli_commands()
+        return self._cli_command_function_names
+
     def _cleanup(self):
         self._initialized_cache.clear()
         self._provider_dict.clear()
@@ -1303,6 +1327,7 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self._trigger_info_set.clear()
         self._notification_info_set.clear()
         self._plugins_set.clear()
+        self._cli_command_function_names.clear()
 
         self._initialized = False
         self._initialization_stack_trace = None
