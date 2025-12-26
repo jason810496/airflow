@@ -691,50 +691,39 @@ def compile_ui_assets(
     console.print(f"[bright_blue]No compiled UI assets found in '{dist_directory}'")
 
     # ensure dependencies for UI assets compilation
-    need_pnpm = shutil.which("pnpm") is None
-    if need_pnpm:
-        console.print("[bright_blue]Installing pnpm directly from official setup script")
+    need_bun = shutil.which("bun") is None
+    if need_bun:
+        console.print("[bright_blue]Installing bun directly from official setup script")
         run_command(
             [
                 "bash",
                 "-c",
-                "curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && apt-get install -y nodejs",
+                "curl -fsSL https://bun.sh/install | bash",
             ],
             github_actions=False,
             shell=False,
             check=True,
         )
-        run_command(["npm", "install", "-g", "pnpm"], github_actions=False, shell=False, check=True)
-
-        """
-        run_command(
-            [
-                "bash",
-                "-c",
-                'wget -qO- https://get.pnpm.io/install.sh | ENV="$HOME/.bashrc" SHELL="$(which bash)" bash -',
-            ],
-            github_actions=False,
-            shell=False,
-            check=True,
-        )
-        console.print("[bright_blue]Setting up pnpm PATH")
-        run_command(
-            [
-                "bash",
-                "-c",
-                'export PNPM_HOME="/root/.local/share/pnpm"; case ":$PATH:" in *":$PNPM_HOME:"*) ;; *) export PATH="$PNPM_HOME:$PATH" ;; esac',
-            ],
-            github_actions=False,
-            shell=False,
-            check=True,
-        )
-        """
+        # Add bun to PATH for the current process
+        bun_bin_path = os.path.expanduser("~/.bun/bin")
+        if os.path.exists(bun_bin_path):
+            path_entries = os.environ.get("PATH", "").split(os.pathsep)
+            if bun_bin_path not in path_entries:
+                os.environ["PATH"] = f"{bun_bin_path}{os.pathsep}{os.environ.get('PATH', '')}"
+                console.print(f"[bright_blue]Added {bun_bin_path} to PATH")
+        # Verify bun is now available
+        if shutil.which("bun") is None:
+            console.print(
+                "[red]Failed to find bun in PATH after installation. "
+                "Please ensure bun is properly installed."
+            )
+            sys.exit(1)
     else:
-        console.print("[bright_blue]pnpm already installed")
+        console.print("[bright_blue]bun already installed")
 
-    # TO avoid ` ELIFECYCLE  Command failed.` errors, we need to clear cache and node_modules
+    # To avoid build errors, we need to clear cache and node_modules
     run_command(
-        ["bash", "-c", "pnpm cache delete"],
+        ["bash", "-c", "bun pm cache rm"],
         github_actions=False,
         shell=False,
         check=True,
@@ -744,7 +733,7 @@ def compile_ui_assets(
 
     # install dependencies
     run_command(
-        ["bash", "-c", "pnpm install --frozen-lockfile -config.confirmModulesPurge=false"],
+        ["bash", "-c", "bun install --frozen-lockfile"],
         github_actions=False,
         shell=False,
         check=True,
@@ -752,7 +741,7 @@ def compile_ui_assets(
     )
     # compile UI assets
     run_command(
-        ["bash", "-c", "pnpm run build"],
+        ["bash", "-c", "bun run build"],
         github_actions=False,
         shell=False,
         check=True,
