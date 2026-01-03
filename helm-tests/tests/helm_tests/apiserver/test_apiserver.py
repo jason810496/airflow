@@ -76,6 +76,139 @@ class TestAPIServerDeployment:
             "readOnly": True,
         } in jmespath.search("spec.template.spec.containers[0].volumeMounts", docs[0])
 
+    def test_should_not_add_dev_mode_sidecars_by_default(self):
+        """
+        Dev mode sidecars should not be present when devMode.enabled is false (default).
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0"},
+            show_only=["templates/api-server/api-server-deployment.yaml"],
+        )
+
+        container_names = jmespath.search("spec.template.spec.containers[*].name", docs[0])
+        assert "ui-dev-main" not in container_names
+        assert "ui-dev-simple" not in container_names
+
+        init_container_names = jmespath.search("spec.template.spec.initContainers[*].name", docs[0])
+        assert "copy-ui-source" not in init_container_names
+
+        volume_names = jmespath.search("spec.template.spec.volumes[*].name", docs[0])
+        assert "airflow-source" not in volume_names
+
+    def test_should_add_dev_mode_sidecars_when_enabled(self):
+        """
+        Dev mode sidecars should be present when devMode.enabled is true.
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
+            show_only=["templates/api-server/api-server-deployment.yaml"],
+        )
+
+        # Check init container
+        init_container_names = jmespath.search("spec.template.spec.initContainers[*].name", docs[0])
+        assert "copy-ui-source" in init_container_names
+
+        # Check sidecar containers
+        container_names = jmespath.search("spec.template.spec.containers[*].name", docs[0])
+        assert "ui-dev-main" in container_names
+        assert "ui-dev-simple" in container_names
+
+        # Check volume
+        volume_names = jmespath.search("spec.template.spec.volumes[*].name", docs[0])
+        assert "airflow-source" in volume_names
+
+        # Check that the volume is an emptyDir
+        volumes = jmespath.search("spec.template.spec.volumes", docs[0])
+        airflow_source_volume = [v for v in volumes if v["name"] == "airflow-source"][0]
+        assert "emptyDir" in airflow_source_volume
+
+    def test_dev_mode_sidecar_ui_main_configuration(self):
+        """
+        Verify ui-dev-main sidecar is configured correctly.
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
+            show_only=["templates/api-server/api-server-deployment.yaml"],
+        )
+
+        containers = jmespath.search("spec.template.spec.containers", docs[0])
+        ui_main = [c for c in containers if c["name"] == "ui-dev-main"][0]
+
+        # Check image
+        assert ui_main["image"] == "node:22-alpine"
+        assert ui_main["imagePullPolicy"] == "IfNotPresent"
+
+        # Check working directory
+        assert ui_main["workingDir"] == "/airflow-source/src/airflow/ui"
+
+        # Check port
+        assert ui_main["ports"][0]["containerPort"] == 5173
+        assert ui_main["ports"][0]["name"] == "ui-main"
+
+        # Check volume mount
+        assert {
+            "name": "airflow-source",
+            "mountPath": "/airflow-source",
+            "readOnly": False,
+        } in ui_main["volumeMounts"]
+
+    def test_dev_mode_sidecar_ui_simple_configuration(self):
+        """
+        Verify ui-dev-simple sidecar is configured correctly.
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
+            show_only=["templates/api-server/api-server-deployment.yaml"],
+        )
+
+        containers = jmespath.search("spec.template.spec.containers", docs[0])
+        ui_simple = [c for c in containers if c["name"] == "ui-dev-simple"][0]
+
+        # Check image
+        assert ui_simple["image"] == "node:22-alpine"
+        assert ui_simple["imagePullPolicy"] == "IfNotPresent"
+
+        # Check working directory
+        assert ui_simple["workingDir"] == "/airflow-source/src/airflow/api_fastapi/auth/managers/simple/ui"
+
+        # Check port
+        assert ui_simple["ports"][0]["containerPort"] == 5174
+        assert ui_simple["ports"][0]["name"] == "ui-simple"
+
+        # Check volume mount
+        assert {
+            "name": "airflow-source",
+            "mountPath": "/airflow-source",
+            "readOnly": False,
+        } in ui_simple["volumeMounts"]
+
+    def test_dev_mode_custom_image(self):
+        """
+        Verify that custom image settings are respected.
+        """
+        docs = render_chart(
+            values={
+                "airflowVersion": "3.0.0",
+                "apiServer": {
+                    "devMode": {
+                        "enabled": True,
+                        "image": {"repository": "custom-node", "tag": "18", "pullPolicy": "Always"},
+                    }
+                },
+            },
+            show_only=["templates/api-server/api-server-deployment.yaml"],
+        )
+
+        containers = jmespath.search("spec.template.spec.containers", docs[0])
+        ui_main = [c for c in containers if c["name"] == "ui-dev-main"][0]
+        ui_simple = [c for c in containers if c["name"] == "ui-dev-simple"][0]
+
+        # Check custom image for both sidecars
+        assert ui_main["image"] == "custom-node:18"
+        assert ui_main["imagePullPolicy"] == "Always"
+        assert ui_simple["image"] == "custom-node:18"
+        assert ui_simple["imagePullPolicy"] == "Always"
+
 
 class TestAPIServerJWTSecret:
     """Tests API Server JWT secret."""
