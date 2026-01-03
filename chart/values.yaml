@@ -1575,6 +1575,11 @@ apiServer:
   extraVolumeMounts: []
 
   # Development mode configuration for UI hot-reload
+  # When enabled, adds sidecar containers that run `pnpm dev` for the following UIs:
+  # - /opt/airflow/airflow-core/src/airflow/ui (port 5173)
+  # - /opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui (port 5174)
+  # This allows developers to see UI changes in real-time without rebuilding the image.
+  # Note: This should only be enabled in development environments, not production.
   devMode:
     # Whether to enable development mode with UI hot-reload sidecars
     enabled: false
