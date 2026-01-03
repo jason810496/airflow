@@ -5587,6 +5587,53 @@
                         "$ref": "#/definitions/io.k8s.api.core.v1.VolumeMount"
                     }
                 },
+                "devMode": {
+                    "description": "Development mode configuration for UI hot-reload.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "default": {},
+                    "properties": {
+                        "enabled": {
+                            "description": "Whether to enable development mode with UI hot-reload sidecars.",
+                            "type": "boolean",
+                            "default": false
+                        },
+                        "image": {
+                            "description": "Image configuration for UI hot-reload sidecars.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "default": {},
+                            "properties": {
+                                "repository": {
+                                    "description": "Repository for the UI hot-reload sidecar image.",
+                                    "type": "string",
+                                    "default": "node"
+                                },
+                                "tag": {
+                                    "description": "Tag for the UI hot-reload sidecar image.",
+                                    "type": "string",
+                                    "default": "22-alpine"
+                                },
+                                "pullPolicy": {
+                                    "description": "Pull policy for the UI hot-reload sidecar image.",
+                                    "type": "string",
+                                    "default": "IfNotPresent",
+                                    "enum": [
+                                        "IfNotPresent",
+                                        "Always",
+                                        "Never"
+                                    ]
+                                }
+                            }
+                        },
+                        "resources": {
+                            "description": "Resources for UI hot-reload sidecars.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        }
+                    }
+                },
                 "service": {
                     "description": "API server Service configuration.",
                     "type": "object",

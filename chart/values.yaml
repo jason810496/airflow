@@ -1574,6 +1574,26 @@ apiServer:
   extraVolumes: []
   extraVolumeMounts: []
 
+  # Development mode configuration for UI hot-reload
+  devMode:
+    # Whether to enable development mode with UI hot-reload sidecars
+    enabled: false
+
+    # Image to use for the UI hot-reload sidecars (must have Node.js and pnpm installed)
+    image:
+      repository: node
+      tag: "22-alpine"
+      pullPolicy: IfNotPresent
+
+    # Resources for UI hot-reload sidecars
+    resources: {}
+    #  limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+    #  requests:
+    #   cpu: 100m
+    #   memory: 256Mi
+
   # Select certain nodes for Airflow API server pods.
   nodeSelector: {}
   affinity: {}

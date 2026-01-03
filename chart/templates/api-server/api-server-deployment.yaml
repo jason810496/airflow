@@ -147,6 +147,23 @@ spec:
               {{- tpl (toYaml .Values.apiServer.waitForMigrations.env) $ | nindent 12 }}
             {{- end }}
         {{- end }}
+        {{- if .Values.apiServer.devMode.enabled }}
+        - name: copy-ui-source
+          image: {{ template "airflow_image" . }}
+          imagePullPolicy: {{ .Values.images.airflow.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Copying UI source code to shared volume..."
+              mkdir -p /airflow-source/src/airflow/ui
+              mkdir -p /airflow-source/src/airflow/api_fastapi/auth/managers/simple/ui
+              cp -r /opt/airflow/airflow-core/src/airflow/ui/* /airflow-source/src/airflow/ui/ || true
+              cp -r /opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/* /airflow-source/src/airflow/api_fastapi/auth/managers/simple/ui/ || true
+              echo "UI source code copied successfully"
+          volumeMounts:
+            - name: airflow-source
+              mountPath: /airflow-source
+        {{- end }}
         {{- if .Values.apiServer.extraInitContainers }}
           {{- toYaml .Values.apiServer.extraInitContainers | nindent 8 }}
         {{- end }}
@@ -221,6 +238,50 @@ spec:
         {{- if and (.Values.dags.gitSync.enabled) (not .Values.dags.persistence.enabled) (semverCompare "<2.0.0" .Values.airflowVersion) }}
           {{- include "git_sync_container" . | nindent 8 }}
         {{- end }}
+        {{- if .Values.apiServer.devMode.enabled }}
+        - name: ui-dev-main
+          image: {{ .Values.apiServer.devMode.image.repository }}:{{ .Values.apiServer.devMode.image.tag }}
+          imagePullPolicy: {{ .Values.apiServer.devMode.image.pullPolicy }}
+          workingDir: /airflow-source/src/airflow/ui
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Installing pnpm globally..."
+              npm install -g pnpm
+              echo "Installing dependencies..."
+              pnpm install
+              echo "Starting pnpm dev..."
+              pnpm dev
+          ports:
+            - name: ui-main
+              containerPort: 5173
+          resources: {{- toYaml .Values.apiServer.devMode.resources | nindent 12 }}
+          volumeMounts:
+            - name: airflow-source
+              mountPath: /airflow-source
+              readOnly: false
+        - name: ui-dev-simple
+          image: {{ .Values.apiServer.devMode.image.repository }}:{{ .Values.apiServer.devMode.image.tag }}
+          imagePullPolicy: {{ .Values.apiServer.devMode.image.pullPolicy }}
+          workingDir: /airflow-source/src/airflow/api_fastapi/auth/managers/simple/ui
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "Installing pnpm globally..."
+              npm install -g pnpm
+              echo "Installing dependencies..."
+              pnpm install
+              echo "Starting pnpm dev..."
+              pnpm dev
+          ports:
+            - name: ui-simple
+              containerPort: 5174
+          resources: {{- toYaml .Values.apiServer.devMode.resources | nindent 12 }}
+          volumeMounts:
+            - name: airflow-source
+              mountPath: /airflow-source
+              readOnly: false
+        {{- end }}
         {{- if .Values.apiServer.extraContainers }}
           {{- tpl (toYaml .Values.apiServer.extraContainers) . | nindent 8 }}
         {{- end }}
@@ -245,5 +306,9 @@ spec:
         {{- end }}
         {{- if .Values.apiServer.extraVolumes }}
           {{- tpl (toYaml .Values.apiServer.extraVolumes) . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.apiServer.devMode.enabled }}
+        - name: airflow-source
+          emptyDir: {}
         {{- end }}
 {{- end }}
