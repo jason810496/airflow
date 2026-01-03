@@ -887,7 +887,7 @@ def _build_skaffold_config(
     if multi_namespace_mode:
         set_values["multiNamespaceMode"] = True
     if not use_flask_appbuilder:
-        set_values["webserver.defaultUser.enabled"] = False
+        set_values["createUserJob.enabled"] = False
     if use_standard_naming:
         set_values["useStandardNaming"] = True
 
@@ -943,7 +943,43 @@ def _build_skaffold_config(
                         "buildCommand": "true",
                         "dependencies": {"paths": dependencies_paths},
                     },
-                    "sync": {"manual": sync_entries},
+                    "sync": {
+                        "manual": sync_entries,
+                        # Add Host Hooks to rebuild UI Assets using breeze command
+                        # https://skaffold.dev/docs/lifecycle-hooks/#host-hooks
+                        "hooks": {
+                            "before": [
+                                {
+                                    "host": {
+                                        "command": ["breeze", "ui", "compile-assets"],
+                                        "os": ["darwin", "linux", "windows"],
+                                    }
+                                }
+                            ],
+                            "after": [
+                                {
+                                    "container": {
+                                        "command": [
+                                            "cp",
+                                            "-r",
+                                            "/opt/airflow/airflow-core/src/airflow/ui/dist",
+                                            f"/usr/python/lib/python{python}/site-packages/airflow/ui/dist",
+                                        ],
+                                    },
+                                },
+                                {
+                                    "container": {
+                                        "command": [
+                                            "cp",
+                                            "-r",
+                                            "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/dist",
+                                            f"/usr/python/lib/python{python}/site-packages/airflow/api_fastapi/auth/managers/simple/ui/dist",
+                                        ],
+                                    }
+                                },
+                            ],
+                        },
+                    },
                 }
             ],
             "local": {"push": False},
@@ -1478,7 +1514,7 @@ def deploy_airflow(
     name="dev",
     help=(
         "Run skaffold dev loop to sync dags and airflow-core sources to running pods "
-        "(scheduler/triggerer/dag-processor hot-reload; API server/webserver UI not by default)."
+        "(API server/scheduler/triggerer/dag-processor hot-reload)."
     ),
     context_settings=dict(
         ignore_unknown_options=True,
@@ -1568,6 +1604,7 @@ def dev(
         )
     with tempfile.TemporaryDirectory(prefix="skaffold_") as tmp_dir:
         dev_env_values = {
+            "apiServer": {"env": [{"name": "DEV_MODE", "value": "true"}]},
             "scheduler": {"env": [{"name": "DEV_MODE", "value": "true"}]},
             "triggerer": {"env": [{"name": "DEV_MODE", "value": "true"}]},
             "dagProcessor": {"env": [{"name": "DEV_MODE", "value": "true"}]},
