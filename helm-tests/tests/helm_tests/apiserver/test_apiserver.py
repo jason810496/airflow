@@ -78,7 +78,7 @@ class TestAPIServerDeployment:
 
     def test_should_not_add_dev_mode_sidecars_by_default(self):
         """
-        Dev mode deployment should not be present when devMode.enabled is false (default).
+        Verify that ui-dev sidecar is not included in API server deployment when devMode.enabled is false (default).
         """
         docs = render_chart(
             values={"airflowVersion": "3.0.0"},

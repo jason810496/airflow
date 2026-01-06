@@ -1617,16 +1617,16 @@ apiServer:
     affinity: {}
     tolerations: []
     topologySpreadConstraints: []
-    
+
     priorityClassName: ~
-    
+
     # annotations for UI dev deployment
     annotations: {}
-    
+
     podAnnotations: {}
-    
+
     labels: {}
-    
+
     revisionHistoryLimit: ~
 
   # Select certain nodes for Airflow API server pods.
