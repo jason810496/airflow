@@ -1,0 +1,118 @@
+{{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}}
+
+################################
+## UI Development Deployment
+#################################
+{{- if and .Values.apiServer.devMode.enabled (semverCompare ">=3.0.0" .Values.airflowVersion) }}
+{{- $nodeSelector := or .Values.apiServer.devMode.nodeSelector .Values.nodeSelector }}
+{{- $affinity := or .Values.apiServer.devMode.affinity .Values.affinity }}
+{{- $tolerations := or .Values.apiServer.devMode.tolerations .Values.tolerations }}
+{{- $topologySpreadConstraints := or .Values.apiServer.devMode.topologySpreadConstraints .Values.topologySpreadConstraints }}
+{{- $revisionHistoryLimit := or .Values.apiServer.devMode.revisionHistoryLimit .Values.revisionHistoryLimit }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "airflow.fullname" . }}-ui-dev
+  labels:
+    tier: airflow
+    component: ui-dev
+    release: {{ .Release.Name }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    heritage: {{ .Release.Service }}
+    {{- with .Values.labels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- if .Values.apiServer.devMode.annotations }}
+  annotations: {{- toYaml .Values.apiServer.devMode.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: 1
+  {{- if $revisionHistoryLimit }}
+  revisionHistoryLimit: {{ $revisionHistoryLimit }}
+  {{- end }}
+  selector:
+    matchLabels:
+      tier: airflow
+      component: ui-dev
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        tier: airflow
+        component: ui-dev
+        release: {{ .Release.Name }}
+        {{- if or .Values.labels .Values.apiServer.devMode.labels }}
+          {{- mustMerge .Values.apiServer.devMode.labels .Values.labels | toYaml | nindent 8 }}
+        {{- end }}
+      {{- if .Values.apiServer.devMode.podAnnotations }}
+      annotations: {{- toYaml .Values.apiServer.devMode.podAnnotations | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- if .Values.apiServer.devMode.priorityClassName }}
+      priorityClassName: {{ .Values.apiServer.devMode.priorityClassName }}
+      {{- end }}
+      {{- if .Values.schedulerName }}
+      schedulerName: {{ .Values.schedulerName }}
+      {{- end }}
+      nodeSelector: {{- toYaml $nodeSelector | nindent 8 }}
+      affinity: {{- toYaml $affinity | nindent 8 }}
+      tolerations: {{- toYaml $tolerations | nindent 8 }}
+      topologySpreadConstraints: {{- toYaml $topologySpreadConstraints | nindent 8 }}
+      restartPolicy: Always
+      imagePullSecrets: {{- include "image_pull_secrets" . | nindent 8 }}
+      containers:
+        - name: ui-dev
+          image: {{ .Values.apiServer.devMode.image.repository }}:{{ .Values.apiServer.devMode.image.tag }}
+          imagePullPolicy: {{ .Values.apiServer.devMode.image.pullPolicy }}
+          workingDir: /opt/airflow/airflow-core
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Installing pnpm globally..."
+              npm install -g pnpm
+
+              echo "Starting UI development servers..."
+              # Function to run pnpm dev in a directory
+              run_dev() {
+                local dir="$1"
+                local port="$2"
+                cd "$dir"
+                echo "Installing dependencies in $dir..."
+                pnpm install
+                echo "Starting pnpm dev on port $port in $dir..."
+                pnpm dev
+              }
+
+              # Run both dev servers in parallel
+              run_dev "/opt/airflow/airflow-core/src/airflow/ui" "5173" &
+              PID1=$!
+              run_dev "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui" "5174" &
+              PID2=$!
+
+              # Wait for both processes
+              wait $PID1 $PID2
+          ports:
+            - name: ui-main
+              containerPort: 5173
+            - name: ui-simple
+              containerPort: 5174
+          resources: {{- toYaml .Values.apiServer.devMode.resources | nindent 12 }}
+{{- end }}

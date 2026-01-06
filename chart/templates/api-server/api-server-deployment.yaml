@@ -221,9 +221,6 @@ spec:
         {{- if and (.Values.dags.gitSync.enabled) (not .Values.dags.persistence.enabled) (semverCompare "<2.0.0" .Values.airflowVersion) }}
           {{- include "git_sync_container" . | nindent 8 }}
         {{- end }}
-        {{- if .Values.apiServer.devMode.enabled }}
-          {{- include "ui_dev_sidecar_container" . | nindent 8 }}
-        {{- end }}
         {{- if .Values.apiServer.extraContainers }}
           {{- tpl (toYaml .Values.apiServer.extraContainers) . | nindent 8 }}
         {{- end }}

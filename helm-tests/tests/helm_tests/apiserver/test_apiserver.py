@@ -78,7 +78,7 @@ class TestAPIServerDeployment:
 
     def test_should_not_add_dev_mode_sidecars_by_default(self):
         """
-        Dev mode sidecar should not be present when devMode.enabled is false (default).
+        Dev mode deployment should not be present when devMode.enabled is false (default).
         """
         docs = render_chart(
             values={"airflowVersion": "3.0.0"},
@@ -88,33 +88,46 @@ class TestAPIServerDeployment:
         container_names = jmespath.search("spec.template.spec.containers[*].name", docs[0])
         assert "ui-dev" not in container_names
 
-    def test_should_add_dev_mode_sidecar_when_enabled(self):
+    def test_should_create_dev_mode_deployment_when_enabled(self):
         """
-        Dev mode sidecar should be present when devMode.enabled is true.
+        Dev mode deployment should be created when devMode.enabled is true.
         """
         docs = render_chart(
             values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
-            show_only=["templates/api-server/api-server-deployment.yaml"],
+            show_only=["templates/ui-dev/ui-dev-deployment.yaml"],
         )
 
-        # Check sidecar container
-        container_names = jmespath.search("spec.template.spec.containers[*].name", docs[0])
-        assert "ui-dev" in container_names
+        assert len(docs) == 1
+        assert docs[0]["kind"] == "Deployment"
+        assert jmespath.search("metadata.name", docs[0]) == "release-name-ui-dev"
 
-    def test_dev_mode_sidecar_configuration(self):
+    def test_should_create_dev_mode_service_when_enabled(self):
         """
-        Verify ui-dev sidecar is configured correctly with both ports.
+        Dev mode service should be created when devMode.enabled is true.
         """
         docs = render_chart(
             values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
-            show_only=["templates/api-server/api-server-deployment.yaml"],
+            show_only=["templates/ui-dev/ui-dev-service.yaml"],
+        )
+
+        assert len(docs) == 1
+        assert docs[0]["kind"] == "Service"
+        assert jmespath.search("metadata.name", docs[0]) == "release-name-ui-dev"
+
+    def test_dev_mode_deployment_configuration(self):
+        """
+        Verify ui-dev deployment is configured correctly with both ports.
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
+            show_only=["templates/ui-dev/ui-dev-deployment.yaml"],
         )
 
         containers = jmespath.search("spec.template.spec.containers", docs[0])
         ui_dev = [c for c in containers if c["name"] == "ui-dev"][0]
 
         # Check image
-        assert ui_dev["image"] == "node:22-alpine"
+        assert ui_dev["image"] == "node:lts-slim"
         assert ui_dev["imagePullPolicy"] == "IfNotPresent"
 
         # Check working directory
@@ -146,7 +159,7 @@ class TestAPIServerDeployment:
                     }
                 },
             },
-            show_only=["templates/api-server/api-server-deployment.yaml"],
+            show_only=["templates/ui-dev/ui-dev-deployment.yaml"],
         )
 
         containers = jmespath.search("spec.template.spec.containers", docs[0])
@@ -155,6 +168,30 @@ class TestAPIServerDeployment:
         # Check custom image
         assert ui_dev["image"] == "custom-node:18"
         assert ui_dev["imagePullPolicy"] == "Always"
+
+    def test_dev_mode_service_configuration(self):
+        """
+        Verify ui-dev service is configured correctly.
+        """
+        docs = render_chart(
+            values={"airflowVersion": "3.0.0", "apiServer": {"devMode": {"enabled": True}}},
+            show_only=["templates/ui-dev/ui-dev-service.yaml"],
+        )
+
+        # Check service type
+        assert jmespath.search("spec.type", docs[0]) == "ClusterIP"
+
+        # Check ports
+        ports = jmespath.search("spec.ports", docs[0])
+        port_names = [p["name"] for p in ports]
+        assert "ui-main" in port_names
+        assert "ui-simple" in port_names
+
+        ui_main_port = [p for p in ports if p["name"] == "ui-main"][0]
+        ui_simple_port = [p for p in ports if p["name"] == "ui-simple"][0]
+
+        assert ui_main_port["port"] == 5173
+        assert ui_simple_port["port"] == 5174
 
 
 class TestAPIServerJWTSecret:

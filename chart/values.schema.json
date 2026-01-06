@@ -5588,34 +5588,34 @@
                     }
                 },
                 "devMode": {
-                    "description": "Development mode configuration for UI hot-reload.",
+                    "description": "Development mode configuration for UI hot-reload deployment.",
                     "type": "object",
                     "additionalProperties": false,
                     "default": {},
                     "properties": {
                         "enabled": {
-                            "description": "Whether to enable development mode with UI hot-reload sidecars.",
+                            "description": "Whether to enable development mode with UI hot-reload deployment.",
                             "type": "boolean",
                             "default": false
                         },
                         "image": {
-                            "description": "Image configuration for UI hot-reload sidecars.",
+                            "description": "Image configuration for UI hot-reload deployment.",
                             "type": "object",
                             "additionalProperties": false,
                             "default": {},
                             "properties": {
                                 "repository": {
-                                    "description": "Repository for the UI hot-reload sidecar image.",
+                                    "description": "Repository for the UI hot-reload deployment image.",
                                     "type": "string",
                                     "default": "node"
                                 },
                                 "tag": {
-                                    "description": "Tag for the UI hot-reload sidecar image.",
+                                    "description": "Tag for the UI hot-reload deployment image.",
                                     "type": "string",
-                                    "default": "22-alpine"
+                                    "default": "lts-slim"
                                 },
                                 "pullPolicy": {
-                                    "description": "Pull policy for the UI hot-reload sidecar image.",
+                                    "description": "Pull policy for the UI hot-reload deployment image.",
                                     "type": "string",
                                     "default": "IfNotPresent",
                                     "enum": [
@@ -5627,10 +5627,117 @@
                             }
                         },
                         "resources": {
-                            "description": "Resources for UI hot-reload sidecars.",
+                            "description": "Resources for UI hot-reload deployment.",
                             "type": "object",
                             "default": {},
                             "additionalProperties": true
+                        },
+                        "service": {
+                            "description": "Service configuration for UI hot-reload deployment.",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "default": {},
+                            "properties": {
+                                "type": {
+                                    "description": "Service type for UI hot-reload.",
+                                    "type": "string",
+                                    "default": "ClusterIP"
+                                },
+                                "annotations": {
+                                    "description": "Annotations for the UI hot-reload Service.",
+                                    "type": "object",
+                                    "default": {},
+                                    "additionalProperties": true
+                                },
+                                "ports": {
+                                    "description": "Port configuration for UI hot-reload services.",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "default": {},
+                                    "properties": {
+                                        "uiMain": {
+                                            "description": "Port for main UI development server.",
+                                            "type": "integer",
+                                            "default": 5173
+                                        },
+                                        "uiSimple": {
+                                            "description": "Port for simple auth UI development server.",
+                                            "type": "integer",
+                                            "default": 5174
+                                        }
+                                    }
+                                },
+                                "nodePorts": {
+                                    "description": "NodePort configuration for UI hot-reload services.",
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "default": {},
+                                    "properties": {
+                                        "uiMain": {
+                                            "description": "NodePort for main UI development server.",
+                                            "type": ["integer", "null"],
+                                            "default": null
+                                        },
+                                        "uiSimple": {
+                                            "description": "NodePort for simple auth UI development server.",
+                                            "type": ["integer", "null"],
+                                            "default": null
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "nodeSelector": {
+                            "description": "Node selector for UI hot-reload deployment.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        },
+                        "affinity": {
+                            "description": "Affinity for UI hot-reload deployment.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        },
+                        "tolerations": {
+                            "description": "Tolerations for UI hot-reload deployment.",
+                            "type": "array",
+                            "default": [],
+                            "items": {}
+                        },
+                        "topologySpreadConstraints": {
+                            "description": "Topology spread constraints for UI hot-reload deployment.",
+                            "type": "array",
+                            "default": [],
+                            "items": {}
+                        },
+                        "priorityClassName": {
+                            "description": "Priority class name for UI hot-reload deployment.",
+                            "type": ["string", "null"],
+                            "default": null
+                        },
+                        "annotations": {
+                            "description": "Annotations for UI hot-reload deployment.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        },
+                        "podAnnotations": {
+                            "description": "Pod annotations for UI hot-reload deployment.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        },
+                        "labels": {
+                            "description": "Labels for UI hot-reload deployment.",
+                            "type": "object",
+                            "default": {},
+                            "additionalProperties": true
+                        },
+                        "revisionHistoryLimit": {
+                            "description": "Revision history limit for UI hot-reload deployment.",
+                            "type": ["integer", "null"],
+                            "default": null
                         }
                     }
                 },
