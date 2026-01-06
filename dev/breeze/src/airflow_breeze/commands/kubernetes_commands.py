@@ -882,6 +882,7 @@ def _build_skaffold_config(
         "config.api_auth.jwt_secret": "foo",
         "config.core.auth_manager": auth_manager,
         "config.api.base_url": f"http://localhost:{api_server_port}",
+        "apiServer.devMode.enabled": True,
     }
 
     if multi_namespace_mode:
@@ -929,59 +930,89 @@ def _build_skaffold_config(
     # --------------------
     image_var_suffix = params.airflow_image_kubernetes.replace("/", "_").replace(".", "_").replace("-", "_")
 
+    # UI sync entries for ui-dev container
+    ui_sync_entries: list[dict[str, str]] = [
+        {
+            "src": "airflow-core/src/airflow/ui/**",
+            "dest": "/opt/airflow/airflow-core/src/airflow/ui",
+            "strip": "airflow-core/src/airflow/ui/",
+        },
+        {
+            "src": "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/**",
+            "dest": "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui",
+            "strip": "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/",
+        },
+    ]
+
+    artifacts = [
+        {
+            "image": params.airflow_image_kubernetes,
+            "context": AIRFLOW_ROOT_PATH.as_posix(),
+            "custom": {
+                "buildCommand": "true",
+                "dependencies": {"paths": dependencies_paths},
+            },
+            "sync": {
+                "manual": sync_entries,
+                # Add Host Hooks to rebuild UI Assets using breeze command
+                # https://skaffold.dev/docs/lifecycle-hooks/#host-hooks
+                "hooks": {
+                    "before": [
+                        {
+                            "host": {
+                                "command": ["breeze", "ui", "compile-assets"],
+                                "os": ["darwin", "linux", "windows"],
+                            }
+                        }
+                    ],
+                    "after": [
+                        {
+                            "container": {
+                                "command": [
+                                    "cp",
+                                    "-r",
+                                    "/opt/airflow/airflow-core/src/airflow/ui/dist",
+                                    f"/usr/python/lib/python{python}/site-packages/airflow/ui/dist",
+                                ],
+                            },
+                        },
+                        {
+                            "container": {
+                                "command": [
+                                    "cp",
+                                    "-r",
+                                    "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/dist",
+                                    f"/usr/python/lib/python{python}/site-packages/airflow/api_fastapi/auth/managers/simple/ui/dist",
+                                ],
+                            }
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "image": "node:lts-slim",
+            "context": AIRFLOW_ROOT_PATH.as_posix(),
+            "custom": {
+                "buildCommand": "true",
+                "dependencies": {
+                    "paths": [
+                        "airflow-core/src/airflow/ui/**",
+                        "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/**",
+                    ]
+                },
+            },
+            "sync": {"manual": ui_sync_entries},
+        },
+    ]
+
     return {
         "apiVersion": "skaffold/v4beta13",
         "kind": "Config",
         "metadata": {"name": "airflow-dags-dev"},
         "build": {
             "tagPolicy": {"envTemplate": {"template": "latest"}},
-            "artifacts": [
-                {
-                    "image": params.airflow_image_kubernetes,
-                    "context": AIRFLOW_ROOT_PATH.as_posix(),
-                    "custom": {
-                        "buildCommand": "true",
-                        "dependencies": {"paths": dependencies_paths},
-                    },
-                    "sync": {
-                        "manual": sync_entries,
-                        # Add Host Hooks to rebuild UI Assets using breeze command
-                        # https://skaffold.dev/docs/lifecycle-hooks/#host-hooks
-                        "hooks": {
-                            "before": [
-                                {
-                                    "host": {
-                                        "command": ["breeze", "ui", "compile-assets"],
-                                        "os": ["darwin", "linux", "windows"],
-                                    }
-                                }
-                            ],
-                            "after": [
-                                {
-                                    "container": {
-                                        "command": [
-                                            "cp",
-                                            "-r",
-                                            "/opt/airflow/airflow-core/src/airflow/ui/dist",
-                                            f"/usr/python/lib/python{python}/site-packages/airflow/ui/dist",
-                                        ],
-                                    },
-                                },
-                                {
-                                    "container": {
-                                        "command": [
-                                            "cp",
-                                            "-r",
-                                            "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/dist",
-                                            f"/usr/python/lib/python{python}/site-packages/airflow/api_fastapi/auth/managers/simple/ui/dist",
-                                        ],
-                                    }
-                                },
-                            ],
-                        },
-                    },
-                }
-            ],
+            "artifacts": artifacts,
             "local": {"push": False},
         },
         "deploy": {
