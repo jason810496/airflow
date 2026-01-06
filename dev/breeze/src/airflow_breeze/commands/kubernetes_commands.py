@@ -944,10 +944,12 @@ def _build_skaffold_config(
         },
     ]
 
-    # Combine sync entries for Airflow image to include UI files
+    # Combine sync entries for Airflow image to include UI files.
+    # UI files are synced to both Airflow pods (for Airflow serving) and ui-dev pods (for hot-reload).
+    # By including UI sync in the main artifact, Skaffold will sync these files to all pods that mount them.
     all_sync_entries = sync_entries + ui_sync_entries
 
-    # Update dependencies to include UI paths
+    # Update dependencies to include UI paths so Skaffold watches for changes.
     all_dependencies_paths = dependencies_paths + [
         "airflow-core/src/airflow/ui/**",
         "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/**",
@@ -989,6 +991,9 @@ def _build_skaffold_config(
                             "defaultAirflowTag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
                             "images.airflow.repository": f"{{{{.IMAGE_REPO_{image_var_suffix}}}}}",
                             "images.airflow.tag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
+                            # Note: apiServer.devMode.image.* values are NOT set here.
+                            # The ui-dev deployment will use the default node:lts-slim image from values.yaml,
+                            # which Kubernetes will pull from Docker Hub automatically.
                         },
                         "setValues": set_values,
                     }
