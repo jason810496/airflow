@@ -944,29 +944,24 @@ def _build_skaffold_config(
         },
     ]
 
+    # Combine sync entries for Airflow image to include UI files
+    all_sync_entries = sync_entries + ui_sync_entries
+
+    # Update dependencies to include UI paths
+    all_dependencies_paths = dependencies_paths + [
+        "airflow-core/src/airflow/ui/**",
+        "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/**",
+    ]
+
     artifacts = [
         {
             "image": params.airflow_image_kubernetes,
             "context": AIRFLOW_ROOT_PATH.as_posix(),
             "custom": {
                 "buildCommand": "true",
-                "dependencies": {"paths": dependencies_paths},
+                "dependencies": {"paths": all_dependencies_paths},
             },
-            "sync": {"manual": sync_entries},
-        },
-        {
-            "image": "node",
-            "context": AIRFLOW_ROOT_PATH.as_posix(),
-            "custom": {
-                "buildCommand": "true",
-                "dependencies": {
-                    "paths": [
-                        "airflow-core/src/airflow/ui/**",
-                        "airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/**",
-                    ]
-                },
-            },
-            "sync": {"manual": ui_sync_entries},
+            "sync": {"manual": all_sync_entries},
         },
     ]
 
@@ -994,9 +989,6 @@ def _build_skaffold_config(
                             "defaultAirflowTag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
                             "images.airflow.repository": f"{{{{.IMAGE_REPO_{image_var_suffix}}}}}",
                             "images.airflow.tag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
-                            # UI Dev Image
-                            "apiServer.devMode.image.repository": "{{.IMAGE_REPO_node}}",
-                            "apiServer.devMode.image.tag": "{{.IMAGE_DIGEST_node}}",
                         },
                         "setValues": set_values,
                     }
