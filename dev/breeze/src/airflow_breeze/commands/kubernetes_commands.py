@@ -952,46 +952,10 @@ def _build_skaffold_config(
                 "buildCommand": "true",
                 "dependencies": {"paths": dependencies_paths},
             },
-            "sync": {
-                "manual": sync_entries,
-                # Add Host Hooks to rebuild UI Assets using breeze command
-                # https://skaffold.dev/docs/lifecycle-hooks/#host-hooks
-                "hooks": {
-                    "before": [
-                        {
-                            "host": {
-                                "command": ["breeze", "ui", "compile-assets"],
-                                "os": ["darwin", "linux", "windows"],
-                            }
-                        }
-                    ],
-                    "after": [
-                        {
-                            "container": {
-                                "command": [
-                                    "cp",
-                                    "-r",
-                                    "/opt/airflow/airflow-core/src/airflow/ui/dist",
-                                    f"/usr/python/lib/python{python}/site-packages/airflow/ui/dist",
-                                ],
-                            },
-                        },
-                        {
-                            "container": {
-                                "command": [
-                                    "cp",
-                                    "-r",
-                                    "/opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui/dist",
-                                    f"/usr/python/lib/python{python}/site-packages/airflow/api_fastapi/auth/managers/simple/ui/dist",
-                                ],
-                            }
-                        },
-                    ],
-                },
-            },
+            "sync": {"manual": sync_entries},
         },
         {
-            "image": "node:lts-slim",
+            "image": "node",
             "context": AIRFLOW_ROOT_PATH.as_posix(),
             "custom": {
                 "buildCommand": "true",
@@ -1030,6 +994,9 @@ def _build_skaffold_config(
                             "defaultAirflowTag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
                             "images.airflow.repository": f"{{{{.IMAGE_REPO_{image_var_suffix}}}}}",
                             "images.airflow.tag": f"{{{{.IMAGE_TAG_{image_var_suffix}}}}}",
+                            # UI Dev Image
+                            "apiServer.devMode.image.repository": "{{.IMAGE_REPO_node}}",
+                            "apiServer.devMode.image.tag": "{{.IMAGE_DIGEST_node}}",
                         },
                         "setValues": set_values,
                     }
