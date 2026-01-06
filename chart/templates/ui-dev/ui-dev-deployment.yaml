@@ -94,7 +94,17 @@ spec:
               run_dev() {
                 local dir="$1"
                 local port="$2"
+                # Create directory if it doesn't exist
+                mkdir -p "$dir"
                 cd "$dir"
+                
+                # Wait for package.json to be synced by Skaffold
+                echo "Waiting for package.json in $dir..."
+                while [ ! -f "package.json" ]; do
+                  sleep 1
+                done
+                echo "package.json found in $dir"
+                
                 echo "Installing dependencies in $dir..."
                 pnpm install
                 echo "Starting pnpm dev on port $port in $dir..."
