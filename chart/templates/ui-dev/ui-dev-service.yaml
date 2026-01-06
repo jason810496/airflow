@@ -1,0 +1,61 @@
+{{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}}
+
+################################
+## UI Development Service
+#################################
+{{- if and .Values.apiServer.devMode.enabled (semverCompare ">=3.0.0" .Values.airflowVersion) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "airflow.fullname" . }}-ui-dev
+  labels:
+    tier: airflow
+    component: ui-dev
+    release: {{ .Release.Name }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    heritage: {{ .Release.Service }}
+    {{- with .Values.labels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- if .Values.apiServer.devMode.service.annotations }}
+  annotations: {{- toYaml .Values.apiServer.devMode.service.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.apiServer.devMode.service.type }}
+  selector:
+    tier: airflow
+    component: ui-dev
+    release: {{ .Release.Name }}
+  ports:
+    - name: ui-main
+      protocol: TCP
+      port: {{ .Values.apiServer.devMode.service.ports.uiMain }}
+      targetPort: ui-main
+      {{- if and (eq .Values.apiServer.devMode.service.type "NodePort") .Values.apiServer.devMode.service.nodePorts.uiMain }}
+      nodePort: {{ .Values.apiServer.devMode.service.nodePorts.uiMain }}
+      {{- end }}
+    - name: ui-simple
+      protocol: TCP
+      port: {{ .Values.apiServer.devMode.service.ports.uiSimple }}
+      targetPort: ui-simple
+      {{- if and (eq .Values.apiServer.devMode.service.type "NodePort") .Values.apiServer.devMode.service.nodePorts.uiSimple }}
+      nodePort: {{ .Values.apiServer.devMode.service.nodePorts.uiSimple }}
+      {{- end }}
+{{- end }}

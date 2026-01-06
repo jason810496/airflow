@@ -1574,23 +1574,25 @@ apiServer:
   extraVolumes: []
   extraVolumeMounts: []
 
-  # Development mode configuration for UI hot-reload
-  # When enabled, adds a sidecar container that runs `pnpm dev` for both UIs in parallel:
+  # UI Development Mode Configuration
+  # When enabled, creates a separate deployment that runs UI development servers
+  # with hot-reload for the following directories:
   # - /opt/airflow/airflow-core/src/airflow/ui (port 5173)
   # - /opt/airflow/airflow-core/src/airflow/api_fastapi/auth/managers/simple/ui (port 5174)
   # This allows developers to see UI changes in real-time without rebuilding the image.
   # Note: This should only be enabled in development environments, not production.
   devMode:
-    # Whether to enable development mode with UI hot-reload sidecar
+    # Whether to enable development mode with UI hot-reload deployment
+    # This creates a separate deployment for UI development with hot-reload
     enabled: false
 
-    # Image to use for the UI hot-reload sidecar (must have Node.js and pnpm installed)
+    # Image to use for the UI hot-reload deployment (must have Node.js and pnpm installed)
     image:
       repository: node
-      tag: "22-alpine"
+      tag: "lts-slim"
       pullPolicy: IfNotPresent
 
-    # Resources for UI hot-reload sidecar
+    # Resources for UI hot-reload deployment
     resources: {}
     #  limits:
     #   cpu: 500m
@@ -1598,6 +1600,34 @@ apiServer:
     #  requests:
     #   cpu: 100m
     #   memory: 256Mi
+
+    # Service configuration for UI development
+    service:
+      type: ClusterIP
+      annotations: {}
+      ports:
+        uiMain: 5173
+        uiSimple: 5174
+      nodePorts:
+        uiMain: ~
+        uiSimple: ~
+
+    # Select certain nodes for UI dev pods
+    nodeSelector: {}
+    affinity: {}
+    tolerations: []
+    topologySpreadConstraints: []
+
+    priorityClassName: ~
+
+    # annotations for UI dev deployment
+    annotations: {}
+
+    podAnnotations: {}
+
+    labels: {}
+
+    revisionHistoryLimit: ~
 
   # Select certain nodes for Airflow API server pods.
   nodeSelector: {}
