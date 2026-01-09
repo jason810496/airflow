@@ -348,6 +348,12 @@ repos:
         language: python
         pass_filenames: false
         files: ^shared/.*$|^.*/pyproject.toml$|^.*/_shared/.*$
+      - id: check-secrets-search-path-sync
+        name: Check sync between sdk and core
+        entry: ./scripts/ci/prek/check_secrets_search_path_sync.py
+        language: python
+        pass_filenames: false
+        files: ^airflow-core/src/airflow/secrets/base_secrets\.py$|^task-sdk/src/airflow/sdk/execution_time/secrets/__init__\.py$
       - id: check-provider-info-in-sync-with-common-builder-cookiecutter
         name: Check provider_info.schema.json in sync with common builder cookiecutter.json
         entry: ./scripts/ci/prek/check_provider_info_in_sync_with_common_builder_cookiecutter.py

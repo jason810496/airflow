@@ -153,7 +153,7 @@ def check_if_different_provider_used(file_path: Path) -> None:
     file_provider = get_provider_id_from_path(file_path)
     if not file_provider:
         return
-    
+
     if "{{cookiecutter.provider_name}}" in file_path.as_posix():
         # Skip files in the cookiecutter template
         return

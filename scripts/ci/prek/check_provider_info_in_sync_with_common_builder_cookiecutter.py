@@ -52,11 +52,11 @@ def get_cookiecutter_features() -> set[str]:
     """Extract all features from the cookiecutter.json."""
     with open(COOKIECUTTER_PATH) as f:
         cookiecutter = json.load(f)
-    
+
     # Map include_* fields to their corresponding schema properties
     # Cookiecutter-specific metadata fields that shouldn't be in schema
     cookiecutter_metadata = {"provider_name", "package_name", "provider_description"}
-    
+
     features = set()
     for key in cookiecutter.keys():
         if key in cookiecutter_metadata:
@@ -69,7 +69,7 @@ def get_cookiecutter_features() -> set[str]:
         else:
             # Direct mappings like "name", "package-name", "description"
             features.add(key)
-    
+
     return features
 
 

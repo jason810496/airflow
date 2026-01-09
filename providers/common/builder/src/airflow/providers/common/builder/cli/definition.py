@@ -67,7 +67,7 @@ def get_builder_cli_commands():
             func=lazy_load_command(
                 "airflow.providers.common.builder.cli.commands.create_new_provider_command"
             ),
-            args=()
+            args=(),
             # args=(
             #     ARG_PROVIDER_NAME,
             #     ARG_PATH,
