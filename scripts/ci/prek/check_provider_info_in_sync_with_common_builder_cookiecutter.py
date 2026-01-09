@@ -52,8 +52,25 @@ def get_cookiecutter_features() -> set[str]:
     """Extract all features from the cookiecutter.json."""
     with open(COOKIECUTTER_PATH) as f:
         cookiecutter = json.load(f)
-    # Filter out cookiecutter template variables (those starting with cookiecutter.)
-    return {key for key in cookiecutter.keys() if not key.startswith("cookiecutter.")}
+    
+    # Map include_* fields to their corresponding schema properties
+    # Cookiecutter-specific metadata fields that shouldn't be in schema
+    cookiecutter_metadata = {"provider_name", "package_name", "provider_description"}
+    
+    features = set()
+    for key in cookiecutter.keys():
+        if key in cookiecutter_metadata:
+            # These are cookiecutter input fields
+            continue
+        elif key.startswith("include_"):
+            # Convert include_operators -> operators, include_connection_types -> connection-types
+            feature_name = key.replace("include_", "").replace("_", "-")
+            features.add(feature_name)
+        else:
+            # Direct mappings like "name", "package-name", "description"
+            features.add(key)
+    
+    return features
 
 
 def main() -> int:
