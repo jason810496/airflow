@@ -16,6 +16,10 @@
 # under the License.
 from __future__ import annotations
 
+import os
+import sys
+import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,13 +28,8 @@ if TYPE_CHECKING:
 
 def create_new_provider_command(args: argparse.Namespace):
     """Create a new Airflow provider package skeleton."""
-    from airflow.providers.common.builder.provider_creator import ProviderCreator
-
-    creator = ProviderCreator(
-        provider_name=args.provider_name,
-        path=args.path,
-        interactive=args.interactive,
-        exclude_unit_tests=args.exclude_unit_tests,
-        exclude_features=args.exclude_features,
+    subprocess.run(
+        [sys.executable, "-m", "cookiecutter", Path(__file__).parent.parent.parent / "builder"],
+        check=True,
+        env=os.environ,
     )
-    creator.create_provider_package()

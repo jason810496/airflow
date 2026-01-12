@@ -38,4 +38,4 @@ integrations:
     tags: [software]
 
 cli:
-  - airflow.providers.common.builder.cli.get_builder_cli_commands
+  - airflow.providers.common.builder.cli.definition.get_builder_cli_commands
