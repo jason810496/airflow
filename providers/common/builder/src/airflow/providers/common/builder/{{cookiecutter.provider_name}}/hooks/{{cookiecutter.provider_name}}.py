@@ -16,20 +16,26 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import sys
-import subprocess
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import argparse
+from airflow.hooks.base import BaseHook
 
 
-def create_new_provider_command(args: argparse.Namespace):
-    """Create a new Airflow provider package skeleton."""
-    subprocess.run(
-        [sys.executable, "-m", "cookiecutter", Path(__file__).parent.parent.parent / "builder"],
-        check=True,
-        env=os.environ,
-    )
+class {{ cookiecutter.name }}Hook(BaseHook):
+    """
+    Hook for {{ cookiecutter.name }}.
+
+    :param conn_id: Connection ID to use
+    """
+
+    conn_name_attr = "{{ cookiecutter.provider_name }}_conn_id"
+    default_conn_name = "{{ cookiecutter.provider_name }}_default"
+    conn_type = "{{ cookiecutter.provider_name }}"
+    hook_name = "{{ cookiecutter.name }}"
+
+    def __init__(self, conn_id: str = default_conn_name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.conn_id = conn_id
+
+    def get_conn(self):
+        """Return connection for the hook."""
+        # Implement connection logic here
+        pass

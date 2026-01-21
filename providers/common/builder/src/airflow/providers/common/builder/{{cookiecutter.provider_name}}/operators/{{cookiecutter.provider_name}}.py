@@ -16,20 +16,28 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import sys
-import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING
 
+from airflow.models import BaseOperator
+
 if TYPE_CHECKING:
-    import argparse
+    from airflow.utils.context import Context
 
 
-def create_new_provider_command(args: argparse.Namespace):
-    """Create a new Airflow provider package skeleton."""
-    subprocess.run(
-        [sys.executable, "-m", "cookiecutter", Path(__file__).parent.parent.parent / "builder"],
-        check=True,
-        env=os.environ,
-    )
+class {{ cookiecutter.name }}Operator(BaseOperator):
+    """
+    Operator for {{ cookiecutter.name }}.
+
+    :param conn_id: Connection ID to use
+    """
+
+    template_fields = ("conn_id",)
+
+    def __init__(self, *, conn_id: str = "{{ cookiecutter.provider_name }}_default", **kwargs):
+        super().__init__(**kwargs)
+        self.conn_id = conn_id
+
+    def execute(self, context: Context):
+        """Execute the operator."""
+        # Implement operator logic here
+        pass

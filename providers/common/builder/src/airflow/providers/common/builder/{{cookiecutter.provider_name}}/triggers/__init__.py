@@ -14,22 +14,3 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from __future__ import annotations
-
-import os
-import sys
-import subprocess
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import argparse
-
-
-def create_new_provider_command(args: argparse.Namespace):
-    """Create a new Airflow provider package skeleton."""
-    subprocess.run(
-        [sys.executable, "-m", "cookiecutter", Path(__file__).parent.parent.parent / "builder"],
-        check=True,
-        env=os.environ,
-    )

@@ -33,5 +33,5 @@ def get_provider_info():
                 "tags": ["software"],
             }
         ],
-        "cli": ["airflow.providers.common.builder.cli.get_builder_cli_commands"],
+        "cli": ["airflow.providers.common.builder.cli.definition.get_builder_cli_commands"],
     }

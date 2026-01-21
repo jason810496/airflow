@@ -16,20 +16,17 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import sys
-import subprocess
-from pathlib import Path
-from typing import TYPE_CHECKING
+import packaging.version
 
-if TYPE_CHECKING:
-    import argparse
+from airflow import __version__ as airflow_version
 
+__all__ = ["__version__"]
 
-def create_new_provider_command(args: argparse.Namespace):
-    """Create a new Airflow provider package skeleton."""
-    subprocess.run(
-        [sys.executable, "-m", "cookiecutter", Path(__file__).parent.parent.parent / "builder"],
-        check=True,
-        env=os.environ,
+__version__ = "0.1.0"
+
+if packaging.version.parse(packaging.version.parse(airflow_version).base_version) < packaging.version.parse(
+    "2.11.0"
+):
+    raise RuntimeError(
+        f"The package `{{ cookiecutter.package_name }}:{__version__}` needs Apache Airflow 2.11.0+"
     )
