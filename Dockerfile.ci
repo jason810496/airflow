@@ -1672,9 +1672,6 @@ COPY --from=base-os-deps /usr /usr
 COPY --from=base-os-deps /lib /lib
 COPY --from=base-os-deps /etc /etc
 
-# Run ldconfig to update shared library cache
-RUN ldconfig
-
 # Copy Python installation from base-os-deps stage
 COPY --from=base-os-deps /usr/python /usr/python
 COPY --from=base-os-deps /usr/local/lib /usr/local/lib
