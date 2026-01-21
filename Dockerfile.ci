@@ -1683,6 +1683,38 @@ COPY --from=base-os-deps /usr/local/bin /usr/local/bin
 # Copy Golang from base-os-deps stage
 COPY --from=base-os-deps /usr/local/go /usr/local/go
 
+# Copy MySQL client from mysql-client stage
+COPY --from=mysql-client /usr/bin/*maria* /usr/bin/
+COPY --from=mysql-client /usr/bin/mysql* /usr/bin/
+# Copy entire lib subdirectories to include plugins and all dependencies
+COPY --from=mysql-client /usr/lib/*-linux-gnu/libmariadb* /usr/lib/*-linux-gnu/
+COPY --from=mysql-client /usr/lib/*-linux-gnu/libmysql* /usr/lib/*-linux-gnu/
+COPY --from=mysql-client /usr/lib/*-linux-gnu/mariadb /usr/lib/*-linux-gnu/mariadb
+# Copy potential updated system libraries that mariadb depends on
+COPY --from=mysql-client /usr/lib/*-linux-gnu/libssl.so* /usr/lib/*-linux-gnu/
+COPY --from=mysql-client /usr/lib/*-linux-gnu/libcrypto.so* /usr/lib/*-linux-gnu/
+COPY --from=mysql-client /usr/lib/*-linux-gnu/libzstd.so* /usr/lib/*-linux-gnu/
+COPY --from=mysql-client /usr/lib/*/pkgconfig/libmariadb.pc /usr/lib/*/pkgconfig/mariadb.pc /usr/lib/*/pkgconfig/
+COPY --from=mysql-client /usr/include/mariadb /usr/include/mariadb
+COPY --from=mysql-client /usr/include/mysql /usr/include/mysql
+COPY --from=mysql-client /usr/share/mariadb /usr/share/mariadb
+COPY --from=mysql-client /etc/apt/trusted.gpg.d/mariadb.gpg /etc/apt/trusted.gpg.d/
+
+# Copy MSSQL client from mssql-client stage
+COPY --from=mssql-client /opt/microsoft /opt/microsoft
+COPY --from=mssql-client /etc/apt/trusted.gpg.d/microsoft.gpg /etc/apt/trusted.gpg.d/
+
+# Copy Postgres client from postgres-client stage
+COPY --from=postgres-client /usr/bin/pg_* /usr/bin/
+COPY --from=postgres-client /usr/bin/psql* /usr/bin/
+COPY --from=postgres-client /usr/lib/*/libpq* /usr/lib/
+COPY --from=postgres-client /usr/lib/postgresql* /usr/lib/
+COPY --from=postgres-client /usr/share/postgresql* /usr/share/
+COPY --from=postgres-client /etc/apt/trusted.gpg.d/postgres.gpg /etc/apt/trusted.gpg.d/
+
+# Update shared library cache after copying database clients
+RUN ldconfig
+
 # Copy Helm from helm-builder stage
 COPY --from=helm-builder /usr/local/bin/helm /usr/local/bin/helm
 
@@ -1776,7 +1808,7 @@ RUN echo "Airflow version: ${AIRFLOW_VERSION}"
 
 # Copy all scripts required for installation - changing any of those should lead to
 # rebuilding from here
-COPY --from=scripts common.sh install_packaging_tools.sh install_additional_dependencies.sh install_mysql.sh install_mssql.sh install_postgres.sh /scripts/docker/
+COPY --from=scripts common.sh install_packaging_tools.sh install_additional_dependencies.sh /scripts/docker/
 
 # We are first creating a venv where all python packages and .so binaries needed by those are
 # installed.
@@ -1810,14 +1842,6 @@ ARG DEPENDENCY_CACHE_EPOCH="2"
 # in the version specified above
 
 RUN bash /scripts/docker/install_packaging_tools.sh
-
-# Install database clients (MySQL, MSSQL, Postgres) with all their dependencies
-# This needs to be done before installing Airflow as mysqlclient requires libmariadb-dev
-RUN bash /scripts/docker/install_mysql.sh prod \
-    && bash /scripts/docker/install_mysql.sh dev \
-    && bash /scripts/docker/install_mssql.sh prod \
-    && bash /scripts/docker/install_postgres.sh prod \
-    && bash /scripts/docker/install_postgres.sh dev
 
 COPY --from=scripts install_airflow_when_building_images.sh /scripts/docker/
 
