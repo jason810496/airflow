@@ -95,4 +95,6 @@ The minimum Apache Airflow version supported by this provider distribution is ``
 PIP package         Version required
 ==================  ==================
 ``apache-airflow``  ``>=3.2.0``
+``cookiecutter``    ``>=2.6.0``
+``textual``         ``>=6.2.0``
 ==================  ==================

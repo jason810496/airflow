@@ -5,6 +5,8 @@
     "provider_description": "My custom provider",
     "name": "{{ cookiecutter.provider_name }}",
     "description": "{{ cookiecutter.provider_description }}",
+    "class_name": "{{ cookiecutter.provider_name.replace('_', ' ').title().replace(' ', '') }}",
+    "include_all": ["y", "n"],
     "include_integrations": ["y", "n"],
     "include_operators": ["y", "n"],
     "include_sensors": ["y", "n"],
