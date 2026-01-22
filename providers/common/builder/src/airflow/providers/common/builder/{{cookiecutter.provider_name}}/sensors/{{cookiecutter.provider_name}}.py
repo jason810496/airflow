@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class {{ cookiecutter.name }}Sensor(BaseSensorOperator):
+class {{ cookiecutter.class_name }}Sensor(BaseSensorOperator):
     """
-    Sensor for {{ cookiecutter.name }}.
+    Sensor for {{ cookiecutter.class_name }}.
 
     :param conn_id: Connection ID to use
     """

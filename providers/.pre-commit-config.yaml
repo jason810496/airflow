@@ -27,6 +27,9 @@ repos:
       - id: check-deferrable-default
         name: Check and fix default value of default_deferrable
         language: python
+        exclude: >
+          (?x)
+          ^common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
         entry: ../scripts/ci/prek/check_deferrable_default.py
         pass_filenames: false
         files: ^(.*/)?airflow/.*/(sensors|operators)/.*\.py$
@@ -40,6 +43,9 @@ repos:
         name: No templated field logic checks in operator __init__
         description: Prevent templated field logic checks in operators' __init__
         language: python
+        exclude: >
+          (?x)
+          ^common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
         entry: ../scripts/ci/prek/validate_operators_init.py
         pass_filenames: true
         files: ^.*/src/airflow/providers/.*/(operators|transfers|sensors)/.*\.py$
@@ -171,7 +177,10 @@ repos:
           --message "Only TYPE_CHECKING imports from `airflow.lineage.hook` are allowed in providers."
           --only_top_level
         files: ^.*/src/airflow/providers/.*\.py$
-        exclude: ^common/compat/src/airflow/providers/common/compat/.*\.py$
+        exclude: >
+          (?x)
+          ^common/compat/src/airflow/providers/common/compat/.*\.py$|
+          ^common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
       - id: check-aiobotocore-optional
         name: Check if aiobotocore is an optional dependency only
         entry: ../scripts/ci/prek/check_aiobotocore_optional.py

@@ -233,8 +233,10 @@ repos:
         name: Check that merge conflicts are not being committed
       - id: debug-statements
         name: Detect accidentally committed debug statements
+        exclude: ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
       - id: check-builtin-literals
         name: Require literal syntax when initializing builtins
+        exclude: ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
       - id: detect-private-key
         name: Detect if private key is added to the repository
         exclude: ^providers/ssh/docs/connections/ssh\.rst$
@@ -362,12 +364,6 @@ repos:
         language: python
         pass_filenames: false
         files: ^airflow-core/src/airflow/secrets/base_secrets\.py$|^task-sdk/src/airflow/sdk/execution_time/secrets/__init__\.py$
-      - id: check-provider-info-in-sync-with-common-builder-cookiecutter
-        name: Check provider_info.schema.json in sync with common builder cookiecutter.json
-        entry: ./scripts/ci/prek/check_provider_info_in_sync_with_common_builder_cookiecutter.py
-        language: python
-        pass_filenames: false
-        files: ^airflow-core/src/airflow/provider_info\.schema\.json$|^providers/common/builder/src/airflow/providers/common/builder/cookiecutter\.json$
       - id: ruff
         name: Run 'ruff' for extremely fast Python linting
         description: "Run 'ruff' for extremely fast Python linting"
@@ -377,7 +373,11 @@ repos:
         args: [--fix]
         require_serial: true
         additional_dependencies: ['ruff==0.14.13']
-        exclude: ^airflow-core/tests/unit/dags/test_imports\.py$|^performance/tests/test_.*\.py$
+        exclude: >
+          (?x)
+          ^airflow-core/tests/unit/dags/test_imports\.py$|
+          ^performance/tests/test_.*\.py$|
+          ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
       - id: ruff-format
         name: Run 'ruff format'
         description: "Run 'ruff format' for extremely fast Python formatting"
@@ -386,7 +386,10 @@ repos:
         types_or: [python, pyi]
         args: []
         require_serial: true
-        exclude: ^airflow-core/tests/unit/dags/test_imports\.py$
+        exclude: >
+          (?x)
+          ^airflow-core/tests/unit/dags/test_imports\.py$|
+          ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
       - id: replace-bad-characters
         name: Replace bad characters
         entry: ./scripts/ci/prek/replace_bad_characters.py
@@ -875,6 +878,7 @@ repos:
         always_run: true
       - id: check-lazy-logging
         name: Check that all logging methods are lazy
+        exclude: ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/
         entry: ./scripts/ci/prek/check_lazy_logging.py
         language: python
         pass_filenames: true

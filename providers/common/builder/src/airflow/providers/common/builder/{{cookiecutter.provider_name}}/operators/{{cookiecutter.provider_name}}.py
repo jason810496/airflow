@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from airflow.utils.context import Context
 
 
-class {{ cookiecutter.name }}Operator(BaseOperator):
+class {{ cookiecutter.class_name }}Operator(BaseOperator):
     """
-    Operator for {{ cookiecutter.name }}.
+    Operator for {{ cookiecutter.class_name }}.
 
     :param conn_id: Connection ID to use
     """

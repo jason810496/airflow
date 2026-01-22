@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from asyncio import Future
 
 
-class {{ cookiecutter.name }}Trigger(BaseTrigger):
+class {{ cookiecutter.class_name }}Trigger(BaseTrigger):
     """
-    Trigger for {{ cookiecutter.name }}.
+    Trigger for {{ cookiecutter.class_name }}.
 
     :param conn_id: Connection ID to use
     """
@@ -38,7 +38,7 @@ class {{ cookiecutter.name }}Trigger(BaseTrigger):
     def serialize(self) -> tuple[str, dict[str, Any]]:
         """Serialize the trigger."""
         return (
-            "airflow.providers.{{ cookiecutter.provider_name }}.triggers.{{ cookiecutter.provider_name }}.{{ cookiecutter.name }}Trigger",
+            "airflow.providers.{{ cookiecutter.provider_name }}.triggers.{{ cookiecutter.provider_name }}.{{ cookiecutter.class_name }}Trigger",
             {"conn_id": self.conn_id},
         )
 

@@ -14,28 +14,3 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from __future__ import annotations
-
-from airflow.hooks.base import BaseHook
-
-
-class {{ cookiecutter.class_name }}Hook(BaseHook):
-    """
-    Hook for {{ cookiecutter.class_name }}.
-
-    :param conn_id: Connection ID to use
-    """
-
-    conn_name_attr = "{{ cookiecutter.provider_name }}_conn_id"
-    default_conn_name = "{{ cookiecutter.provider_name }}_default"
-    conn_type = "{{ cookiecutter.provider_name }}"
-    hook_name = "{{ cookiecutter.class_name }}"
-
-    def __init__(self, conn_id: str = default_conn_name, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.conn_id = conn_id
-
-    def get_conn(self):
-        """Return connection for the hook."""
-        # Implement connection logic here
-        pass
