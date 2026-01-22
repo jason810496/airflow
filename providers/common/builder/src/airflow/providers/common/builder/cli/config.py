@@ -48,3 +48,11 @@ feature_field_questions = [
 
 features_set = frozenset(field[8:] for field, _ in feature_field_questions)
 """Set of all feature fields (removed 'include_' prefix)"""
+
+extra_cookiecutter_fields = frozenset(
+    {
+        "include_all",
+        "class_name",
+    }
+)
+"""Set of extra cookiecutter fields that are not in provider_info.schema.json."""

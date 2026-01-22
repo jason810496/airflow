@@ -373,7 +373,7 @@ repos:
         args: [--fix]
         require_serial: true
         additional_dependencies: ['ruff==0.14.13']
-        exclude: >
+        exclude: |
           (?x)
           ^airflow-core/tests/unit/dags/test_imports\.py$|
           ^performance/tests/test_.*\.py$|
@@ -386,7 +386,7 @@ repos:
         types_or: [python, pyi]
         args: []
         require_serial: true
-        exclude: >
+        exclude: |
           (?x)
           ^airflow-core/tests/unit/dags/test_imports\.py$|
           ^providers/common/builder/src/airflow/providers/common/builder/\{\{cookiecutter\.provider_name\}\}/

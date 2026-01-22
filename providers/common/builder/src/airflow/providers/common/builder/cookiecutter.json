@@ -1,10 +1,10 @@
 {
     "provider_name": "my_provider",
     "package_name": "apache-airflow-providers-my-provider",
+    "package-name": "{{ cookiecutter.package_name }}",
     "provider_description": "My custom provider",
     "name": "{{ cookiecutter.provider_name }}",
-    "class_name": "{{ cookiecutter.provider_name.replace('_', ' ').title().replace(' ', '') }}",
-    "include_all": ["y", "n"],
+    "description": "{{ cookiecutter.provider_description }}",
     "include_integrations": ["y", "n"],
     "include_operators": ["y", "n"],
     "include_sensors": ["y", "n"],
