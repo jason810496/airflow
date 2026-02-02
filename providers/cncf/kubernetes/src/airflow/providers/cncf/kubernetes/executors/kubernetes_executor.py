@@ -30,6 +30,7 @@ import logging
 import multiprocessing
 import time
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
 from queue import Empty, Queue
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     from kubernetes.client import models as k8s
     from sqlalchemy.orm import Session
 
+    from airflow._shared.logging.remote import RawLogStream, StreamingLogResponse
     from airflow.cli.cli_config import GroupCommand
     from airflow.executors import workloads
     from airflow.models.taskinstance import TaskInstance
@@ -79,6 +81,7 @@ class KubernetesExecutor(BaseExecutor):
 
     RUNNING_POD_LOG_LINES = 100
     supports_ad_hoc_ti_run: bool = True
+    supports_streaming_logs: bool = True
 
     if TYPE_CHECKING and AIRFLOW_V_3_0_PLUS:
         # In the v3 path, we store workloads, not commands as strings.
@@ -466,6 +469,21 @@ class KubernetesExecutor(BaseExecutor):
         messages = []
         log = []
         try:
+            messages, log_streams = self.get_streaming_task_log(ti, try_number)
+            log = ["\n".join(stream) for stream in log_streams]
+        except Exception as e:
+            messages.append(f"Reading from k8s pod logs failed: {e}")
+        return messages, log
+
+    def get_streaming_task_log(self, ti, try_number) -> StreamingLogResponse:
+        messages: list[str] = []
+        log_streams: list[RawLogStream] = []
+
+        def create_log_stream(logs: Iterable[str]) -> RawLogStream:
+            for line in logs:
+                yield remove_escape_codes(line.decode())
+
+        try:
             from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
             from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
 
@@ -497,13 +515,13 @@ class KubernetesExecutor(BaseExecutor):
                 tail_lines=self.RUNNING_POD_LOG_LINES,
                 _preload_content=False,
             )
-            for line in res:
-                log.append(remove_escape_codes(line.decode()))
-            if log:
-                messages.append("Found logs through kube API")
+
+            log_streams.append(create_log_stream(res))
+            messages.append("Found logs through kube API")
         except Exception as e:
             messages.append(f"Reading from k8s pod logs failed: {e}")
-        return messages, ["\n".join(log)]
+
+        return messages, log_streams
 
     def try_adopt_task_instances(self, tis: Sequence[TaskInstance]) -> Sequence[TaskInstance]:
         with Stats.timer("kubernetes_executor.adopt_task_instances.duration"):
