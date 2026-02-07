@@ -44,4 +44,8 @@ how to set up the environment, run checks, build docs and follow the PR workflow
 
 - Follow the PR guidance in [`05_pull_requests.rst`](contributing-docs/05_pull_requests.rst). Always add tests, keep your branch rebased instead of merged, and adhere to the commit message recommendations from [cbea.ms/git-commit](https://cbea.ms/git-commit/).
 
+## Advanced topics
+
 For advanced topics such as packaging providers and API versioning see [`12_provider_distributions.rst`](contributing-docs/12_provider_distributions.rst) and [`19_execution_api_versioning.rst`](contributing-docs/19_execution_api_versioning.rst).
+
+For implementing operators that handle long-running external workloads, see [`22_deferrable_factory_pattern.rst`](contributing-docs/22_deferrable_factory_pattern.rst).

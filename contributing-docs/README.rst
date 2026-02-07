@@ -128,3 +128,7 @@ You can also dive deeper into more specific areas that are important for contrib
 
 * `Debugging Airflow Components <20_debugging_airflow_components.rst>`__ describes how to debug
   Airflow components using Breeze with debugpy and VSCode integration.
+
+* `Deferrable Factory Pattern <22_deferrable_factory_pattern.rst>`__ describes the design pattern
+  for building robust operators that handle long-running external workloads, addressing
+  infrastructure instability issues on Unix systems.
