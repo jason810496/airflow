@@ -17,53 +17,14 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 
 DATAMODELS_PREFIX = "airflow-core/src/airflow/api_fastapi/execution_api/datamodels/"
 VERSIONS_PREFIX = "airflow-core/src/airflow/api_fastapi/execution_api/versions/"
 
 
-def get_changed_files_ci() -> list[str]:
-    """Get changed files in a CI environment by comparing against the target branch."""
-    target_branch = os.environ.get("GITHUB_BASE_REF", "main")
-    fetch_result = subprocess.run(
-        ["git", "fetch", "origin", target_branch],
-        capture_output=True,
-        text=True,
-    )
-    if fetch_result.returncode != 0:
-        print(
-            f"WARNING: Failed to fetch origin/{target_branch}: {fetch_result.stderr.strip()}",
-            file=sys.stderr,
-        )
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"origin/{target_branch}...HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [f for f in result.stdout.strip().splitlines() if f]
-
-
-def get_changed_files_local() -> list[str]:
-    """Get staged files in a local (non-CI) environment."""
-    result = subprocess.run(
-        ["git", "diff", "--cached", "--name-only"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [f for f in result.stdout.strip().splitlines() if f]
-
-
 def main() -> int:
-    is_ci = os.environ.get("CI")
-    if is_ci:
-        changed_files = get_changed_files_ci()
-    else:
-        changed_files = get_changed_files_local()
+    changed_files = sys.argv[1:]
 
     datamodel_files = [f for f in changed_files if f.startswith(DATAMODELS_PREFIX)]
     version_files = [f for f in changed_files if f.startswith(VERSIONS_PREFIX)]
