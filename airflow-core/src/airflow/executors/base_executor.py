@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
+    from airflow._shared.logging.remote import StreamingLogResponse
     from airflow.api_fastapi.auth.tokens import JWTGenerator
     from airflow.callbacks.base_callback_sink import BaseCallbackSink
     from airflow.callbacks.callback_requests import CallbackRequest
@@ -148,6 +149,7 @@ class BaseExecutor(LoggingMixin):
     supports_ad_hoc_ti_run: bool = False
     supports_callbacks: bool = False
     supports_multi_team: bool = False
+    supports_streaming_logs: bool = False
     sentry_integration: str = ""
 
     is_local: bool = False
@@ -533,6 +535,20 @@ class BaseExecutor(LoggingMixin):
         :return: tuple of logs and messages
         """
         return [], []
+
+    def get_streaming_task_log(self, ti: TaskInstance, try_number: int) -> StreamingLogResponse:
+        """
+        Return a streaming response for task logs.
+
+        If you implement this method, you must also set the `supports_streaming_logs` class attribute to True.
+        TODO(jason810496): Add static check to ensure that if the provider implements this method,
+        it must also set the `supports_streaming_logs` to True.
+
+        :param ti: A TaskInstance object
+        :param try_number: current try_number to read log from
+        :return: StreamingLogResponse
+        """
+        raise NotImplementedError
 
     def end(self) -> None:  # pragma: no cover
         """Wait synchronously for the previously submitted job to complete."""
