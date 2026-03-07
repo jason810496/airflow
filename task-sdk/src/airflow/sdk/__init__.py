@@ -89,6 +89,7 @@ __all__ = [
     "task",
     "task_group",
     "teardown",
+    "trigger",
 ]
 
 __version__ = "1.2.0"
@@ -117,7 +118,7 @@ if TYPE_CHECKING:
     from airflow.sdk.definitions.context import Context, get_current_context, get_parsing_context
     from airflow.sdk.definitions.dag import DAG, dag
     from airflow.sdk.definitions.deadline import DeadlineAlert, DeadlineReference
-    from airflow.sdk.definitions.decorators import setup, task, teardown
+    from airflow.sdk.definitions.decorators import setup, task, teardown, trigger
     from airflow.sdk.definitions.decorators.task_group import task_group
     from airflow.sdk.definitions.edges import EdgeModifier, Label
     from airflow.sdk.definitions.param import Param, ParamsDict
@@ -229,6 +230,7 @@ __lazy_imports: dict[str, str] = {
     "task": ".definitions.decorators",
     "task_group": ".definitions.decorators",
     "teardown": ".definitions.decorators",
+    "trigger": ".definitions.decorators",
 }
 
 
