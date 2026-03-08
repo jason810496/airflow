@@ -45,6 +45,7 @@ from airflow._shared.observability.metrics.stats import Stats
 from airflow._shared.timezones import timezone
 from airflow.configuration import conf
 from airflow.executors import workloads
+from airflow.executors.workloads.base import BundleInfo
 from airflow.executors.workloads.task import TaskInstanceDTO
 from airflow.jobs.base_job_runner import BaseJobRunner
 from airflow.jobs.job import perform_heartbeat
@@ -83,6 +84,7 @@ from airflow.sdk.execution_time.comms import (
 )
 from airflow.sdk.execution_time.supervisor import WatchedSubprocess, make_buffered_socket_reader
 from airflow.triggers.base import BaseEventTrigger, BaseTrigger, DiscrimatedTriggerEvent, TriggerEvent
+from airflow.triggers.python import BASE_PYTHON_TRIGGER_CLASSPATH
 from airflow.utils.helpers import log_filename_template_renderer
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.session import provide_session
@@ -707,6 +709,18 @@ class TriggerRunnerSupervisor(WatchedSubprocess):
                 workload.ti = ser_ti
                 workload.timeout_after = new_trigger_orm.task_instance.trigger_timeout
 
+                # Populate bundle_info for bundle-aware triggers (e.g. BasePythonTrigger)
+                dag_version = new_trigger_orm.task_instance.dag_version
+                if (
+                    dag_version is not None
+                    and dag_version.bundle_name is not None
+                    and new_trigger_orm.classpath == BASE_PYTHON_TRIGGER_CLASSPATH
+                ):
+                    workload.bundle_info = BundleInfo(
+                        name=dag_version.bundle_name,
+                        version=dag_version.bundle_version,
+                    )
+
             to_create.append(workload)
 
         self.creating_triggers.extend(to_create)
@@ -987,6 +1001,23 @@ class TriggerRunner:
             try:
                 from airflow.serialization.decoders import smart_decode_trigger_kwargs
 
+                # For BasePythonTrigger with bundle_info, set up bundle context before creating
+                # so dill.loads in run() can resolve imports from the bundle.
+                if (
+                    workload.classpath == BASE_PYTHON_TRIGGER_CLASSPATH
+                    and workload.bundle_info is not None
+                ):
+                    from airflow.dag_processing.bundles.base import BundleVersionLock
+                    from airflow.dag_processing.bundles.manager import DagBundlesManager
+
+                    bundle = DagBundlesManager().get_bundle(
+                        name=workload.bundle_info.name,
+                        version=workload.bundle_info.version,
+                    )
+                    bundle.initialize()
+                    if bundle.path not in sys.path:
+                        sys.path.insert(0, bundle.path)
+
                 # Decrypt and clean trigger kwargs before for execution
                 # Note: We only clean up serialization artifacts (__var, __type keys) here,
                 # not in `_decrypt_kwargs` because it is used during hash comparison in
@@ -995,6 +1026,10 @@ class TriggerRunner:
                 kw = Trigger._decrypt_kwargs(workload.encrypted_kwargs)
                 deserialised_kwargs = {k: smart_decode_trigger_kwargs(v) for k, v in kw.items()}
                 trigger_instance = trigger_class(**deserialised_kwargs)
+
+                # Store bundle_info on trigger for run_trigger to hold BundleVersionLock
+                if workload.bundle_info is not None:
+                    trigger_instance.bundle_info = workload.bundle_info
             except TypeError as err:
                 self.log.error("Trigger failed to inflate", error=err)
                 self.failed_triggers.append((trigger_id, err))
@@ -1189,8 +1224,25 @@ class TriggerRunner:
 
         name = self.triggers[trigger_id]["name"]
         self.log.info("trigger %s starting", name)
+
+        bundle_info = getattr(trigger, "bundle_info", None)
+
+        async def _run():
+            if bundle_info is not None:
+                from airflow.dag_processing.bundles.base import BundleVersionLock
+
+                with BundleVersionLock(
+                    bundle_name=bundle_info.name,
+                    bundle_version=bundle_info.version,
+                ):
+                    async for event in trigger.run():
+                        yield event
+            else:
+                async for event in trigger.run():
+                    yield event
+
         try:
-            async for event in trigger.run():
+            async for event in _run():
                 await self.log.ainfo(
                     "Trigger fired event", name=self.triggers[trigger_id]["name"], result=event
                 )

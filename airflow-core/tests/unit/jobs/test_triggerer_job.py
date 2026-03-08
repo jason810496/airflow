@@ -59,7 +59,9 @@ from airflow.providers.standard.triggers.temporal import DateTimeTrigger, TimeDe
 from airflow.sdk import DAG, BaseHook, BaseOperator
 from airflow.sdk.execution_time.comms import ToSupervisor, ToTask
 from airflow.serialization.serialized_objects import LazyDeserializedDAG
+from airflow.executors.workloads.base import BundleInfo
 from airflow.triggers.base import BaseTrigger, TriggerEvent
+from airflow.triggers.python import BASE_PYTHON_TRIGGER_CLASSPATH, BasePythonTrigger
 from airflow.triggers.testing import FailureTrigger, SuccessTrigger
 from airflow.utils.state import State, TaskInstanceState
 from airflow.utils.types import DagRunType
@@ -1236,6 +1238,29 @@ def test_update_triggers_skips_when_ti_has_no_dag_version(session, supervisor_bu
     assert len(supervisor.creating_triggers) == 0
     assert trigger_orm.id not in supervisor.running_triggers
     supervisor.stdin.write.assert_not_called()
+
+
+def test_update_triggers_populates_bundle_info_for_base_python_trigger(
+    session, supervisor_builder
+):
+    """
+    Ensure supervisor populates bundle_info when creating workload for BasePythonTrigger
+    with a task instance that has dag_version with bundle_name.
+    """
+    async def _test_trigger():
+        yield TriggerEvent({"done": True})
+
+    trigger = BasePythonTrigger(callable=_test_trigger)
+    dag_model, run, trigger_orm, task_instance = create_trigger_in_db(session, trigger)
+
+    supervisor = supervisor_builder()
+    supervisor.update_triggers({trigger_orm.id})
+
+    assert len(supervisor.creating_triggers) == 1
+    workload = supervisor.creating_triggers[0]
+    assert workload.bundle_info is not None
+    assert workload.bundle_info.name == "testing"
+    assert workload.classpath == BASE_PYTHON_TRIGGER_CLASSPATH
 
 
 class TestTriggererJobRunner:
