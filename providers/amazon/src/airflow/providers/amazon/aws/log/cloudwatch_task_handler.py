@@ -27,6 +27,7 @@ from datetime import date, datetime, timedelta, timezone
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import attrs
 import watchtower
@@ -98,6 +99,33 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
     @region_name.default
     def _(self):
         return self.log_group_arn.split(":")[3]
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[CloudWatchRemoteLogIO | None, str | None]:
+        if not remote_base_log_folder.startswith("cloudwatch://"):
+            return None, None
+        url_parts = urlsplit(remote_base_log_folder)
+        return (
+            cls(
+                **(
+                    {
+                        "base_log_folder": base_log_folder,
+                        "remote_base": remote_base_log_folder,
+                        "delete_local_copy": delete_local_logs,
+                        "log_group_arn": url_parts.netloc + url_parts.path,
+                    }
+                    | remote_task_handler_kwargs
+                )
+            ),
+            AwsLogsHook.default_conn_name,
+        )
 
     @cached_property
     def hook(self):

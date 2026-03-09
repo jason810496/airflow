@@ -572,6 +572,45 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
 
     processors = ()
 
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[ElasticsearchRemoteLogIO | None, str | None]:
+        if not (elasticsearch_host := conf.get("elasticsearch", "host")):
+            return None, None
+
+        # Keep URL-based remote log handlers ahead of Elasticsearch host-based selection.
+        if remote_base_log_folder.startswith(
+            ("s3://", "cloudwatch://", "gs://", "wasb", "stackdriver://", "oss://", "hdfs://")
+        ):
+            return None, None
+
+        return (
+            cls(
+                **(
+                    {
+                        "host": elasticsearch_host,
+                        "target_index": conf.get_mandatory_value("elasticsearch", "target_index"),
+                        "write_stdout": conf.getboolean("elasticsearch", "write_stdout"),
+                        "write_to_es": conf.getboolean("elasticsearch", "write_to_es"),
+                        "offset_field": conf.get_mandatory_value("elasticsearch", "offset_field"),
+                        "host_field": conf.get_mandatory_value("elasticsearch", "host_field"),
+                        "base_log_folder": base_log_folder,
+                        "delete_local_copy": delete_local_logs,
+                        "json_format": conf.getboolean("elasticsearch", "json_format"),
+                        "log_id_template": conf.get_mandatory_value("elasticsearch", "log_id_template"),
+                    }
+                    | remote_task_handler_kwargs
+                )
+            ),
+            None,
+        )
+
     def __attrs_post_init__(self):
         es_kwargs = get_es_kwargs_from_config()
         self.client = elasticsearch.Elasticsearch(self.host, **es_kwargs)

@@ -25,6 +25,7 @@ from airflow._shared.logging.remote import discover_remote_log_handler
 from airflow._shared.module_loading import import_string
 from airflow.configuration import conf
 from airflow.exceptions import AirflowConfigException
+from airflow.providers_manager import ProvidersManager
 
 if TYPE_CHECKING:
     from airflow.logging.remote import RemoteLogIO
@@ -59,6 +60,43 @@ def get_default_remote_conn_id() -> str | None:
     return _ActiveLoggingConfig.default_remote_conn_id
 
 
+def _discover_remote_log_handler_from_providers() -> tuple[RemoteLogIO | None, str | None]:
+    """Discover provider-defined RemoteLogIO implementations."""
+    if not conf.getboolean("logging", "remote_logging"):
+        return None, None
+
+    remote_task_handler_kwargs = conf.getjson("logging", "remote_task_handler_kwargs", fallback={})
+    if not isinstance(remote_task_handler_kwargs, dict):
+        raise ValueError(
+            "logging/remote_task_handler_kwargs must be a JSON object (a python dict), "
+            f"we got {type(remote_task_handler_kwargs)}"
+        )
+
+    remote_base_log_folder = conf.get("logging", "remote_base_log_folder", fallback="")
+    base_log_folder = conf.get_mandatory_value("logging", "base_log_folder")
+    delete_local_logs = conf.getboolean("logging", "delete_local_logs")
+
+    for remote_logging_class_name in ProvidersManager().remote_logging_class_names:
+        try:
+            remote_logging_class = import_string(remote_logging_class_name)
+            factory = getattr(remote_logging_class, "from_config", None)
+            if factory is None:
+                continue
+            remote_task_log, default_remote_conn_id = factory(
+                base_log_folder=base_log_folder,
+                remote_base_log_folder=remote_base_log_folder,
+                delete_local_logs=delete_local_logs,
+                remote_task_handler_kwargs=remote_task_handler_kwargs,
+            )
+            if remote_task_log is not None:
+                log.info("Using provider-defined RemoteLogIO from %s", remote_logging_class_name)
+                return remote_task_log, default_remote_conn_id
+        except Exception:
+            log.exception("Failed loading provider-defined RemoteLogIO from %s", remote_logging_class_name)
+
+    return None, None
+
+
 def load_logging_config() -> tuple[dict[str, Any], str]:
     """Configure & Validate Airflow Logging."""
     fallback = "airflow.config_templates.airflow_local_settings.DEFAULT_LOGGING_CONFIG"
@@ -90,6 +128,13 @@ def load_logging_config() -> tuple[dict[str, Any], str]:
         remote_task_log, default_remote_conn_id = discover_remote_log_handler(
             logging_class_path, fallback, import_string
         )
+        if remote_task_log is None:
+            provider_remote_task_log, provider_default_remote_conn_id = (
+                _discover_remote_log_handler_from_providers()
+            )
+            if provider_remote_task_log is not None:
+                remote_task_log = provider_remote_task_log
+                default_remote_conn_id = provider_default_remote_conn_id
         _ActiveLoggingConfig.set(remote_task_log, default_remote_conn_id)
 
     return logging_config, logging_class_path

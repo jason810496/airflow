@@ -74,6 +74,46 @@ class RemoteLogStreamIO(RemoteLogIO, Protocol):
         ...
 
 
+class ProviderRemoteLogIOFactory(Protocol):
+    """Factory interface for provider-exported RemoteLogIO classes."""
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[RemoteLogIO | RemoteLogStreamIO | None, str | None]:
+        """
+        Build RemoteLogIO from Airflow logging configuration.
+
+        Return ``(None, None)`` when the implementation is not applicable for the current config.
+        """
+        ...
+
+
+class ProviderRemoteLogIOFactory(Protocol):
+    """Factory interface for provider-exported RemoteLogIO classes."""
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[RemoteLogIO | RemoteLogStreamIO | None, str | None]:
+        """
+        Build RemoteLogIO from Airflow logging configuration.
+
+        Return ``(None, None)`` when the implementation is not applicable for the current config.
+        """
+        ...
+
+
 def discover_remote_log_handler(
     logging_class_path: str,
     fallback_path: str,

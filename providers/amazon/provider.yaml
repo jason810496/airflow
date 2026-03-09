@@ -1044,6 +1044,10 @@ logging:
   - airflow.providers.amazon.aws.log.s3_task_handler.S3TaskHandler
   - airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudwatchTaskHandler
 
+remote-logging:
+  - airflow.providers.amazon.aws.log.s3_task_handler.S3RemoteLogIO
+  - airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudWatchRemoteLogIO
+
 config:
   aws:
     description: This section contains settings for Amazon Web Services (AWS) integration.

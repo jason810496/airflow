@@ -421,6 +421,7 @@ class ProvidersManager(LoggingMixin):
         self._cli_command_provider_name_set: set[str] = set()
         self._extra_link_class_name_set: set[str] = set()
         self._logging_class_name_set: set[str] = set()
+        self._remote_logging_class_name_set: set[str] = set()
         self._auth_manager_class_name_set: set[str] = set()
         self._auth_manager_without_check_set: set[tuple[str, str]] = set()
         self._secrets_backend_class_name_set: set[str] = set()
@@ -559,6 +560,12 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of providers logging information."""
         self.initialize_providers_list()
         self._discover_logging()
+
+    @provider_info_cache("remote_logging")
+    def initialize_providers_remote_logging(self):
+        """Lazy initialization of providers remote logging information."""
+        self.initialize_providers_list()
+        self._discover_remote_logging()
 
     @provider_info_cache("secrets_backends")
     def initialize_providers_secrets_backends(self):
@@ -1227,6 +1234,14 @@ class ProvidersManager(LoggingMixin):
                     if _correctness_check(provider_package, logging_class_name, provider):
                         self._logging_class_name_set.add(logging_class_name)
 
+    def _discover_remote_logging(self) -> None:
+        """Retrieve all remote logging interfaces defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            if provider.data.get("remote-logging"):
+                for remote_logging_class_name in provider.data["remote-logging"]:
+                    if _check_builtin_provider_prefix(provider_package, remote_logging_class_name):
+                        self._remote_logging_class_name_set.add(remote_logging_class_name)
+
     def _discover_secrets_backends(self) -> None:
         """Retrieve all secrets backends defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
@@ -1399,6 +1414,12 @@ class ProvidersManager(LoggingMixin):
         return sorted(self._logging_class_name_set)
 
     @property
+    def remote_logging_class_names(self) -> list[str]:
+        """Returns set of RemoteLogIO class names."""
+        self.initialize_providers_remote_logging()
+        return sorted(self._remote_logging_class_name_set)
+
+    @property
     def secrets_backend_class_names(self) -> list[str]:
         """Returns set of secret backend class names."""
         self.initialize_providers_secrets_backends()
@@ -1468,6 +1489,7 @@ class ProvidersManager(LoggingMixin):
         self._field_behaviours.clear()
         self._extra_link_class_name_set.clear()
         self._logging_class_name_set.clear()
+        self._remote_logging_class_name_set.clear()
         self._auth_manager_class_name_set.clear()
         self._auth_manager_without_check_set.clear()
         self._secrets_backend_class_name_set.clear()

@@ -1682,6 +1682,7 @@ def get_provider_info():
             "airflow.providers.google.cloud.log.gcs_task_handler.GCSTaskHandler",
             "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler",
         ],
+        "remote-logging": ["airflow.providers.google.cloud.log.gcs_task_handler.GCSRemoteLogIO"],
         "queues": [
             "airflow.providers.google.event_scheduling.events.pubsub.PubSubMessageQueueEventTriggerContainer"
         ],

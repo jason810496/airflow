@@ -49,6 +49,35 @@ class WasbRemoteLogIO(LoggingMixin):  # noqa: D101
 
     processors = ()
 
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[WasbRemoteLogIO | None, str | None]:
+        if not remote_base_log_folder.startswith("wasb"):
+            return None, None
+        wasb_log_container = conf.get_mandatory_value(
+            "azure_remote_logging", "remote_wasb_log_container", fallback="airflow-logs"
+        )
+        return (
+            cls(
+                **(
+                    {
+                        "base_log_folder": base_log_folder,
+                        "remote_base": remote_base_log_folder.removeprefix("wasb://"),
+                        "delete_local_copy": delete_local_logs,
+                        "wasb_container": wasb_log_container,
+                    }
+                    | remote_task_handler_kwargs
+                )
+            ),
+            "wasb_default",
+        )
+
     def upload(self, path: str | os.PathLike, ti: RuntimeTI):
         """Upload the given log path to the remote storage."""
         path = Path(path)

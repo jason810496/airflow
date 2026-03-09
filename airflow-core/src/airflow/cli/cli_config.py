@@ -1725,6 +1725,12 @@ PROVIDERS_COMMANDS = (
         args=(ARG_OUTPUT, ARG_VERBOSE),
     ),
     ActionCommand(
+        name="remote-logging",
+        help="Get information about RemoteLogIO implementations provided",
+        func=lazy_load_command("airflow.cli.commands.provider_command.remote_logging_list"),
+        args=(ARG_OUTPUT, ARG_VERBOSE),
+    ),
+    ActionCommand(
         name="secrets",
         help="Get information about secrets backends provided",
         func=lazy_load_command("airflow.cli.commands.provider_command.secrets_backends_list"),

@@ -185,6 +185,19 @@ def logging_list(args):
 
 @suppress_logs_and_warning
 @providers_configuration_loaded
+def remote_logging_list(args):
+    """List all RemoteLogIO classes at the command line."""
+    AirflowConsole().print_as(
+        data=list(ProvidersManager().remote_logging_class_names),
+        output=args.output,
+        mapper=lambda x: {
+            "remote_logging_class_name": x,
+        },
+    )
+
+
+@suppress_logs_and_warning
+@providers_configuration_loaded
 def secrets_backends_list(args):
     """List all secrets backends at the command line."""
     AirflowConsole().print_as(

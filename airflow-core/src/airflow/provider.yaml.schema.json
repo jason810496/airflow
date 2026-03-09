@@ -519,6 +519,13 @@
                 "type": "string"
             }
         },
+        "remote-logging": {
+            "type": "array",
+            "description": "RemoteLogIO class names",
+            "items": {
+                "type": "string"
+            }
+        },
         "auth-backends": {
             "type": "array",
             "description": "API Auth Backend module names",

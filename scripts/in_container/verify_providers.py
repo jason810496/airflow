@@ -750,6 +750,8 @@ def run_provider_discovery():
     subprocess.run(["airflow", "providers", "links"], check=True)
     console.print("[bright_blue]List all logging[/]\n")
     subprocess.run(["airflow", "providers", "logging"], check=True)
+    console.print("[bright_blue]List all remote logging[/]\n")
+    subprocess.run(["airflow", "providers", "remote-logging"], check=True)
     console.print("[bright_blue]List all secrets[/]\n")
     subprocess.run(["airflow", "providers", "secrets"], check=True)
     console.print("[bright_blue]List all triggers[/]\n")

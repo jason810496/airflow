@@ -200,6 +200,16 @@ def init_log_file(local_relative_path: str) -> Path:
 
 def _load_logging_config() -> None:
     """Load and cache the remote logging configuration from SDK config."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=DeprecationWarning)
+        try:
+            from airflow.logging_config import get_default_remote_conn_id, get_remote_task_log
+
+            _ActiveLoggingConfig.set(get_remote_task_log(), get_default_remote_conn_id())
+            return
+        except Exception:
+            pass
+
     from airflow.sdk._shared.logging.remote import discover_remote_log_handler
     from airflow.sdk._shared.module_loading import import_string
     from airflow.sdk.configuration import conf

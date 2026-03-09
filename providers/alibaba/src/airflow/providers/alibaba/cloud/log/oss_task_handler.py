@@ -44,6 +44,31 @@ class OSSRemoteLogIO(LoggingMixin):  # noqa: D101
 
     processors = ()
 
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict,
+    ) -> tuple[OSSRemoteLogIO | None, str | None]:
+        if not remote_base_log_folder.startswith("oss://"):
+            return None, None
+        return (
+            cls(
+                **(
+                    {
+                        "base_log_folder": base_log_folder,
+                        "remote_base": remote_base_log_folder,
+                        "delete_local_copy": delete_local_logs,
+                    }
+                    | remote_task_handler_kwargs
+                )
+            ),
+            OSSHook.default_conn_name,
+        )
+
     def upload(self, path: os.PathLike | str, ti: RuntimeTI):
         """Upload the given log path to the remote storage."""
         path = Path(path)
