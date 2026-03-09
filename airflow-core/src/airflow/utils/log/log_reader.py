@@ -179,10 +179,26 @@ class TaskLogReader:
         """Checks if a read operation is supported by a current log handler."""
         return hasattr(self.log_handler, "read")
 
+    @cached_property
+    def external_log_handler(self):
+        """Get the handler-like object that can generate external log links."""
+        if isinstance(self.log_handler, ExternalLoggingMixin):
+            return self.log_handler
+
+        try:
+            from airflow.logging_config import get_remote_task_log
+
+            remote_task_log = get_remote_task_log()
+        except Exception:
+            return None
+
+        if remote_task_log and hasattr(remote_task_log, "get_external_log_url"):
+            return remote_task_log
+        return None
+
     @property
     def supports_external_link(self) -> bool:
         """Check if the logging handler supports external links (e.g. to Elasticsearch, Stackdriver, etc)."""
-        if not isinstance(self.log_handler, ExternalLoggingMixin):
+        if self.external_log_handler is None:
             return False
-
-        return self.log_handler.supports_external_link
+        return bool(getattr(self.external_log_handler, "supports_external_link", False))

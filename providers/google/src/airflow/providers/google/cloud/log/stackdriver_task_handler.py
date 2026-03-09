@@ -18,12 +18,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import warnings
 from collections.abc import Collection
 from functools import cached_property
-from typing import TYPE_CHECKING
-from urllib.parse import urlencode
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode, urlsplit
 
 from google.cloud import logging as gcp_logging
 from google.cloud.logging import Resource
@@ -32,6 +34,7 @@ from google.cloud.logging_v2.services.logging_service_v2 import LoggingServiceV2
 from google.cloud.logging_v2.types import ListLogEntriesRequest, ListLogEntriesResponse
 
 from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.providers.common.compat.sdk import conf
 from airflow.providers.google.cloud.utils.credentials_provider import get_credentials_and_project_id
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.version_compat import AIRFLOW_V_3_0_PLUS
@@ -48,6 +51,7 @@ if TYPE_CHECKING:
     from google.auth.credentials import Credentials
 
     from airflow.models import TaskInstance
+    from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
 
 DEFAULT_LOGGER_NAME = "airflow"
 _GLOBAL_RESOURCE = Resource(type="global", labels={})
@@ -394,3 +398,62 @@ class StackdriverTaskHandler(logging.Handler):
 
     def close(self) -> None:
         self._transport.flush()
+
+
+class StackdriverRemoteLogIO:
+    """RemoteLogIO wrapper for Stackdriver-backed task logs."""
+
+    processors = ()
+    supports_external_link = False
+
+    def __init__(self, *, base_log_folder: str, handler: StackdriverTaskHandler) -> None:
+        self.base_log_folder = Path(base_log_folder)
+        self.handler = handler
+        self.handler.setFormatter(logging.Formatter("%(message)s"))
+
+    @classmethod
+    def from_airflow_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict[str, Any],
+    ) -> StackdriverRemoteLogIO:
+        del delete_local_logs
+        log_name = urlsplit(remote_base_log_folder).path[1:] or DEFAULT_LOGGER_NAME
+        key_path = conf.get_mandatory_value("logging", "google_key_path", fallback=None)
+        handler = StackdriverTaskHandler(
+            **({"gcp_log_name": log_name, "gcp_key_path": key_path} | remote_task_handler_kwargs)
+        )
+        return cls(base_log_folder=base_log_folder, handler=handler)
+
+    def upload(self, path: str | Path, ti: RuntimeTI) -> None:
+        local_path = Path(path)
+        if not local_path.is_absolute():
+            local_path = self.base_log_folder / local_path
+        if not local_path.is_file():
+            return
+
+        self.handler.task_instance_labels = self.handler._task_instance_to_labels(ti)
+        self.handler.task_instance_hostname = getattr(ti, "hostname", "default-hostname")
+
+        for line in local_path.read_text().splitlines():
+            record = logging.LogRecord("airflow.task", logging.INFO, "", 0, line, (), None)
+            self.handler.emit(record)
+        self.handler.close()
+
+    def read(self, relative_path: str, ti: RuntimeTI) -> tuple[list[str], list[str] | None]:
+        try_number = ti.try_number
+        with contextlib.suppress(ValueError):
+            try_number = int(Path(relative_path).stem)
+        messages, _, _ = self.handler._read_logs(
+            self.handler._prepare_log_filter(
+                {**self.handler._task_instance_to_labels(ti), self.handler.LABEL_TRY_NUMBER: str(try_number)}
+            ),
+            next_page_token=None,
+            all_pages=True,
+        )
+        if not messages:
+            return [self.handler.LOG_NAME], None
+        return [self.handler.LOG_NAME], [messages]

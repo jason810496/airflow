@@ -1,0 +1,3 @@
+``airflow_local_settings`` now resolves remote logging backends from provider-declared ``RemoteLogIO``
+metadata, so custom providers can plug remote logging into Airflow 3 without relying on a custom
+logging config module.

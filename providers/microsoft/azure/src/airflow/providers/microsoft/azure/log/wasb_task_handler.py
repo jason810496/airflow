@@ -21,7 +21,7 @@ import os
 import shutil
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import attrs
 from azure.core.exceptions import HttpResponseError
@@ -48,6 +48,31 @@ class WasbRemoteLogIO(LoggingMixin):  # noqa: D101
     wasb_container: str
 
     processors = ()
+
+    @classmethod
+    def from_airflow_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict[str, Any],
+    ) -> WasbRemoteLogIO:
+        wasb_log_container = conf.get_mandatory_value(
+            "azure_remote_logging", "remote_wasb_log_container", fallback="airflow-logs"
+        )
+        wasb_remote_base = remote_base_log_folder.removeprefix("wasb://")
+        return cls(
+            **(
+                {
+                    "base_log_folder": base_log_folder,
+                    "remote_base": wasb_remote_base,
+                    "delete_local_copy": delete_local_logs,
+                    "wasb_container": wasb_log_container,
+                }
+                | remote_task_handler_kwargs
+            )
+        )
 
     def upload(self, path: str | os.PathLike, ti: RuntimeTI):
         """Upload the given log path to the remote storage."""

@@ -1679,8 +1679,17 @@ def get_provider_info():
         ],
         "auth-backends": ["airflow.providers.google.common.auth_backend.google_openid"],
         "logging": [
-            "airflow.providers.google.cloud.log.gcs_task_handler.GCSTaskHandler",
-            "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler",
+            {
+                "task-handler": "airflow.providers.google.cloud.log.gcs_task_handler.GCSTaskHandler",
+                "remote-io": "airflow.providers.google.cloud.log.gcs_task_handler.GCSRemoteLogIO",
+                "schemes": ["gs"],
+                "hook-class-name": "airflow.providers.google.cloud.hooks.gcs.GCSHook",
+            },
+            {
+                "task-handler": "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler",
+                "remote-io": "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverRemoteLogIO",
+                "schemes": ["stackdriver"],
+            },
         ],
         "queues": [
             "airflow.providers.google.event_scheduling.events.pubsub.PubSubMessageQueueEventTriggerContainer"

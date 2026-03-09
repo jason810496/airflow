@@ -46,7 +46,13 @@ def get_provider_info():
                 "connection-type": "elasticsearch",
             }
         ],
-        "logging": ["airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchTaskHandler"],
+        "logging": [
+            {
+                "task-handler": "airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchTaskHandler",
+                "remote-io": "airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchRemoteLogIO",
+                "backend-name": "elasticsearch",
+            }
+        ],
         "config": {
             "elasticsearch": {
                 "description": None,

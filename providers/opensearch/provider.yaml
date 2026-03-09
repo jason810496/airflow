@@ -84,7 +84,9 @@ connection-types:
         extra: "{\n  \"use_ssl\": true,\n  \"verify_certs\": true\n}"
 
 logging:
-  - airflow.providers.opensearch.log.os_task_handler.OpensearchTaskHandler
+  - task-handler: airflow.providers.opensearch.log.os_task_handler.OpensearchTaskHandler
+    remote-io: airflow.providers.opensearch.log.os_task_handler.OpensearchRemoteLogIO
+    backend-name: opensearch
 
 config:
   opensearch:

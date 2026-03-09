@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException
@@ -142,6 +141,62 @@ def _default_conn_name_from(mod_path, hook_name):
         return None
 
 
+def _default_conn_name_from_class_name(hook_class_name: str | None):
+    from airflow._shared.module_loading import import_string
+
+    global DEFAULT_REMOTE_CONN_ID
+
+    if not hook_class_name:
+        return None
+
+    try:
+        hook = import_string(hook_class_name)
+        DEFAULT_REMOTE_CONN_ID = getattr(hook, "default_conn_name")
+    except Exception:
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            raise
+        return None
+
+
+def _remote_logging_info_for(
+    remote_base_log_folder: str, elasticsearch_host: str | None, opensearch_host: str | None
+):
+    from airflow.providers_manager import ProvidersManager
+
+    providers_manager = ProvidersManager()
+    if remote_logging_info := providers_manager.get_remote_logging_info_for_uri(remote_base_log_folder):
+        return remote_logging_info
+    if elasticsearch_host:
+        return providers_manager.get_remote_logging_info_for_backend("elasticsearch")
+    if opensearch_host:
+        return providers_manager.get_remote_logging_info_for_backend("opensearch")
+    return None
+
+
+def _create_remote_task_log(
+    remote_log_io_class_name: str,
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_logs: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+):
+    from airflow._shared.module_loading import import_string
+
+    remote_log_io_class = import_string(remote_log_io_class_name)
+    from_airflow_config = getattr(remote_log_io_class, "from_airflow_config", None)
+    if from_airflow_config is None:
+        raise AirflowException(
+            f"Remote logging backend {remote_log_io_class_name} must implement from_airflow_config()."
+        )
+    return from_airflow_config(
+        base_log_folder=base_log_folder,
+        remote_base_log_folder=remote_base_log_folder,
+        delete_local_logs=delete_local_logs,
+        remote_task_handler_kwargs=remote_task_handler_kwargs,
+    )
+
+
 if REMOTE_LOGGING:
     ELASTICSEARCH_HOST: str | None = conf.get("elasticsearch", "HOST")
     OPENSEARCH_HOST: str | None = conf.get("opensearch", "HOST")
@@ -160,184 +215,22 @@ if REMOTE_LOGGING:
             f"{type(remote_task_handler_kwargs)}"
         )
     delete_local_copy = conf.getboolean("logging", "delete_local_logs")
-
-    if remote_base_log_folder.startswith("s3://"):
-        from airflow.providers.amazon.aws.log.s3_task_handler import S3RemoteLogIO
-
-        _default_conn_name_from("airflow.providers.amazon.aws.hooks.s3", "S3Hook")
-        REMOTE_TASK_LOG = S3RemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": remote_base_log_folder,
-                    "delete_local_copy": delete_local_copy,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-
-    elif remote_base_log_folder.startswith("cloudwatch://"):
-        from airflow.providers.amazon.aws.log.cloudwatch_task_handler import CloudWatchRemoteLogIO
-
-        _default_conn_name_from("airflow.providers.amazon.aws.hooks.logs", "AwsLogsHook")
-        url_parts = urlsplit(remote_base_log_folder)
-        REMOTE_TASK_LOG = CloudWatchRemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": remote_base_log_folder,
-                    "delete_local_copy": delete_local_copy,
-                    "log_group_arn": url_parts.netloc + url_parts.path,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-    elif remote_base_log_folder.startswith("gs://"):
-        from airflow.providers.google.cloud.log.gcs_task_handler import GCSRemoteLogIO
-
-        _default_conn_name_from("airflow.providers.google.cloud.hooks.gcs", "GCSHook")
-        key_path = conf.get_mandatory_value("logging", "google_key_path", fallback=None)
-
-        REMOTE_TASK_LOG = GCSRemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": remote_base_log_folder,
-                    "delete_local_copy": delete_local_copy,
-                    "gcp_key_path": key_path,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-    elif remote_base_log_folder.startswith("wasb"):
-        from airflow.providers.microsoft.azure.log.wasb_task_handler import WasbRemoteLogIO
-
-        _default_conn_name_from("airflow.providers.microsoft.azure.hooks.wasb", "WasbHook")
-        wasb_log_container = conf.get_mandatory_value(
-            "azure_remote_logging", "remote_wasb_log_container", fallback="airflow-logs"
-        )
-
-        # Handle both URI format (wasb://logs) and plain path (e.g., wasb-logs)
-        wasb_remote_base = remote_base_log_folder.removeprefix("wasb://")
-
-        REMOTE_TASK_LOG = WasbRemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": wasb_remote_base,
-                    "delete_local_copy": delete_local_copy,
-                    "wasb_container": wasb_log_container,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-    elif remote_base_log_folder.startswith("stackdriver://"):
-        key_path = conf.get_mandatory_value("logging", "GOOGLE_KEY_PATH", fallback=None)
-        # stackdriver:///airflow-tasks => airflow-tasks
-        log_name = urlsplit(remote_base_log_folder).path[1:]
-        STACKDRIVER_REMOTE_HANDLERS = {
-            "task": {
-                "class": "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler",
-                "formatter": "airflow",
-                "gcp_log_name": log_name,
-                "gcp_key_path": key_path,
-            }
-        }
-
-        DEFAULT_LOGGING_CONFIG["handlers"].update(STACKDRIVER_REMOTE_HANDLERS)
-    elif remote_base_log_folder.startswith("oss://"):
-        from airflow.providers.alibaba.cloud.log.oss_task_handler import OSSRemoteLogIO
-
-        _default_conn_name_from("airflow.providers.alibaba.cloud.hooks.oss", "OSSHook")
-
-        REMOTE_TASK_LOG = OSSRemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": remote_base_log_folder,
-                    "delete_local_copy": delete_local_copy,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-    elif remote_base_log_folder.startswith("hdfs://"):
-        from airflow.providers.apache.hdfs.log.hdfs_task_handler import HdfsRemoteLogIO
-
-        _default_conn_name_from("airflow.providers.apache.hdfs.hooks.webhdfs", "WebHDFSHook")
-
-        REMOTE_TASK_LOG = HdfsRemoteLogIO(
-            **(
-                {
-                    "base_log_folder": BASE_LOG_FOLDER,
-                    "remote_base": urlsplit(remote_base_log_folder).path,
-                    "delete_local_copy": delete_local_copy,
-                }
-                | remote_task_handler_kwargs
-            )
-        )
-        remote_task_handler_kwargs = {}
-    elif ELASTICSEARCH_HOST:
-        from airflow.providers.elasticsearch.log.es_task_handler import ElasticsearchRemoteLogIO
-
-        ELASTICSEARCH_WRITE_STDOUT: bool = conf.getboolean("elasticsearch", "WRITE_STDOUT")
-        ELASTICSEARCH_WRITE_TO_ES: bool = conf.getboolean("elasticsearch", "WRITE_TO_ES")
-        ELASTICSEARCH_JSON_FORMAT: bool = conf.getboolean("elasticsearch", "JSON_FORMAT")
-        ELASTICSEARCH_TARGET_INDEX: str = conf.get_mandatory_value("elasticsearch", "TARGET_INDEX")
-        ELASTICSEARCH_HOST_FIELD: str = conf.get_mandatory_value("elasticsearch", "HOST_FIELD")
-        ELASTICSEARCH_OFFSET_FIELD: str = conf.get_mandatory_value("elasticsearch", "OFFSET_FIELD")
-        ELASTICSEARCH_LOG_ID_TEMPLATE: str = conf.get_mandatory_value("elasticsearch", "LOG_ID_TEMPLATE")
-
-        REMOTE_TASK_LOG = ElasticsearchRemoteLogIO(
-            host=ELASTICSEARCH_HOST,
-            target_index=ELASTICSEARCH_TARGET_INDEX,
-            write_stdout=ELASTICSEARCH_WRITE_STDOUT,
-            write_to_es=ELASTICSEARCH_WRITE_TO_ES,
-            offset_field=ELASTICSEARCH_OFFSET_FIELD,
-            host_field=ELASTICSEARCH_HOST_FIELD,
+    if remote_logging_info := _remote_logging_info_for(
+        remote_base_log_folder, ELASTICSEARCH_HOST, OPENSEARCH_HOST
+    ):
+        _default_conn_name_from_class_name(remote_logging_info.hook_class_name)
+        REMOTE_TASK_LOG = _create_remote_task_log(
+            remote_logging_info.remote_log_io_class_name,
             base_log_folder=BASE_LOG_FOLDER,
-            delete_local_copy=delete_local_copy,
-            json_format=ELASTICSEARCH_JSON_FORMAT,
-            log_id_template=ELASTICSEARCH_LOG_ID_TEMPLATE,
+            remote_base_log_folder=remote_base_log_folder,
+            delete_local_logs=delete_local_copy,
+            remote_task_handler_kwargs=remote_task_handler_kwargs,
         )
-
-    elif OPENSEARCH_HOST:
-        OPENSEARCH_END_OF_LOG_MARK: str = conf.get_mandatory_value("opensearch", "END_OF_LOG_MARK")
-        OPENSEARCH_PORT: str = conf.get_mandatory_value("opensearch", "PORT")
-        OPENSEARCH_USERNAME: str = conf.get_mandatory_value("opensearch", "USERNAME")
-        OPENSEARCH_PASSWORD: str = conf.get_mandatory_value("opensearch", "PASSWORD")
-        OPENSEARCH_WRITE_STDOUT: bool = conf.getboolean("opensearch", "WRITE_STDOUT")
-        OPENSEARCH_JSON_FORMAT: bool = conf.getboolean("opensearch", "JSON_FORMAT")
-        OPENSEARCH_JSON_FIELDS: str = conf.get_mandatory_value("opensearch", "JSON_FIELDS")
-        OPENSEARCH_HOST_FIELD: str = conf.get_mandatory_value("opensearch", "HOST_FIELD")
-        OPENSEARCH_OFFSET_FIELD: str = conf.get_mandatory_value("opensearch", "OFFSET_FIELD")
-
-        OPENSEARCH_REMOTE_HANDLERS: dict[str, dict[str, str | bool | None]] = {
-            "task": {
-                "class": "airflow.providers.opensearch.log.os_task_handler.OpensearchTaskHandler",
-                "formatter": "airflow",
-                "base_log_folder": BASE_LOG_FOLDER,
-                "end_of_log_mark": OPENSEARCH_END_OF_LOG_MARK,
-                "host": OPENSEARCH_HOST,
-                "port": OPENSEARCH_PORT,
-                "username": OPENSEARCH_USERNAME,
-                "password": OPENSEARCH_PASSWORD,
-                "write_stdout": OPENSEARCH_WRITE_STDOUT,
-                "json_format": OPENSEARCH_JSON_FORMAT,
-                "json_fields": OPENSEARCH_JSON_FIELDS,
-                "host_field": OPENSEARCH_HOST_FIELD,
-                "offset_field": OPENSEARCH_OFFSET_FIELD,
-            },
-        }
-        DEFAULT_LOGGING_CONFIG["handlers"].update(OPENSEARCH_REMOTE_HANDLERS)
+        remote_task_handler_kwargs = {}
     else:
         raise AirflowException(
             "Incorrect remote log configuration. Please check the configuration of option 'host' in "
-            "section 'elasticsearch' if you are using Elasticsearch. In the other case, "
-            "'remote_base_log_folder' option in the 'logging' section."
+            "section 'elasticsearch' or 'opensearch' if you are using those backends. Otherwise, "
+            "make sure 'remote_base_log_folder' uses a scheme exported by a provider RemoteIO backend."
         )
     DEFAULT_LOGGING_CONFIG["handlers"]["task"].update(remote_task_handler_kwargs)

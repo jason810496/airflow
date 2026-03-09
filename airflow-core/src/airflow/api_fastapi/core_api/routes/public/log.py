@@ -185,6 +185,9 @@ def get_external_log_url(
 
     if not task_log_reader.supports_external_link:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Task log handler does not support external logs.")
+    external_log_handler = task_log_reader.external_log_handler
+    if external_log_handler is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Task log handler does not support external logs.")
 
     # Fetch the task instance
     query = (
@@ -202,5 +205,5 @@ def get_external_log_url(
     if ti is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "TaskInstance not found")
 
-    url = task_log_reader.log_handler.get_external_log_url(ti, try_number)
+    url = external_log_handler.get_external_log_url(ti, try_number)
     return ExternalLogUrlResponse(url=url)

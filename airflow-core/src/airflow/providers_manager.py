@@ -32,6 +32,7 @@ from functools import wraps
 from importlib.resources import files as resource_files
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, TypeVar, cast
+from urllib.parse import urlsplit
 
 from airflow import DeprecatedImportWarning
 from airflow._shared.module_loading import import_string
@@ -231,6 +232,17 @@ class PluginInfo(NamedTuple):
     provider_name: str
 
 
+class RemoteLoggingInfo(NamedTuple):
+    """Remote logging backend information exported by a provider."""
+
+    task_handler_class_name: str
+    remote_log_io_class_name: str
+    provider_name: str
+    schemes: tuple[str, ...] = ()
+    backend_name: str | None = None
+    hook_class_name: str | None = None
+
+
 class HookInfo(NamedTuple):
     """Hook information."""
 
@@ -421,6 +433,7 @@ class ProvidersManager(LoggingMixin):
         self._cli_command_provider_name_set: set[str] = set()
         self._extra_link_class_name_set: set[str] = set()
         self._logging_class_name_set: set[str] = set()
+        self._remote_logging_info_set: set[RemoteLoggingInfo] = set()
         self._auth_manager_class_name_set: set[str] = set()
         self._auth_manager_without_check_set: set[tuple[str, str]] = set()
         self._secrets_backend_class_name_set: set[str] = set()
@@ -559,6 +572,12 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of providers logging information."""
         self.initialize_providers_list()
         self._discover_logging()
+
+    @provider_info_cache("remote_logging")
+    def initialize_providers_remote_logging(self):
+        """Lazy initialization of providers remote logging information."""
+        self.initialize_providers_list()
+        self._discover_remote_logging()
 
     @provider_info_cache("secrets_backends")
     def initialize_providers_secrets_backends(self):
@@ -1223,9 +1242,33 @@ class ProvidersManager(LoggingMixin):
         """Retrieve all logging defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
             if provider.data.get("logging"):
-                for logging_class_name in provider.data["logging"]:
+                for logging_entry in provider.data["logging"]:
+                    logging_class_name = (
+                        logging_entry["task-handler"] if isinstance(logging_entry, dict) else logging_entry
+                    )
                     if _correctness_check(provider_package, logging_class_name, provider):
                         self._logging_class_name_set.add(logging_class_name)
+
+    def _discover_remote_logging(self) -> None:
+        """Retrieve remote logging backends exported by providers."""
+        for provider_package, provider in self._provider_dict.items():
+            if provider.data.get("logging"):
+                for logging_entry in provider.data["logging"]:
+                    if not isinstance(logging_entry, dict):
+                        continue
+                    remote_log_io_class_name = logging_entry.get("remote-io")
+                    if not remote_log_io_class_name:
+                        continue
+                    self._remote_logging_info_set.add(
+                        RemoteLoggingInfo(
+                            task_handler_class_name=logging_entry["task-handler"],
+                            remote_log_io_class_name=remote_log_io_class_name,
+                            provider_name=provider_package,
+                            schemes=tuple(logging_entry.get("schemes", ())),
+                            backend_name=logging_entry.get("backend-name"),
+                            hook_class_name=logging_entry.get("hook-class-name"),
+                        )
+                    )
 
     def _discover_secrets_backends(self) -> None:
         """Retrieve all secrets backends defined in the providers."""
@@ -1399,6 +1442,32 @@ class ProvidersManager(LoggingMixin):
         return sorted(self._logging_class_name_set)
 
     @property
+    def remote_logging_infos(self) -> list[RemoteLoggingInfo]:
+        """Returns remote logging backends exported by providers."""
+        self.initialize_providers_remote_logging()
+        return sorted(
+            self._remote_logging_info_set,
+            key=lambda info: (info.provider_name, info.remote_log_io_class_name, info.task_handler_class_name),
+        )
+
+    def get_remote_logging_info_for_uri(self, uri: str) -> RemoteLoggingInfo | None:
+        """Return the first provider-declared remote logging backend matching the given URI."""
+        self.initialize_providers_remote_logging()
+        split_uri = urlsplit(uri)
+        for info in self.remote_logging_infos:
+            if split_uri.scheme and split_uri.scheme in info.schemes:
+                return info
+            # Keep compatibility with legacy WASB values such as ``wasb-logs``.
+            if any(scheme == "wasb" and uri.startswith("wasb") for scheme in info.schemes):
+                return info
+        return None
+
+    def get_remote_logging_info_for_backend(self, backend_name: str) -> RemoteLoggingInfo | None:
+        """Return the first provider-declared remote logging backend matching the backend name."""
+        self.initialize_providers_remote_logging()
+        return next((info for info in self.remote_logging_infos if info.backend_name == backend_name), None)
+
+    @property
     def secrets_backend_class_names(self) -> list[str]:
         """Returns set of secret backend class names."""
         self.initialize_providers_secrets_backends()
@@ -1468,6 +1537,7 @@ class ProvidersManager(LoggingMixin):
         self._field_behaviours.clear()
         self._extra_link_class_name_set.clear()
         self._logging_class_name_set.clear()
+        self._remote_logging_info_set.clear()
         self._auth_manager_class_name_set.clear()
         self._auth_manager_without_check_set.clear()
         self._secrets_backend_class_name_set.clear()

@@ -74,6 +74,20 @@ class RemoteLogStreamIO(RemoteLogIO, Protocol):
         ...
 
 
+@runtime_checkable
+class RemoteLogExternalLinkIO(Protocol):
+    """Optional interface for remote loggers that can point users to external log viewers."""
+
+    @property
+    def supports_external_link(self) -> bool:
+        """Return whether the remote logger can generate an external log URL."""
+        ...
+
+    def get_external_log_url(self, task_instance: Any, try_number: int) -> str:
+        """Return the URL for log visualization in the external service."""
+        ...
+
+
 def discover_remote_log_handler(
     logging_class_path: str,
     fallback_path: str,

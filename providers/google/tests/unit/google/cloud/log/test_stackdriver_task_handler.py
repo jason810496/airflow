@@ -25,7 +25,10 @@ import pytest
 from google.cloud.logging import Resource
 from google.cloud.logging_v2.types import ListLogEntriesRequest, ListLogEntriesResponse, LogEntry
 
-from airflow.providers.google.cloud.log.stackdriver_task_handler import StackdriverTaskHandler
+from airflow.providers.google.cloud.log.stackdriver_task_handler import (
+    StackdriverRemoteLogIO,
+    StackdriverTaskHandler,
+)
 from airflow.utils import timezone
 from airflow.utils.state import TaskInstanceState
 
@@ -77,7 +80,6 @@ def test_should_pass_message_to_client(mock_client, mock_get_creds_and_project_i
 @mock.patch("airflow.providers.google.cloud.log.stackdriver_task_handler.gcp_logging.Client")
 def test_should_use_configured_log_name(mock_client, mock_get_creds_and_project_id):
     import importlib
-    import logging
 
     from airflow import settings
     from airflow.config_templates import airflow_local_settings
@@ -98,13 +100,8 @@ def test_should_use_configured_log_name(mock_client, mock_get_creds_and_project_
             ):
                 importlib.reload(airflow_local_settings)
                 settings.configure_logging()
-
-                logger = logging.getLogger("airflow.task")
-                handler = logger.handlers[0]
-                assert isinstance(handler, StackdriverTaskHandler)
-                with mock.patch.object(handler, "transport_type") as transport_type_mock:
-                    logger.error("foo")
-                    transport_type_mock.assert_called_once_with(mock_client.return_value, "path")
+                assert isinstance(airflow_local_settings.REMOTE_TASK_LOG, StackdriverRemoteLogIO)
+                assert airflow_local_settings.REMOTE_TASK_LOG.handler.gcp_log_name == "path"
     finally:
         importlib.reload(airflow_local_settings)
         settings.configure_logging()

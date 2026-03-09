@@ -58,7 +58,13 @@ def get_provider_info():
                 },
             }
         ],
-        "logging": ["airflow.providers.opensearch.log.os_task_handler.OpensearchTaskHandler"],
+        "logging": [
+            {
+                "task-handler": "airflow.providers.opensearch.log.os_task_handler.OpensearchTaskHandler",
+                "remote-io": "airflow.providers.opensearch.log.os_task_handler.OpensearchRemoteLogIO",
+                "backend-name": "opensearch",
+            }
+        ],
         "config": {
             "opensearch": {
                 "description": None,

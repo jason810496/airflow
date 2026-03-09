@@ -514,9 +514,44 @@
         },
         "logging": {
             "type": "array",
-            "description": "Logging Task Handlers class names",
+            "description": "Logging task handlers and optional RemoteLogIO backends exposed by the provider",
             "items": {
-                "type": "string"
+                "oneOf": [
+                    {
+                        "type": "string"
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "task-handler": {
+                                "description": "Logging task handler class name",
+                                "type": "string"
+                            },
+                            "remote-io": {
+                                "description": "RemoteLogIO class name used by Airflow 3 remote logging",
+                                "type": "string"
+                            },
+                            "schemes": {
+                                "description": "URI schemes supported by the remote logging backend",
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "backend-name": {
+                                "description": "Legacy backend identifier for non-scheme based remote logging",
+                                "type": "string"
+                            },
+                            "hook-class-name": {
+                                "description": "Hook class used to infer the default remote connection id",
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "task-handler"
+                        ]
+                    }
+                ]
             }
         },
         "auth-backends": {

@@ -1148,8 +1148,18 @@ def get_provider_info():
             "airflow.providers.amazon.aws.secrets.systems_manager.SystemsManagerParameterStoreBackend",
         ],
         "logging": [
-            "airflow.providers.amazon.aws.log.s3_task_handler.S3TaskHandler",
-            "airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudwatchTaskHandler",
+            {
+                "task-handler": "airflow.providers.amazon.aws.log.s3_task_handler.S3TaskHandler",
+                "remote-io": "airflow.providers.amazon.aws.log.s3_task_handler.S3RemoteLogIO",
+                "schemes": ["s3"],
+                "hook-class-name": "airflow.providers.amazon.aws.hooks.s3.S3Hook",
+            },
+            {
+                "task-handler": "airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudwatchTaskHandler",
+                "remote-io": "airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudWatchRemoteLogIO",
+                "schemes": ["cloudwatch"],
+                "hook-class-name": "airflow.providers.amazon.aws.hooks.logs.AwsLogsHook",
+            },
         ],
         "config": {
             "aws": {

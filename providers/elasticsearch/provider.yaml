@@ -105,7 +105,9 @@ connection-types:
     connection-type: elasticsearch
 
 logging:
-  - airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchTaskHandler
+  - task-handler: airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchTaskHandler
+    remote-io: airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchRemoteLogIO
+    backend-name: elasticsearch
 
 config:
   elasticsearch:

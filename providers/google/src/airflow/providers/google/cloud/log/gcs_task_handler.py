@@ -23,7 +23,7 @@ import shutil
 from collections.abc import Collection
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import attrs
 
@@ -69,6 +69,28 @@ class GCSRemoteLogIO(LoggingMixin):  # noqa: D101
     scopes: Collection[str] | None = _DEFAULT_SCOPESS
 
     processors = ()
+
+    @classmethod
+    def from_airflow_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict[str, Any],
+    ) -> GCSRemoteLogIO:
+        key_path = conf.get_mandatory_value("logging", "google_key_path", fallback=None)
+        return cls(
+            **(
+                {
+                    "base_log_folder": base_log_folder,
+                    "remote_base": remote_base_log_folder,
+                    "delete_local_copy": delete_local_logs,
+                    "gcp_key_path": key_path,
+                }
+                | remote_task_handler_kwargs
+            )
+        )
 
     def upload(self, path: os.PathLike | str, ti: RuntimeTI):
         """Upload the given log path to the remote storage."""

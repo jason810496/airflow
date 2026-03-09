@@ -97,8 +97,10 @@ Exposing customized functionality to the Airflow's core:
 
 * ``integrations`` - provides list of integrations that are available in the provider.
 
-* ``logging`` - this field should contain the list of all the logging handler class names that the
-  provider provides. See :doc:`apache-airflow:administration-and-deployment/logging-monitoring/logging-tasks`
+* ``logging`` - this field should contain the list of logging handler class names that the
+  provider provides, or structured entries with both a ``task-handler`` and a ``remote-io`` class
+  when the provider exposes an Airflow 3 RemoteLogIO backend. See
+  :doc:`apache-airflow:administration-and-deployment/logging-monitoring/logging-tasks`
   for description of the logging handlers.
 
 * ``notifications`` - this field should contain the list of all the notification classes that the

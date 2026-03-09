@@ -808,7 +808,14 @@ def get_provider_info():
             },
         ],
         "secrets-backends": ["airflow.providers.microsoft.azure.secrets.key_vault.AzureKeyVaultBackend"],
-        "logging": ["airflow.providers.microsoft.azure.log.wasb_task_handler.WasbTaskHandler"],
+        "logging": [
+            {
+                "task-handler": "airflow.providers.microsoft.azure.log.wasb_task_handler.WasbTaskHandler",
+                "remote-io": "airflow.providers.microsoft.azure.log.wasb_task_handler.WasbRemoteLogIO",
+                "schemes": ["wasb"],
+                "hook-class-name": "airflow.providers.microsoft.azure.hooks.wasb.WasbHook",
+            }
+        ],
         "extra-links": [
             "airflow.providers.microsoft.azure.operators.data_factory.AzureDataFactoryPipelineRunLink",
             "airflow.providers.microsoft.azure.operators.synapse.AzureSynapsePipelineRunLink",

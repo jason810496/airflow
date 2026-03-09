@@ -25,6 +25,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from operator import attrgetter
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlparse
 
@@ -46,6 +47,7 @@ from airflow.utils.session import create_session
 
 if TYPE_CHECKING:
     from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
+    from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
     from airflow.utils.log.file_task_handler import LogMetadata
 
 if AIRFLOW_V_3_0_PLUS:
@@ -633,3 +635,71 @@ class OpensearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMixin)
             raise ValueError(f"'{host}' is not a valid URL.")
 
         return host
+
+
+class OpensearchRemoteLogIO:
+    """RemoteLogIO wrapper for OpenSearch-backed task logs."""
+
+    processors = ()
+
+    def __init__(self, *, handler: OpensearchTaskHandler) -> None:
+        self.handler = handler
+
+    @classmethod
+    def from_airflow_config(
+        cls,
+        *,
+        base_log_folder: str,
+        remote_base_log_folder: str,
+        delete_local_logs: bool,
+        remote_task_handler_kwargs: dict[str, Any],
+    ) -> OpensearchRemoteLogIO:
+        del remote_base_log_folder, delete_local_logs
+        common_kwargs = {
+            "base_log_folder": base_log_folder,
+            "end_of_log_mark": conf.get_mandatory_value("opensearch", "end_of_log_mark"),
+            "host": conf.get_mandatory_value("opensearch", "host"),
+            "port": conf.get_mandatory_value("opensearch", "port"),
+            "username": conf.get_mandatory_value("opensearch", "username"),
+            "password": conf.get_mandatory_value("opensearch", "password"),
+            "write_stdout": conf.getboolean("opensearch", "write_stdout"),
+            "json_format": conf.getboolean("opensearch", "json_format"),
+            "json_fields": conf.get_mandatory_value("opensearch", "json_fields"),
+            "host_field": conf.get_mandatory_value("opensearch", "host_field"),
+            "offset_field": conf.get_mandatory_value("opensearch", "offset_field"),
+        }
+        handler = OpensearchTaskHandler(**(common_kwargs | remote_task_handler_kwargs))
+        return cls(handler=handler)
+
+    def upload(self, path: str | os.PathLike, ti: RuntimeTI) -> None:
+        del path, ti
+        # OpenSearch log retrieval relies on an external shipper. Keep the current behaviour and
+        # let the provider expose read support through RemoteLogIO for Airflow 3.
+        return
+
+    def read(self, relative_path: str, ti: RuntimeTI) -> tuple[list[str], list[str] | None]:
+        try_number = ti.try_number
+        with contextlib.suppress(ValueError):
+            try_number = int(Path(relative_path).stem)
+        log_id = self.handler._render_log_id(ti, try_number)
+        response = self.handler._os_read(log_id, 0, ti)
+        if response is None or not response.hits:
+            missing_log_message = (
+                f"*** Log {log_id} not found in Opensearch. "
+                "If your task started recently, please wait a moment and reload this page. "
+                "Otherwise, the logs for this task instance may have been removed."
+            )
+            return [], [missing_log_message]
+
+        logs_by_host = self.handler._group_logs_by_host(response)
+        if not logs_by_host:
+            return [], None
+
+        return list(logs_by_host.keys()), [self.handler.concat_logs(hits) for hits in logs_by_host.values()]
+
+    @property
+    def supports_external_link(self) -> bool:
+        return self.handler.supports_external_link
+
+    def get_external_log_url(self, task_instance, try_number) -> str:
+        return self.handler.get_external_log_url(task_instance, try_number)

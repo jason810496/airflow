@@ -34,6 +34,7 @@ from airflow.providers_manager import (
     PluginInfo,
     ProviderInfo,
     ProvidersManager,
+    RemoteLoggingInfo,
 )
 
 from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker
@@ -194,6 +195,28 @@ class TestProviderManager:
         provider_manager = ProvidersManager()
         logging_class_names = list(provider_manager.logging_class_names)
         assert len(logging_class_names) > 5
+
+    def test_remote_logging(self):
+        provider_manager = ProvidersManager()
+        remote_logging_infos = list(provider_manager.remote_logging_infos)
+        assert len(remote_logging_infos) >= 2
+        assert provider_manager.get_remote_logging_info_for_uri("gs://logs") == RemoteLoggingInfo(
+            task_handler_class_name="airflow.providers.google.cloud.log.gcs_task_handler.GCSTaskHandler",
+            remote_log_io_class_name="airflow.providers.google.cloud.log.gcs_task_handler.GCSRemoteLogIO",
+            provider_name="apache-airflow-providers-google",
+            schemes=("gs",),
+            hook_class_name="airflow.providers.google.cloud.hooks.gcs.GCSHook",
+        )
+        assert provider_manager.get_remote_logging_info_for_uri(
+            "stackdriver://host/path"
+        ) == RemoteLoggingInfo(
+            task_handler_class_name="airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler",
+            remote_log_io_class_name=(
+                "airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverRemoteLogIO"
+            ),
+            provider_name="apache-airflow-providers-google",
+            schemes=("stackdriver",),
+        )
 
     def test_secrets_backends(self):
         provider_manager = ProvidersManager()
