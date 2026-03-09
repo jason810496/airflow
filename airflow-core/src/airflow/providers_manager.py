@@ -1239,10 +1239,9 @@ class ProvidersManager(LoggingMixin):
         for provider_package, provider in self._provider_dict.items():
             for entry in provider.data.get("remote-logging", []):
                 factory_path = entry.get("factory")
-                schemes = entry.get("schemes", [])
-                if factory_path and _correctness_check(provider_package, factory_path, provider):
-                    for scheme in schemes:
-                        self._remote_logging_factory_dict[scheme] = factory_path
+                scheme = entry.get("scheme")
+                if scheme and factory_path and _correctness_check(provider_package, factory_path, provider):
+                    self._remote_logging_factory_dict[scheme] = factory_path
 
     def _discover_secrets_backends(self) -> None:
         """Retrieve all secrets backends defined in the providers."""

@@ -185,9 +185,8 @@ logging:
   - airflow.providers.alibaba.cloud.log.oss_task_handler.OSSTaskHandler
 
 remote-logging:
-  - schemes:
-      - "oss"
-    factory: airflow.providers.alibaba.cloud.log.oss_task_handler.build_remote_log_io
+  - scheme: "oss"
+    factory: airflow.providers.alibaba.cloud.log.remote_log_factory.remote_log_io_factory
 
 extra-links:
   - airflow.providers.alibaba.cloud.links.maxcompute.MaxComputeLogViewLink

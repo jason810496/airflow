@@ -1684,8 +1684,8 @@ def get_provider_info():
         ],
         "remote-logging": [
             {
-                "schemes": ["gs"],
-                "factory": "airflow.providers.google.cloud.log.gcs_task_handler.build_remote_log_io",
+                "scheme": "gs",
+                "factory": "airflow.providers.google.cloud.log.remote_log_factory.remote_log_io_factory",
             },
         ],
         "queues": [

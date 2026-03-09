@@ -521,16 +521,13 @@
         },
         "remote-logging": {
             "type": "array",
-            "description": "Remote logging backends provided by this package, mapping URL schemes to RemoteLogIO factory callables",
+            "description": "Remote logging backends provided by this package, mapping a URL scheme to a RemoteLogIO factory callable",
             "items": {
                 "type": "object",
                 "properties": {
-                    "schemes": {
-                        "type": "array",
-                        "description": "List of URL schemes this backend handles (e.g. s3, gs, wasb)",
-                        "items": {
-                            "type": "string"
-                        }
+                    "scheme": {
+                        "type": "string",
+                        "description": "URL scheme this backend handles (e.g. s3, gs, wasb)"
                     },
                     "factory": {
                         "type": "string",
@@ -538,7 +535,7 @@
                     }
                 },
                 "required": [
-                    "schemes",
+                    "scheme",
                     "factory"
                 ],
                 "additionalProperties": false

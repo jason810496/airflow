@@ -1463,9 +1463,8 @@ logging:
   - airflow.providers.google.cloud.log.stackdriver_task_handler.StackdriverTaskHandler
 
 remote-logging:
-  - schemes:
-      - "gs"
-    factory: airflow.providers.google.cloud.log.gcs_task_handler.build_remote_log_io
+  - scheme: "gs"
+    factory: airflow.providers.google.cloud.log.remote_log_factory.remote_log_io_factory
 
 queues:
   - airflow.providers.google.event_scheduling.events.pubsub.PubSubMessageQueueEventTriggerContainer

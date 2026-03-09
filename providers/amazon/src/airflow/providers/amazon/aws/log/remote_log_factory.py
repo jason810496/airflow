@@ -14,9 +14,30 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 from __future__ import annotations
 
-from airflow._shared.logging.remote import RemoteLoggingFactoryReturn, RemoteLogIO, RemoteLogStreamIO
+from typing import Any
 
-__all__ = ["RemoteLogIO", "RemoteLogStreamIO", "RemoteLoggingFactoryReturn"]
+
+def remote_log_io_factory(
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_copy: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+) -> tuple[Any, str | None]:
+    """Build an S3RemoteLogIO instance from Airflow configuration."""
+    from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+    from airflow.providers.amazon.aws.log.s3_task_handler import S3RemoteLogIO
+
+    remote_log_io = S3RemoteLogIO(
+        **(
+            {
+                "base_log_folder": base_log_folder,
+                "remote_base": remote_base_log_folder,
+                "delete_local_copy": delete_local_copy,
+            }
+            | remote_task_handler_kwargs
+        )
+    )
+    return remote_log_io, S3Hook.default_conn_name

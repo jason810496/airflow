@@ -54,8 +54,8 @@ def get_provider_info():
         ],
         "remote-logging": [
             {
-                "schemes": ["hdfs"],
-                "factory": "airflow.providers.apache.hdfs.log.hdfs_task_handler.build_remote_log_io",
+                "scheme": "hdfs",
+                "factory": "airflow.providers.apache.hdfs.log.remote_log_factory.remote_log_io_factory",
             },
         ],
         "connection-types": [

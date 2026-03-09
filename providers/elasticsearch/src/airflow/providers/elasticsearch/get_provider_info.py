@@ -49,8 +49,8 @@ def get_provider_info():
         "logging": ["airflow.providers.elasticsearch.log.es_task_handler.ElasticsearchTaskHandler"],
         "remote-logging": [
             {
-                "schemes": ["elasticsearch"],
-                "factory": "airflow.providers.elasticsearch.log.es_task_handler.build_remote_log_io",
+                "scheme": "elasticsearch",
+                "factory": "airflow.providers.elasticsearch.log.remote_log_factory.remote_log_io_factory",
             },
         ],
         "config": {

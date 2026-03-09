@@ -1045,12 +1045,10 @@ logging:
   - airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudwatchTaskHandler
 
 remote-logging:
-  - schemes:
-      - "s3"
-    factory: airflow.providers.amazon.aws.log.s3_task_handler.build_remote_log_io
-  - schemes:
-      - "cloudwatch"
-    factory: airflow.providers.amazon.aws.log.cloudwatch_task_handler.build_remote_log_io
+  - scheme: "s3"
+    factory: airflow.providers.amazon.aws.log.remote_log_factory.remote_log_io_factory
+  - scheme: "cloudwatch"
+    factory: airflow.providers.amazon.aws.log.cloudwatch_remote_log_factory.remote_log_io_factory
 
 config:
   aws:

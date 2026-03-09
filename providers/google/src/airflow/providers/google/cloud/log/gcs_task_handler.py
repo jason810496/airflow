@@ -23,7 +23,7 @@ import shutil
 from collections.abc import Collection
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import attrs
 
@@ -203,29 +203,6 @@ class GCSRemoteLogIO(LoggingMixin):  # noqa: D101
             yield from stream
         finally:
             stream.close()
-
-
-def build_remote_log_io(
-    *,
-    base_log_folder: str,
-    remote_base_log_folder: str,
-    delete_local_copy: bool,
-    remote_task_handler_kwargs: dict[str, Any],
-) -> tuple[GCSRemoteLogIO, str | None]:
-    """Build a GCSRemoteLogIO instance from Airflow configuration."""
-    key_path = conf.get("logging", "google_key_path", fallback=None)
-    remote_log_io = GCSRemoteLogIO(
-        **(
-            {
-                "base_log_folder": base_log_folder,
-                "remote_base": remote_base_log_folder,
-                "delete_local_copy": delete_local_copy,
-                "gcp_key_path": key_path,
-            }
-            | remote_task_handler_kwargs
-        )
-    )
-    return remote_log_io, GCSHook.default_conn_name
 
 
 class GCSTaskHandler(FileTaskHandler, LoggingMixin):

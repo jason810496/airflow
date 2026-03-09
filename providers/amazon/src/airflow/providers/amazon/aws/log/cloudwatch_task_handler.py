@@ -229,31 +229,6 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
         return json.dumps(message)
 
 
-def build_remote_log_io(
-    *,
-    base_log_folder: str,
-    remote_base_log_folder: str,
-    delete_local_copy: bool,
-    remote_task_handler_kwargs: dict[str, Any],
-) -> tuple[CloudWatchRemoteLogIO, str | None]:
-    """Build a CloudWatchRemoteLogIO instance from Airflow configuration."""
-    from urllib.parse import urlsplit
-
-    url_parts = urlsplit(remote_base_log_folder)
-    remote_log_io = CloudWatchRemoteLogIO(
-        **(
-            {
-                "base_log_folder": base_log_folder,
-                "remote_base": remote_base_log_folder,
-                "delete_local_copy": delete_local_copy,
-                "log_group_arn": url_parts.netloc + url_parts.path,
-            }
-            | remote_task_handler_kwargs
-        )
-    )
-    return remote_log_io, AwsLogsHook.default_conn_name
-
-
 class CloudwatchTaskHandler(FileTaskHandler, LoggingMixin):
     """
     CloudwatchTaskHandler is a python log handler that handles and reads task instance logs.

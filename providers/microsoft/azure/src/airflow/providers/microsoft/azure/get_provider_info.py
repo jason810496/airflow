@@ -811,8 +811,12 @@ def get_provider_info():
         "logging": ["airflow.providers.microsoft.azure.log.wasb_task_handler.WasbTaskHandler"],
         "remote-logging": [
             {
-                "schemes": ["wasb", "wasbs"],
-                "factory": "airflow.providers.microsoft.azure.log.wasb_task_handler.build_remote_log_io",
+                "scheme": "wasb",
+                "factory": "airflow.providers.microsoft.azure.log.remote_log_factory.remote_log_io_factory",
+            },
+            {
+                "scheme": "wasbs",
+                "factory": "airflow.providers.microsoft.azure.log.remote_log_factory.remote_log_io_factory",
             },
         ],
         "extra-links": [

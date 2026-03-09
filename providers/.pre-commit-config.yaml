@@ -227,6 +227,12 @@ repos:
         language: python
         files: ^.*/cli/definition\.py$
         require_serial: false
+      - id: check-remote-log-factory-imports
+        name: Check remote_log_factory files only import allowed modules
+        entry: ../scripts/ci/prek/check_remote_log_factory_imports.py
+        language: python
+        files: ^.*/log/.*remote_log_factory\.py$
+        require_serial: false
       - id: check-imports-in-providers
         name: Check imports in providers
         entry: ../scripts/ci/prek/check_imports_in_providers.py

@@ -203,7 +203,7 @@ class TestProviderManager:
         for scheme, factory_path in factories.items():
             assert isinstance(scheme, str)
             assert isinstance(factory_path, str)
-            assert "build_remote_log_io" in factory_path
+            assert "remote_log_io_factory" in factory_path
 
     def test_secrets_backends(self):
         provider_manager = ProvidersManager()

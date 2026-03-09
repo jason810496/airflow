@@ -196,7 +196,9 @@ if REMOTE_LOGGING:
         DEFAULT_LOGGING_CONFIG["handlers"].update(STACKDRIVER_REMOTE_HANDLERS)
 
     elif conf.get("elasticsearch", "HOST"):
-        from airflow.providers.elasticsearch.log.es_task_handler import build_remote_log_io as _es_factory
+        from airflow.providers.elasticsearch.log.remote_log_factory import (
+            remote_log_io_factory as _es_factory,
+        )
 
         REMOTE_TASK_LOG, DEFAULT_REMOTE_CONN_ID = _es_factory(
             base_log_folder=BASE_LOG_FOLDER,

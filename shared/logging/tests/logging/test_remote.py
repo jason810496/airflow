@@ -19,7 +19,11 @@ from __future__ import annotations
 
 from unittest import mock
 
-from airflow_shared.logging.remote import RemoteLogStreamIO, RemoteLoggingFactoryReturn, discover_remote_log_handler
+from airflow_shared.logging.remote import (
+    RemoteLoggingFactoryReturn,
+    RemoteLogStreamIO,
+    discover_remote_log_handler,
+)
 
 
 class DummyRemoteLogIO:

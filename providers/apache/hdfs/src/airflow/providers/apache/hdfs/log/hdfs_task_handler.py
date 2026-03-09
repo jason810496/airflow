@@ -22,7 +22,7 @@ import os
 import shutil
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import attrs
@@ -75,27 +75,6 @@ class HdfsRemoteLogIO(LoggingMixin):  # noqa: D101
         else:
             messages.append(f"No logs found on hdfs for ti={ti}")
         return messages, logs
-
-
-def build_remote_log_io(
-    *,
-    base_log_folder: str,
-    remote_base_log_folder: str,
-    delete_local_copy: bool,
-    remote_task_handler_kwargs: dict[str, Any],
-) -> tuple[HdfsRemoteLogIO, str | None]:
-    """Build an HdfsRemoteLogIO instance from Airflow configuration."""
-    remote_log_io = HdfsRemoteLogIO(
-        **(
-            {
-                "base_log_folder": base_log_folder,
-                "remote_base": urlsplit(remote_base_log_folder).path,
-                "delete_local_copy": delete_local_copy,
-            }
-            | remote_task_handler_kwargs
-        )
-    )
-    return remote_log_io, WebHDFSHook.default_conn_name
 
 
 class HdfsTaskHandler(FileTaskHandler, LoggingMixin):

@@ -14,9 +14,30 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
 from __future__ import annotations
 
-from airflow._shared.logging.remote import RemoteLoggingFactoryReturn, RemoteLogIO, RemoteLogStreamIO
+from typing import Any
 
-__all__ = ["RemoteLogIO", "RemoteLogStreamIO", "RemoteLoggingFactoryReturn"]
+
+def remote_log_io_factory(
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_copy: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+) -> tuple[Any, str | None]:
+    """Build an OSSRemoteLogIO instance from Airflow configuration."""
+    from airflow.providers.alibaba.cloud.hooks.oss import OSSHook
+    from airflow.providers.alibaba.cloud.log.oss_task_handler import OSSRemoteLogIO
+
+    remote_log_io = OSSRemoteLogIO(
+        **(
+            {
+                "base_log_folder": base_log_folder,
+                "remote_base": remote_base_log_folder,
+                "delete_local_copy": delete_local_copy,
+            }
+            | remote_task_handler_kwargs
+        )
+    )
+    return remote_log_io, OSSHook.default_conn_name
