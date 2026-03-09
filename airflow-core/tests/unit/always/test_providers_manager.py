@@ -195,6 +195,16 @@ class TestProviderManager:
         logging_class_names = list(provider_manager.logging_class_names)
         assert len(logging_class_names) > 5
 
+    def test_remote_logging_factories(self):
+        provider_manager = ProvidersManager()
+        factories = provider_manager.remote_logging_factories
+        assert isinstance(factories, dict)
+        assert len(factories) >= 1
+        for scheme, factory_path in factories.items():
+            assert isinstance(scheme, str)
+            assert isinstance(factory_path, str)
+            assert "build_remote_log_io" in factory_path
+
     def test_secrets_backends(self):
         provider_manager = ProvidersManager()
         secrets_backends_class_names = list(provider_manager.secrets_backend_class_names)

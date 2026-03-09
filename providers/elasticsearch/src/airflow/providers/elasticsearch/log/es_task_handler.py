@@ -553,6 +553,34 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
         return "\n".join(self._format_msg(hits[i]) for i in range(log_range))
 
 
+def build_remote_log_io(
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_copy: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+) -> tuple[ElasticsearchRemoteLogIO, None]:
+    """Build an ElasticsearchRemoteLogIO instance from Airflow configuration."""
+    es_host: str = conf.get("elasticsearch", "HOST")
+    remote_log_io = ElasticsearchRemoteLogIO(
+        host=es_host,
+        target_index=conf.get("elasticsearch", "TARGET_INDEX"),
+        write_stdout=conf.getboolean("elasticsearch", "WRITE_STDOUT"),
+        write_to_es=conf.getboolean("elasticsearch", "WRITE_TO_ES"),
+        offset_field=conf.get("elasticsearch", "OFFSET_FIELD"),
+        host_field=conf.get("elasticsearch", "HOST_FIELD"),
+        base_log_folder=base_log_folder,
+        delete_local_copy=delete_local_copy,
+        json_format=conf.getboolean("elasticsearch", "JSON_FORMAT"),
+        log_id_template=conf.get(
+            "elasticsearch",
+            "log_id_template",
+            fallback="{dag_id}-{task_id}-{run_id}-{map_index}-{try_number}",
+        ),
+    )
+    return remote_log_io, None
+
+
 @attrs.define(kw_only=True)
 class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
     json_format: bool = False

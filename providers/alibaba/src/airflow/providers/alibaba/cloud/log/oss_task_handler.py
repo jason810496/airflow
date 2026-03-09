@@ -22,7 +22,7 @@ import os
 import shutil
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import attrs
 
@@ -154,6 +154,27 @@ class OSSRemoteLogIO(LoggingMixin):  # noqa: D101
             )
             return False
         return True
+
+
+def build_remote_log_io(
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_copy: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+) -> tuple[OSSRemoteLogIO, str | None]:
+    """Build an OSSRemoteLogIO instance from Airflow configuration."""
+    remote_log_io = OSSRemoteLogIO(
+        **(
+            {
+                "base_log_folder": base_log_folder,
+                "remote_base": remote_base_log_folder,
+                "delete_local_copy": delete_local_copy,
+            }
+            | remote_task_handler_kwargs
+        )
+    )
+    return remote_log_io, OSSHook.default_conn_name
 
 
 class OSSTaskHandler(FileTaskHandler, LoggingMixin):

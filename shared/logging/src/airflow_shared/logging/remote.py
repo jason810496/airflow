@@ -74,6 +74,10 @@ class RemoteLogStreamIO(RemoteLogIO, Protocol):
         ...
 
 
+RemoteLoggingFactoryReturn: TypeAlias = tuple["RemoteLogIO | RemoteLogStreamIO | None", "str | None"]
+"""Return type for remote logging factory callables: (remote_log_io, default_conn_id)."""
+
+
 def discover_remote_log_handler(
     logging_class_path: str,
     fallback_path: str,

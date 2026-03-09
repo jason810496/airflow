@@ -17,6 +17,6 @@
 
 from __future__ import annotations
 
-from airflow._shared.logging.remote import RemoteLogIO, RemoteLogStreamIO
+from airflow._shared.logging.remote import RemoteLogIO, RemoteLogStreamIO, RemoteLoggingFactoryReturn
 
-__all__ = ["RemoteLogIO", "RemoteLogStreamIO"]
+__all__ = ["RemoteLogIO", "RemoteLogStreamIO", "RemoteLoggingFactoryReturn"]

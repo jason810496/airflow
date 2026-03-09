@@ -22,7 +22,7 @@ import os
 import pathlib
 import shutil
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import attrs
 
@@ -163,6 +163,27 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
                 logs.append(self.s3_read(key, return_error=True))
             return messages, logs
         return messages, None
+
+
+def build_remote_log_io(
+    *,
+    base_log_folder: str,
+    remote_base_log_folder: str,
+    delete_local_copy: bool,
+    remote_task_handler_kwargs: dict[str, Any],
+) -> tuple[S3RemoteLogIO, str | None]:
+    """Build an S3RemoteLogIO instance from Airflow configuration."""
+    remote_log_io = S3RemoteLogIO(
+        **(
+            {
+                "base_log_folder": base_log_folder,
+                "remote_base": remote_base_log_folder,
+                "delete_local_copy": delete_local_copy,
+            }
+            | remote_task_handler_kwargs
+        )
+    )
+    return remote_log_io, S3Hook.default_conn_name
 
 
 class S3TaskHandler(FileTaskHandler, LoggingMixin):

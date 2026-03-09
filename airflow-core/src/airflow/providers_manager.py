@@ -421,6 +421,7 @@ class ProvidersManager(LoggingMixin):
         self._cli_command_provider_name_set: set[str] = set()
         self._extra_link_class_name_set: set[str] = set()
         self._logging_class_name_set: set[str] = set()
+        self._remote_logging_factory_dict: dict[str, str] = {}
         self._auth_manager_class_name_set: set[str] = set()
         self._auth_manager_without_check_set: set[tuple[str, str]] = set()
         self._secrets_backend_class_name_set: set[str] = set()
@@ -559,6 +560,12 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of providers logging information."""
         self.initialize_providers_list()
         self._discover_logging()
+
+    @provider_info_cache("remote_logging")
+    def initialize_providers_remote_logging(self):
+        """Lazy initialization of providers remote logging factories."""
+        self.initialize_providers_list()
+        self._discover_remote_logging()
 
     @provider_info_cache("secrets_backends")
     def initialize_providers_secrets_backends(self):
@@ -1227,6 +1234,16 @@ class ProvidersManager(LoggingMixin):
                     if _correctness_check(provider_package, logging_class_name, provider):
                         self._logging_class_name_set.add(logging_class_name)
 
+    def _discover_remote_logging(self) -> None:
+        """Retrieve all remote logging factories defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            for entry in provider.data.get("remote-logging", []):
+                factory_path = entry.get("factory")
+                schemes = entry.get("schemes", [])
+                if factory_path and _correctness_check(provider_package, factory_path, provider):
+                    for scheme in schemes:
+                        self._remote_logging_factory_dict[scheme] = factory_path
+
     def _discover_secrets_backends(self) -> None:
         """Retrieve all secrets backends defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
@@ -1397,6 +1414,12 @@ class ProvidersManager(LoggingMixin):
         """Returns set of log task handlers class names."""
         self.initialize_providers_logging()
         return sorted(self._logging_class_name_set)
+
+    @property
+    def remote_logging_factories(self) -> dict[str, str]:
+        """Returns mapping of URL scheme to remote logging factory import path."""
+        self.initialize_providers_remote_logging()
+        return dict(self._remote_logging_factory_dict)
 
     @property
     def secrets_backend_class_names(self) -> list[str]:

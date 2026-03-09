@@ -519,6 +519,31 @@
                 "type": "string"
             }
         },
+        "remote-logging": {
+            "type": "array",
+            "description": "Remote logging backends provided by this package, mapping URL schemes to RemoteLogIO factory callables",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "schemes": {
+                        "type": "array",
+                        "description": "List of URL schemes this backend handles (e.g. s3, gs, wasb)",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "factory": {
+                        "type": "string",
+                        "description": "Import path to a factory callable that builds a RemoteLogIO instance"
+                    }
+                },
+                "required": [
+                    "schemes",
+                    "factory"
+                ],
+                "additionalProperties": false
+            }
+        },
         "auth-backends": {
             "type": "array",
             "description": "API Auth Backend module names",

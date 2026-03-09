@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from unittest import mock
 
-from airflow_shared.logging.remote import RemoteLogStreamIO, discover_remote_log_handler
+from airflow_shared.logging.remote import RemoteLogStreamIO, RemoteLoggingFactoryReturn, discover_remote_log_handler
 
 
 class DummyRemoteLogIO:
@@ -166,3 +166,19 @@ class TestRemoteLogIOProtocol:
     def test_non_stream_handler_not_stream_io(self):
         handler = DummyRemoteLogIO()
         assert not isinstance(handler, RemoteLogStreamIO)
+
+
+class TestRemoteLoggingFactoryReturn:
+    def test_factory_return_type_alias_exists(self):
+        assert RemoteLoggingFactoryReturn is not None
+
+    def test_factory_return_compatible_with_tuple(self):
+        handler = DummyRemoteLogIO()
+        result: RemoteLoggingFactoryReturn = (handler, "my_conn_id")
+        assert result[0] is handler
+        assert result[1] == "my_conn_id"
+
+    def test_factory_return_with_none(self):
+        result: RemoteLoggingFactoryReturn = (None, None)
+        assert result[0] is None
+        assert result[1] is None

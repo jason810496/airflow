@@ -1151,6 +1151,16 @@ def get_provider_info():
             "airflow.providers.amazon.aws.log.s3_task_handler.S3TaskHandler",
             "airflow.providers.amazon.aws.log.cloudwatch_task_handler.CloudwatchTaskHandler",
         ],
+        "remote-logging": [
+            {
+                "schemes": ["s3"],
+                "factory": "airflow.providers.amazon.aws.log.s3_task_handler.build_remote_log_io",
+            },
+            {
+                "schemes": ["cloudwatch"],
+                "factory": "airflow.providers.amazon.aws.log.cloudwatch_task_handler.build_remote_log_io",
+            },
+        ],
         "config": {
             "aws": {
                 "description": "This section contains settings for Amazon Web Services (AWS) integration.",
