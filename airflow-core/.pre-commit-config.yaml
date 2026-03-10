@@ -401,6 +401,16 @@ repos:
           ^src/airflow/utils/trigger_rule\.py$|
           ^src/airflow/utils/json\.py$|
           ^src/airflow/utils/types\.py$
+      - id: update-timetable-schema
+        name: Update timetable types in serialization schema
+        entry: ../scripts/ci/prek/update_timetable_schema.py
+        language: python
+        files:
+          (?x)
+          ^src/airflow/serialization/schema\.json$|
+          ^src/airflow/serialization/encoders\.py$|
+          ^src/airflow/timetables/
+        pass_filenames: false
         ## ONLY ADD PREK HOOKS HERE THAT REQUIRE CI IMAGE
       - id: check-schema-defaults
         name: Check schema defaults match server-side defaults
