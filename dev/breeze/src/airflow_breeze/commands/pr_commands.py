@@ -620,13 +620,12 @@ def _fetch_prs_by_numbers_graphql(
             )
 
         query = (
-            f'query {{\n  repository(owner: "{owner}", name: "{repo}") {{\n'
-            + "\n".join(pr_fields)
-            + "\n  }\n}"
+            "query($owner: String!, $repo: String!) {\n"
+            "  repository(owner: $owner, name: $repo) {\n" + "\n".join(pr_fields) + "\n  }\n}"
         )
 
         try:
-            data = _graphql_request(token, query, {})
+            data = _graphql_request(token, query, {"owner": owner, "repo": repo})
         except SystemExit:
             continue
 
