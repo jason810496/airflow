@@ -160,6 +160,20 @@
         "type": "object"
       }
     },
+    "timetable": {
+      "type": "object",
+      "properties": {
+        "__type": {
+          "type": "string"
+        },
+        "__var": { "$ref": "#/definitions/dict" }
+      },
+      "required": [
+        "__type",
+        "__var"
+      ],
+      "additionalProperties": false
+    },
     "dag": {
       "type": "object",
       "properties": {
@@ -168,13 +182,7 @@
         "tasks": {  "$ref": "#/definitions/tasks" },
         "timezone": { "$ref": "#/definitions/timezone" },
         "owner_links": { "type": "object" },
-        "timetable": {
-          "type": "object",
-          "properties": {
-            "type": { "type": "string" },
-            "value": { "$ref": "#/definitions/dict" }
-          }
-        },
+        "timetable": { "$ref": "#/definitions/timetable" },
         "catchup": { "type": "boolean", "default": false },
         "allowed_run_types": {
           "anyOf": [
