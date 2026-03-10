@@ -531,6 +531,150 @@ def _fetch_commits_behind_batch(token: str, github_repository: str, prs: list[PR
     return result
 
 
+def _fetch_notifications(token: str, github_repository: str) -> list[int]:
+    """Fetch PR numbers from the authenticated user's notification inbox for the given repo.
+
+    Returns PR numbers ordered by most recent notification first.
+    """
+    import requests
+
+    pr_numbers: list[int] = []
+    seen: set[int] = set()
+    page = 1
+    per_page = 50
+
+    while True:
+        response = requests.get(
+            "https://api.github.com/notifications",
+            params={"per_page": str(per_page), "page": str(page), "all": "true"},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=60,
+        )
+        if response.status_code != 200:
+            get_console().print(
+                f"[error]Failed to fetch notifications: {response.status_code} {response.text}[/]"
+            )
+            sys.exit(1)
+
+        notifications = response.json()
+        if not notifications:
+            break
+
+        for notification in notifications:
+            repo_name = notification.get("repository", {}).get("full_name", "")
+            if repo_name != github_repository:
+                continue
+            subject = notification.get("subject", {})
+            if subject.get("type") != "PullRequest":
+                continue
+            url = subject.get("url", "")
+            if url:
+                try:
+                    pr_num = int(url.rsplit("/", 1)[-1])
+                    if pr_num not in seen:
+                        pr_numbers.append(pr_num)
+                        seen.add(pr_num)
+                except (ValueError, IndexError):
+                    pass
+
+        if len(notifications) < per_page:
+            break
+        page += 1
+
+    return pr_numbers
+
+
+def _fetch_prs_by_numbers_graphql(
+    token: str,
+    github_repository: str,
+    pr_numbers: list[int],
+    labels: tuple[str, ...],
+    filter_user: str | None,
+    batch_size: int,
+) -> list[PRData]:
+    """Fetch specific PRs by number via batched GraphQL, keeping only open non-draft PRs.
+
+    Returns PRs in the same order as *pr_numbers*, limited to *batch_size* results.
+    """
+    owner, repo = github_repository.split("/", 1)
+    chunk_size = 50
+    all_prs: dict[int, PRData] = {}
+    collected = 0
+
+    for chunk_start in range(0, len(pr_numbers), chunk_size):
+        if collected >= batch_size:
+            break
+        chunk = pr_numbers[chunk_start : chunk_start + chunk_size]
+
+        pr_fields = []
+        for num in chunk:
+            alias = f"pr{num}"
+            pr_fields.append(
+                f"    {alias}: pullRequest(number: {num}) {{\n"
+                f"      number title body url createdAt updatedAt id isDraft state\n"
+                f"      author {{ login }}\n"
+                f"      authorAssociation baseRefName mergeable\n"
+                f"      labels(first: 20) {{ nodes {{ name }} }}\n"
+                f"      commits(last: 1) {{ nodes {{ commit {{ oid statusCheckRollup {{ state }} }} }} }}\n"
+                f"    }}"
+            )
+
+        query = (
+            "query($owner: String!, $repo: String!) {\n"
+            "  repository(owner: $owner, name: $repo) {\n" + "\n".join(pr_fields) + "\n  }\n}"
+        )
+
+        try:
+            data = _graphql_request(token, query, {"owner": owner, "repo": repo})
+        except SystemExit:
+            continue
+
+        repo_data = data.get("repository", {})
+        for num in chunk:
+            if collected >= batch_size:
+                break
+            alias = f"pr{num}"
+            node = repo_data.get(alias)
+            if not node:
+                continue
+
+            if node.get("state") != "OPEN" or node.get("isDraft", False):
+                continue
+
+            author = node.get("author") or {}
+            author_login = author.get("login", "ghost")
+            if filter_user and author_login != filter_user:
+                continue
+
+            pr_labels = [lbl["name"] for lbl in (node.get("labels") or {}).get("nodes", []) if lbl]
+            if labels and not all(lbl in pr_labels for lbl in labels):
+                continue
+
+            head_sha, checks_state = _extract_basic_check_info(node)
+            all_prs[num] = PRData(
+                number=node["number"],
+                title=node["title"],
+                body=node.get("body") or "",
+                url=node["url"],
+                created_at=node["createdAt"],
+                updated_at=node["updatedAt"],
+                node_id=node["id"],
+                author_login=author_login,
+                author_association=node.get("authorAssociation", "NONE"),
+                head_sha=head_sha,
+                base_ref=node.get("baseRefName", "main"),
+                check_summary="",
+                checks_state=checks_state,
+                failed_checks=[],
+                commits_behind=0,
+                mergeable=node.get("mergeable", "UNKNOWN"),
+                labels=pr_labels,
+            )
+            collected += 1
+
+    return [all_prs[num] for num in pr_numbers if num in all_prs]
+
+
 def _fetch_prs_graphql(
     token: str,
     github_repository: str,
@@ -1200,10 +1344,10 @@ def _approve_workflow_runs(token: str, github_repository: str, pending_runs: lis
 )
 @click.option(
     "--sort",
-    type=click.Choice(["created-asc", "created-desc", "updated-asc", "updated-desc"]),
+    type=click.Choice(["created-asc", "created-desc", "updated-asc", "updated-desc", "notification-inbox"]),
     default="created-desc",
     show_default=True,
-    help="Sort order for PR search results.",
+    help="Sort order for PR search results. 'notification-inbox' orders by your GitHub notification inbox.",
 )
 @click.option(
     "--author",
@@ -1277,6 +1421,21 @@ def auto_triage(
     if pr_number:
         get_console().print(f"[info]Fetching PR #{pr_number} via GraphQL...[/]")
         all_prs = [_fetch_single_pr_graphql(token, github_repository, pr_number)]
+    elif sort == "notification-inbox":
+        get_console().print("[info]Fetching notification inbox to determine PR order...[/]")
+        notification_pr_numbers = _fetch_notifications(token, github_repository)
+        get_console().print(
+            f"[info]Found {len(notification_pr_numbers)} PR "
+            f"{'notifications' if len(notification_pr_numbers) != 1 else 'notification'} "
+            f"in inbox. Fetching PR details...[/]"
+        )
+        all_prs = _fetch_prs_by_numbers_graphql(
+            token, github_repository, notification_pr_numbers, labels, filter_user, batch_size
+        )
+        get_console().print(
+            f"[info]Fetched {len(all_prs)} open, non-draft "
+            f"{'PRs' if len(all_prs) != 1 else 'PR'} from notification inbox.[/]"
+        )
     else:
         get_console().print("[info]Fetching PRs via GraphQL...[/]")
         all_prs = _fetch_prs_graphql(token, github_repository, labels, filter_user, sort, batch_size)
