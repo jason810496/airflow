@@ -22,6 +22,7 @@ import os
 import socket
 import subprocess
 import time
+from base64 import b64encode
 from typing import Any
 
 import pytest
@@ -208,6 +209,12 @@ class TestOtelIntegration:
         # This prevents flaky test failures caused by transient DNS resolution issues
         # during scheduler handoff (see https://github.com/apache/airflow/issues/61070).
         wait_for_otel_collector(otel_host, otel_port)
+
+        # The pytest plugin strips AIRFLOW__*__* env vars (including the JWT secret set
+        # by Breeze). Both the scheduler and api-server subprocesses must share the same
+        # secret; otherwise each generates its own random key and token verification fails.
+        os.environ["AIRFLOW__API_AUTH__JWT_SECRET"] = b64encode(os.urandom(16)).decode("utf-8")
+        os.environ["AIRFLOW__API_AUTH__JWT_ISSUER"] = "airflow"
 
         os.environ["AIRFLOW__TRACES__OTEL_ON"] = "True"
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
