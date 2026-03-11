@@ -292,6 +292,7 @@ def extract_modules_from_yaml(
         "secrets-backends": ("secret", "secrets", "secrets backend"),
         "logging": ("logging", "logging", "log handler"),
         "executors": ("executor", "executors", "executor"),
+        "auth-managers": ("auth-manager", "auth-managers", "auth manager"),
     }
     for yaml_key, (mod_type, category, desc_suffix) in FQCN_SECTIONS.items():
         for class_path in provider_yaml.get(yaml_key, []):
