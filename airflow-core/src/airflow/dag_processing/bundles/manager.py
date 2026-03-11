@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from itsdangerous import URLSafeSerializer
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 
 from airflow._shared.module_loading import import_string
 from airflow.configuration import conf
@@ -192,7 +192,12 @@ def reassign_dags_with_unconfigured_bundles(
 
     count = session.execute(
         update(DagModel)
-        .where(DagModel.bundle_name.notin_(configured_names))
+        .where(
+            or_(
+                DagModel.bundle_name.notin_(configured_names),
+                DagModel.bundle_name.is_(None),
+            )
+        )
         .values(bundle_name=default_bundle)
     ).rowcount
 
