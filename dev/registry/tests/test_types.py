@@ -37,7 +37,7 @@ class TestModuleTypes:
     def test_all_type_ids_lowercase_alphanumeric(self):
         for type_id in ALL_TYPE_IDS:
             assert type_id == type_id.lower(), f"{type_id} is not lowercase"
-            assert type_id.replace("_", "").isalnum(), f"{type_id} contains invalid chars"
+            assert type_id.replace("_", "").replace("-", "").isalnum(), f"{type_id} contains invalid chars"
 
     def test_every_type_has_required_fields(self):
         for type_id, info in MODULE_TYPES.items():

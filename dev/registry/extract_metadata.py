@@ -202,6 +202,7 @@ class Provider:
             "secret": 0,
             "logging": 0,
             "executor": 0,
+            "auth-manager": 0,
             "bundle": 0,
             "decorator": 0,
         }

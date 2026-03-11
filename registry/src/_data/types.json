@@ -50,6 +50,11 @@
     "icon": "E"
   },
   {
+    "id": "auth-manager",
+    "label": "Auth Managers",
+    "icon": "A"
+  },
+  {
     "id": "decorator",
     "label": "Decorators",
     "icon": "@"

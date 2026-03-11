@@ -548,6 +548,7 @@ def discover_classes_from_provider(
                 "secrets-backends": "secrets",
                 "logging": "logging",
                 "executors": "executors",
+                "auth-managers": "auth-managers",
             }
 
             discovered.append(

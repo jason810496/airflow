@@ -95,6 +95,13 @@ MODULE_TYPES: dict[str, dict] = {
         "label": "Executors",
         "icon": "E",
     },
+    "auth-manager": {
+        "yaml_key": "auth-managers",
+        "level": "flat",
+        "suffixes": [],
+        "label": "Auth Managers",
+        "icon": "A",
+    },
     "decorator": {
         "yaml_key": "task-decorators",
         "level": "flat",
@@ -136,6 +143,7 @@ CLASS_LEVEL_SECTIONS: dict[str, str] = {
     "secrets-backends": "secret",
     "logging": "logging",
     "executors": "executor",
+    "auth-managers": "auth-manager",
 }
 
 # All type ids, ordered consistently.
