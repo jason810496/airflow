@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
     from upath.types import JoinablePathLike
 
-    _classmethod_or_method = classmethod
+    _classmethod_or_method = classmethod  # type: ignore[misc, assignment]
 
 
 class _TrackingFileWrapper:
@@ -119,7 +119,7 @@ class ObjectStoragePath(ProxyUPath):
         self._conn_id = storage_options.pop("conn_id", None)
         super().__init__(*args, protocol=protocol, **storage_options)
 
-    @_classmethod_or_method
+    @_classmethod_or_method  # type: ignore[arg-type]
     def _from_upath(cls_or_self, upath, /):
         """Wrap a UPath, propagating conn_id from the calling instance."""
         is_instance = isinstance(cls_or_self, ObjectStoragePath)
