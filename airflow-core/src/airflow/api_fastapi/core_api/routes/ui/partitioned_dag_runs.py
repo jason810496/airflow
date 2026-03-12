@@ -87,7 +87,8 @@ def get_partitioned_dag_runs(
 
         if dag_info is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Dag with id {dag_id.value} was not found")
-        if dag_info.timetable_summary != "Partitioned Asset":
+        # Both Producer (Partitioned Asset) and Consumer (Asset) DAGs can have partitioned runs
+        if dag_info.timetable_summary not in ("Partitioned Asset", "Asset"):
             return PartitionedDagRunCollectionResponse(partitioned_dag_runs=[], total=0)
 
         required_count = dag_info.required_count

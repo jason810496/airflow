@@ -20,7 +20,13 @@ import pendulum
 import pytest
 from sqlalchemy import select
 
-from airflow.models.asset import AssetEvent, AssetModel, AssetPartitionDagRun, PartitionedAssetKeyLog
+from airflow.models.asset import (
+    AssetEvent,
+    AssetModel,
+    AssetPartitionDagRun,
+    DagScheduleAssetReference,
+    PartitionedAssetKeyLog,
+)
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.sdk.definitions.asset import Asset
 from airflow.sdk.definitions.timetables.assets import PartitionedAssetTimetable
@@ -61,6 +67,68 @@ class TestGetPartitionedDagRuns:
             resp = test_client.get("/partitioned_dag_runs?dag_id=normal&has_created_dag_run_id=false")
         assert resp.status_code == 200
         assert resp.json() == {"partitioned_dag_runs": [], "total": 0, "asset_expressions": None}
+
+    def test_consumer_dag_returns_partitioned_runs(self, test_client, dag_maker, session):
+        """Consumer DAG (Asset timetable) with AssetPartitionDagRun should return partitioned runs."""
+        with dag_maker(
+            dag_id="consumer_dag",
+            schedule=[Asset(uri="s3://bucket/consumer_asset", name="consumer_asset")],
+            serialized=True,
+        ):
+            EmptyOperator(task_id="t")
+        dag_maker.create_dagrun()
+        dag_maker.sync_dagbag_to_db()
+
+        assets = {
+            a.uri: a
+            for a in session.scalars(
+                select(AssetModel).where(AssetModel.uri == "s3://bucket/consumer_asset")
+            )
+        }
+        asset_id = list(assets.values())[0].id
+
+        # Ensure Consumer DAG has schedule asset reference (created by dag sync in real flow)
+        existing = session.scalar(
+            select(DagScheduleAssetReference).where(
+                DagScheduleAssetReference.dag_id == "consumer_dag",
+                DagScheduleAssetReference.asset_id == asset_id,
+            )
+        )
+        if existing is None:
+            session.add(DagScheduleAssetReference(dag_id="consumer_dag", asset_id=asset_id))
+            session.flush()
+
+        pdr = AssetPartitionDagRun(
+            target_dag_id="consumer_dag",
+            partition_key="2024-06-01",
+            created_dag_run_id=None,
+        )
+        session.add(pdr)
+        session.flush()
+
+        event = AssetEvent(asset_id=asset_id, timestamp=pendulum.now())
+        session.add(event)
+        session.flush()
+        session.add(
+            PartitionedAssetKeyLog(
+                asset_id=asset_id,
+                asset_event_id=event.id,
+                asset_partition_dag_run_id=pdr.id,
+                source_partition_key="2024-06-01",
+                target_dag_id="consumer_dag",
+                target_partition_key="2024-06-01",
+            )
+        )
+        session.commit()
+
+        resp = test_client.get("/partitioned_dag_runs?dag_id=consumer_dag&has_created_dag_run_id=false")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        assert len(body["partitioned_dag_runs"]) == 1
+        assert body["partitioned_dag_runs"][0]["state"] == "pending"
+        assert body["partitioned_dag_runs"][0]["total_received"] == 1
+        assert body["partitioned_dag_runs"][0]["total_required"] == 1
 
     @pytest.mark.parametrize(
         (

@@ -103,24 +103,22 @@ export const AssetSchedule = ({ assetExpression, dagId, timetablePartitioned, ti
     );
   }
 
-  if (timetablePartitioned) {
-    const pendingCount = (nextRun?.pending_partition_count as number | undefined) ?? 0;
-
-    if (pendingCount === 0) {
-      return (
-        <HStack>
-          <FiDatabase style={{ display: "inline", flexShrink: 0 }} />
-          <Text>{translate("common:runTypes.asset_triggered")}</Text>
-        </HStack>
-      );
-    }
-
-    if (pendingCount > 1) {
-      return <PartitionSchedule dagId={dagId} isLoading={isLoading} pendingCount={pendingCount} />;
-    }
-
-    // pendingCount === 1: fall through to the standard asset popover below
+  // Both Producer (timetablePartitioned) and Consumer (asset-based) DAGs can have partitioned runs
+  const pendingCount = (nextRun?.pending_partition_count as number | undefined) ?? 0;
+  if (pendingCount > 1) {
+    return <PartitionSchedule dagId={dagId} isLoading={isLoading} pendingCount={pendingCount} />;
   }
+
+  if (timetablePartitioned && pendingCount === 0) {
+    return (
+      <HStack>
+        <FiDatabase style={{ display: "inline", flexShrink: 0 }} />
+        <Text>{translate("common:runTypes.asset_triggered")}</Text>
+      </HStack>
+    );
+  }
+
+  // pendingCount === 1 or Consumer with 0 pending: fall through to asset popover below
 
   const [asset] = nextRunEvents;
 

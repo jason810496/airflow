@@ -52,11 +52,10 @@ def next_run_assets(
         AssetEvent.timestamp >= latest_run.logical_date if latest_run and latest_run.logical_date else true()
     )
 
-    pending_partition_count: int | None = None
-
-    queued_expr: ColumnElement[int]
-    if is_partitioned := dag_model.timetable_summary == "Partitioned Asset":
-        pending_partition_count = session.scalar(
+    # Both Producer (Partitioned Asset) and Consumer (Asset) DAGs can have pending partitioned runs
+    has_asset_schedule = dag_model.timetable_summary in ("Partitioned Asset", "Asset")
+    pending_partition_count: int | None = (
+        session.scalar(
             select(func.count())
             .select_from(AssetPartitionDagRun)
             .where(
@@ -64,6 +63,12 @@ def next_run_assets(
                 AssetPartitionDagRun.created_dag_run_id.is_(None),
             )
         )
+        if has_asset_schedule
+        else None
+    )
+
+    queued_expr: ColumnElement[int]
+    if is_partitioned := dag_model.timetable_summary == "Partitioned Asset":
         queued_expr = case(
             (
                 exists(
