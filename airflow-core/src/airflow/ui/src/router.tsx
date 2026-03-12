@@ -29,6 +29,7 @@ import { Configs } from "src/pages/Configs";
 import { Connections } from "src/pages/Connections";
 import { Dag } from "src/pages/Dag";
 import { Backfills } from "src/pages/Dag/Backfills";
+import { PartitionedRuns } from "src/pages/Dag/PartitionedRuns";
 import { Calendar } from "src/pages/Dag/Calendar/Calendar";
 import { Code } from "src/pages/Dag/Code";
 import { Details as DagDetails } from "src/pages/Dag/Details";
@@ -166,6 +167,7 @@ export const routerConfig = [
         children: [
           { element: <Overview />, index: true },
           { element: <DagRuns />, path: "runs" },
+          { element: <PartitionedRuns />, path: "partitioned_runs" },
           { element: <Tasks />, path: "tasks" },
           { element: <Calendar />, path: "calendar" },
           { element: <HITLTaskInstances />, path: "required_actions" },
