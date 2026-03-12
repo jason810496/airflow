@@ -71,7 +71,7 @@ def get_partitioned_dag_runs(
         # Single query: validate Dag + get required count
         dag_info = session.execute(
             select(
-                DagModel.timetable_summary,
+                DagModel.timetable_partitioned,
                 func.count(DagScheduleAssetReference.asset_id).label("required_count"),
             )
             .outerjoin(
@@ -87,7 +87,7 @@ def get_partitioned_dag_runs(
 
         if dag_info is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"Dag with id {dag_id.value} was not found")
-        if dag_info.timetable_summary != "Partitioned Asset":
+        if not dag_info.timetable_partitioned:
             return PartitionedDagRunCollectionResponse(partitioned_dag_runs=[], total=0)
 
         required_count = dag_info.required_count

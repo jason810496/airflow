@@ -55,7 +55,7 @@ def next_run_assets(
     pending_partition_count: int | None = None
 
     queued_expr: ColumnElement[int]
-    if is_partitioned := dag_model.timetable_summary == "Partitioned Asset":
+    if is_partitioned := dag_model.timetable_partitioned:
         pending_partition_count = session.scalar(
             select(func.count())
             .select_from(AssetPartitionDagRun)
