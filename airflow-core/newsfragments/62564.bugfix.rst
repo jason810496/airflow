@@ -1,0 +1,1 @@
+Fix Partitioned Runs tab not showing on Consumer DAG DagRun page. The tab now appears for both Producer and Consumer DAGs when they have pending partitioned runs.
