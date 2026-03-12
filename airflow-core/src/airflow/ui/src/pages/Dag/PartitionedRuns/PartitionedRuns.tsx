@@ -73,15 +73,16 @@ const getColumns = (
   {
     accessorKey: "total_received",
     cell: ({ row }) =>
-      row.original.created_dag_run_id === undefined || row.original.created_dag_run_id === "" ? (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      row.original.created_dag_run_id ? (
+        <Text>{`${String(row.original.total_received)} / ${String(row.original.total_required)}`}</Text>
+      ) : (
         <AssetProgressCell
           dagId={dagId}
           partitionKey={row.original.partition_key}
           totalReceived={row.original.total_received}
           totalRequired={row.original.total_required}
         />
-      ) : (
-        <Text>{`${String(row.original.total_received)} / ${String(row.original.total_required)}`}</Text>
       ),
     enableSorting: false,
     header: translate("partitionedDagRunDetail.receivedAssetEvents"),
@@ -89,7 +90,8 @@ const getColumns = (
   {
     accessorKey: "created_dag_run_id",
     cell: ({ row: { original } }) =>
-      original.created_dag_run_id !== undefined && original.created_dag_run_id !== "" ? (
+      // eslint-disable-next-line @typescript-eslint/strict-boolean-expressions
+      original.created_dag_run_id ? (
         <Link asChild color="fg.info">
           <RouterLink to={`/dags/${original.dag_id}/runs/${original.created_dag_run_id}`}>
             {original.created_dag_run_id}
