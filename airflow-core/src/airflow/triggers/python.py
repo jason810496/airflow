@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -30,13 +31,30 @@ from airflow.triggers.base import BaseTrigger, TriggerEvent
 BASE_PYTHON_TRIGGER_CLASSPATH = "airflow.triggers.python.BasePythonTrigger"
 
 
+def _validate_trigger_callable(fn: Any) -> None:
+    """Validate that the callable accepts at least one parameter (self: BaseTrigger)."""
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"callable must have inspectable signature, got {type(fn).__name__}"
+        ) from None
+    params = list(sig.parameters)
+    if len(params) < 1:
+        raise ValueError(
+            f"callable must accept at least one parameter (self: BaseTrigger), "
+            f"got {len(params)} parameters: {fn!r}"
+        )
+
+
 class BasePythonTrigger(BaseTrigger):
     """
     Trigger that serializes a Python callable with dill.
 
     Unlike classpath-based triggers, BasePythonTrigger can run callables defined
     in DAG code (bundle-aware). The callable must be an async generator that
-    yields TriggerEvent instances.
+    yields TriggerEvent instances and accept at least one parameter (self)
+    for the trigger instance.
 
     The triggerer must run with bundle context when deserializing so that
     imports in the callable resolve correctly.
@@ -46,6 +64,8 @@ class BasePythonTrigger(BaseTrigger):
         super().__init__(**kwargs)
         self._callable = callable
         self.callable_b64 = callable_b64
+        if callable is not None:
+            _validate_trigger_callable(callable)
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
         """Return classpath and kwargs with callable serialized as base64-encoded dill bytes."""
@@ -61,7 +81,8 @@ class BasePythonTrigger(BaseTrigger):
         elif self.callable_b64 is not None:
             callable_bytes = base64.b64decode(self.callable_b64.encode("ascii"))
             fn = dill.loads(callable_bytes)
+            _validate_trigger_callable(fn)
         else:
             raise ValueError("callable_b64 not set; trigger was not properly deserialized")
-        async for event in fn():
+        async for event in fn(self):
             yield event

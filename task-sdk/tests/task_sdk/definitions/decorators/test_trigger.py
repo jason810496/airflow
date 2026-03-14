@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from airflow.triggers.base import TriggerEvent
+from airflow.triggers.base import BaseTrigger, TriggerEvent
 from airflow.triggers.python import BASE_PYTHON_TRIGGER_CLASSPATH, BasePythonTrigger
 from airflow.sdk import trigger
 
@@ -29,7 +29,7 @@ class TestTriggerDecorator:
         """Test @trigger returns BasePythonTrigger instance."""
 
         @trigger
-        async def my_trigger():
+        async def my_trigger(self: BaseTrigger):
             yield TriggerEvent({"done": True})
 
         assert isinstance(my_trigger, BasePythonTrigger)
@@ -41,7 +41,7 @@ class TestTriggerDecorator:
         """Test @trigger() returns decorator that produces BasePythonTrigger."""
 
         @trigger()
-        async def my_trigger():
+        async def my_trigger(self: BaseTrigger):
             yield TriggerEvent({"step": 1})
 
         assert isinstance(my_trigger, BasePythonTrigger)
@@ -53,7 +53,7 @@ class TestTriggerDecorator:
         """Test decorated trigger yields events when run."""
 
         @trigger
-        async def my_trigger():
+        async def my_trigger(self: BaseTrigger):
             yield TriggerEvent({"payload": "test"})
 
         events = []

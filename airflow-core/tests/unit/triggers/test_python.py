@@ -19,16 +19,16 @@ from __future__ import annotations
 
 import pytest
 
-from airflow.triggers.base import TriggerEvent
+from airflow.triggers.base import BaseTrigger, TriggerEvent
 from airflow.triggers.python import BASE_PYTHON_TRIGGER_CLASSPATH, BasePythonTrigger
 
 
-async def _simple_trigger():
+async def _simple_trigger(self: BaseTrigger):
     """Simple async generator that yields one event."""
     yield TriggerEvent({"done": True})
 
 
-async def _multi_event_trigger():
+async def _multi_event_trigger(self: BaseTrigger):
     """Async generator that yields multiple events."""
     yield TriggerEvent({"step": 1})
     yield TriggerEvent({"step": 2})
@@ -95,3 +95,11 @@ class TestBasePythonTrigger:
         with pytest.raises(ValueError, match="callable_b64 not set"):
             async for _ in trigger.run():
                 pass
+
+    def test_raises_when_callable_has_no_self_parameter(self):
+        """Test that callable without self parameter raises ValueError."""
+        async def no_self():
+            yield TriggerEvent({})
+
+        with pytest.raises(ValueError, match="must accept at least one parameter"):
+            BasePythonTrigger(callable=no_self)

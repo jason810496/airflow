@@ -43,10 +43,11 @@ def trigger(
     """
     Decorator factory that creates a BasePythonTrigger from an async generator.
 
-    Use with DeferrableOperators::
+    The callable must accept at least one parameter (self: BaseTrigger) for the
+    trigger instance. Use with DeferrableOperators::
 
         @trigger
-        async def my_trigger():
+        async def my_trigger(self: BaseTrigger):
             await asyncio.sleep(5)
             yield TriggerEvent({"done": True})
 
