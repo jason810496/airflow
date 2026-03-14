@@ -67,6 +67,7 @@ services:
       - ../../../providers/cncf/kubernetes/tests:/opt/airflow/providers/cncf/kubernetes/tests
       - ../../../providers/cohere/tests:/opt/airflow/providers/cohere/tests
       - ../../../providers/common/ai/tests:/opt/airflow/providers/common/ai/tests
+      - ../../../providers/common/builder/tests:/opt/airflow/providers/common/builder/tests
       - ../../../providers/common/compat/tests:/opt/airflow/providers/common/compat/tests
       - ../../../providers/common/io/tests:/opt/airflow/providers/common/io/tests
       - ../../../providers/common/messaging/tests:/opt/airflow/providers/common/messaging/tests
