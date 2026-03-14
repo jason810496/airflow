@@ -25,6 +25,7 @@ __deprecated_classes = {
         "task": "airflow.sdk.task",
         "task_group": "airflow.sdk.task_group",
         "teardown": "airflow.sdk.teardown",
+        "trigger": "airflow.sdk.trigger",
     },
     "base": {
         "DecoratedMappedOperator": "airflow.sdk.bases.decorator.DecoratedMappedOperator",

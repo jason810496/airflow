@@ -23,6 +23,7 @@ from airflow.sdk.definitions.dag import dag
 from airflow.sdk.definitions.decorators.condition import run_if, skip_if
 from airflow.sdk.definitions.decorators.setup_teardown import setup_task, teardown_task
 from airflow.sdk.definitions.decorators.task_group import task_group
+from airflow.sdk.definitions.decorators.trigger import trigger
 from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
 
 # Please keep this in sync with the .pyi's __all__.
@@ -32,6 +33,7 @@ __all__ = [
     "dag",
     "task",
     "task_group",
+    "trigger",
     "setup",
     "teardown",
 ]
