@@ -27,6 +27,8 @@ from io import StringIO
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.command import check
+from alembic.command import downgrade as alembic_downgrade
+from alembic.command import upgrade as alembic_upgrade
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.runtime.environment import EnvironmentContext
@@ -560,3 +562,44 @@ class TestAutocommitEngineForMySQL:
         assert mock_settings.prepare_engine_args == original_prepare
         assert mock_settings.dispose_orm.call_count == 2
         assert mock_settings.configure_orm.call_count == 2
+
+
+def _get_stairway_revisions():
+    """
+    Get all migration revisions sorted from first to last.
+
+    This only reads the migration scripts directory and does not require a database connection.
+    """
+    config = Config()
+    config.set_main_option("script_location", "airflow:migrations")
+    revisions_dir = ScriptDirectory.from_config(config)
+    revisions = list(revisions_dir.walk_revisions("base", "heads"))
+    revisions.reverse()
+    return revisions
+
+
+class TestMigrationsStairway:
+    """
+    Stairway test for Alembic migrations.
+
+    For each migration revision, upgrades to it, downgrades back to the
+    previous revision, then upgrades again. This catches forgotten downgrade
+    methods, undeleted data types in downgrade methods, typos and many other
+    errors in migration scripts.
+
+    Based on https://github.com/alvassin/alembic-quickstart/blob/master/tests/migrations/test_stairway.py
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    def clean_database(self):
+        """Ensure a clean database state before running stairway tests, then restore it."""
+        resetdb(skip_init=True)
+        yield
+        resetdb()
+
+    @pytest.mark.parametrize("revision", _get_stairway_revisions(), ids=lambda rev: rev.revision)
+    def test_migrations_stairway(self, revision):
+        config = _get_alembic_config()
+        alembic_upgrade(config, revision.revision)
+        alembic_downgrade(config, revision.down_revision or "-1")
+        alembic_upgrade(config, revision.revision)
