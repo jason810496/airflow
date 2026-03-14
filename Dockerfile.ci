@@ -1544,6 +1544,49 @@ COPY <<"EOF" /entrypoint_exec.sh
 exec /bin/bash "${@}"
 EOF
 
+##############################################################################################
+# Parallel build stages for binary tool downloads.
+# BuildKit executes independent stages in parallel, so these downloads happen concurrently
+# with the heavy install_os_dependencies.sh step in the main stage, reducing overall build time.
+##############################################################################################
+
+##############################################################################################
+# Download Helm binary in parallel with the main build
+##############################################################################################
+FROM ${BASE_IMAGE} as helm-downloader
+
+SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "nounset", "-o", "nolog", "-c"]
+
+ARG HELM_VERSION="v3.19.0"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && SYSTEM=$(uname -s | tr '[:upper:]' '[:lower:]') \
+    && PLATFORM=$([ "$(uname -m)" = "aarch64" ] && echo "arm64" || echo "amd64" ) \
+    && HELM_URL="https://get.helm.sh/helm-${HELM_VERSION}-${SYSTEM}-${PLATFORM}.tar.gz" \
+    && curl --silent --location "${HELM_URL}" | tar -xz -O "${SYSTEM}-${PLATFORM}/helm" > /usr/local/bin/helm \
+    && chmod +x /usr/local/bin/helm \
+    && rm -rf /var/lib/apt/lists/*
+
+##############################################################################################
+# Download mprocs binary in parallel with the main build
+##############################################################################################
+FROM ${BASE_IMAGE} as mprocs-downloader
+
+SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "nounset", "-o", "nolog", "-c"]
+
+ARG MPROCS_VERSION="0.8.3"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && SYSTEM=$(uname -s | tr '[:upper:]' '[:lower:]') \
+    && PLATFORM="$(uname -m)" \
+    && MPROCS_URL="https://github.com/pvolok/mprocs/releases/download/v${MPROCS_VERSION}/mprocs-${MPROCS_VERSION}-${SYSTEM}-${PLATFORM}-musl.tar.gz" \
+    && echo "Downloading mprocs from ${MPROCS_URL}" \
+    && curl --silent --location "${MPROCS_URL}" | tar -xz -C /usr/local/bin/ mprocs \
+    && chmod +x /usr/local/bin/mprocs \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ${BASE_IMAGE} as main
 
 # Nolog bash flag is currently ignored - but you can replace it with other flags (for example
@@ -1635,24 +1678,11 @@ RUN bash /scripts/docker/install_mysql.sh prod \
     && echo "airflow ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/airflow \
     && chmod 0440 /etc/sudoers.d/airflow
 
-# Install Helm
-ARG HELM_VERSION="v3.19.0"
+# Copy Helm from parallel build stage (downloaded concurrently with OS dependencies)
+COPY --from=helm-downloader /usr/local/bin/helm /usr/local/bin/helm
 
-RUN SYSTEM=$(uname -s | tr '[:upper:]' '[:lower:]') \
-    && PLATFORM=$([ "$(uname -m)" = "aarch64" ] && echo "arm64" || echo "amd64" ) \
-    && HELM_URL="https://get.helm.sh/helm-${HELM_VERSION}-${SYSTEM}-${PLATFORM}.tar.gz" \
-    && curl --silent --location "${HELM_URL}" | tar -xz -O "${SYSTEM}-${PLATFORM}/helm" > /usr/local/bin/helm \
-    && chmod +x /usr/local/bin/helm
-
-# Install mprocs - a modern process manager for managing multiple Airflow components
-ARG MPROCS_VERSION="0.8.3"
-
-RUN SYSTEM=$(uname -s | tr '[:upper:]' '[:lower:]') \
-    && PLATFORM="$(uname -m)" \
-    && MPROCS_URL="https://github.com/pvolok/mprocs/releases/download/v${MPROCS_VERSION}/mprocs-${MPROCS_VERSION}-${SYSTEM}-${PLATFORM}-musl.tar.gz" \
-    && echo "Downloading mprocs from ${MPROCS_URL}" \
-    && curl --silent --location "${MPROCS_URL}" | tar -xz -C /usr/local/bin/ mprocs \
-    && chmod +x /usr/local/bin/mprocs
+# Copy mprocs from parallel build stage (downloaded concurrently with OS dependencies)
+COPY --from=mprocs-downloader /usr/local/bin/mprocs /usr/local/bin/mprocs
 
 WORKDIR ${AIRFLOW_SOURCES}
 
