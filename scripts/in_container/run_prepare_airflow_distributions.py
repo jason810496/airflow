@@ -26,15 +26,13 @@ from shutil import rmtree
 from tempfile import mkdtemp
 
 import yaml
-from rich.console import Console
 
-console = Console(color_system="standard", width=200)
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
-AIRFLOW_ROOT_PATH = Path(__file__).parents[2].resolve()
+from in_container_utils import AIRFLOW_CORE_ROOT_PATH, AIRFLOW_CORE_SOURCES_PATH, AIRFLOW_ROOT_PATH, console
+
 AIRFLOW_DIST_PATH = AIRFLOW_ROOT_PATH / "dist"
 REPRODUCIBLE_BUILD_YAML_PATH = AIRFLOW_ROOT_PATH / "reproducible_build.yaml"
-AIRFLOW_CORE_ROOT_PATH = AIRFLOW_ROOT_PATH / "airflow-core"
-AIRFLOW_CORE_SOURCES_PATH = AIRFLOW_CORE_ROOT_PATH / "src"
 AIRFLOW_INIT_FILE = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "__init__.py"
 WWW_DIRECTORY = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "www"
 VERSION_SUFFIX = os.environ.get("VERSION_SUFFIX", "")

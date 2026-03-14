@@ -25,17 +25,17 @@ import sys
 import warnings
 
 import yaml
-from rich.console import Console
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+
+from in_container_utils import AIRFLOW_PROVIDERS_PATH, AIRFLOW_ROOT_PATH, console
 
 try:
     from yaml import CSafeLoader as SafeLoader
 except ImportError:
     from yaml import SafeLoader  # type: ignore
 
-console = Console(width=400, color_system="standard")
-ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
-
-provider_files_pattern = pathlib.Path(ROOT_DIR, "airflow", "providers").rglob("provider.yaml")
+provider_files_pattern = AIRFLOW_PROVIDERS_PATH.rglob("provider.yaml")
 errors: list[str] = []
 
 OPERATORS: list[str] = ["sensors", "operators"]
@@ -104,7 +104,7 @@ def load_yaml_data() -> dict:
     for provider_yaml_path in package_paths:
         with open(provider_yaml_path) as yaml_file:
             provider = yaml.load(yaml_file, SafeLoader)
-        rel_path = pathlib.Path(provider_yaml_path).relative_to(ROOT_DIR).as_posix()
+        rel_path = pathlib.Path(provider_yaml_path).relative_to(AIRFLOW_ROOT_PATH).as_posix()
         result[rel_path] = provider
     return result
 

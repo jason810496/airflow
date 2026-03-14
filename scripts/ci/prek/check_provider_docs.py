@@ -29,20 +29,17 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from rich.console import Console
-
 sys.path.insert(0, str(Path(__file__).parent.resolve()))  # make sure common utils are importable
 
 from common_prek_utils import (
     AIRFLOW_CORE_SOURCES_PATH,
     AIRFLOW_PROVIDERS_ROOT_PATH,
     AIRFLOW_ROOT_PATH,
+    console,
     get_all_provider_info_dicts,
 )
 
 sys.path.insert(0, str(AIRFLOW_CORE_SOURCES_PATH))  # make sure setup is imported from Airflow
-
-console = Console(color_system="standard", width=200)
 
 AIRFLOW_PROVIDERS_IMPORT_PREFIX = "airflow.providers."
 
@@ -241,7 +238,7 @@ def run_all_checks():
                     link=f"and related CLI commands: :doc:`apache-airflow-providers-{provider_id.replace('.', '-')}:cli-ref`",
                     docs_file=AIRFLOW_ROOT_PATH / "airflow-core" / "docs" / "cli-and-env-variables-ref.rst",
                 )
-    print(failed)
+    console.print(failed)
     if any(failed):
         sys.exit(1)
 

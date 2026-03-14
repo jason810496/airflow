@@ -34,9 +34,11 @@ import sys
 import time
 from pathlib import Path
 
-# Add airflow to path
-AIRFLOW_SOURCES_DIR = Path(__file__).resolve().parents[3] / "airflow-core" / "src"
-sys.path.insert(0, str(AIRFLOW_SOURCES_DIR))
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from in_container_utils import AIRFLOW_CORE_SOURCES_PATH
+
+sys.path.insert(0, str(AIRFLOW_CORE_SOURCES_PATH))
 
 
 def get_available_auth_managers() -> list[str]:

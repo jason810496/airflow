@@ -38,7 +38,6 @@ from typing import Any
 import jsonschema
 import yaml
 from jsonpath_ng.ext import parse
-from rich.console import Console
 from tabulate import tabulate
 
 from airflow.cli.commands.info_command import Architecture
@@ -50,6 +49,7 @@ from in_container_utils import (
     AIRFLOW_CORE_SOURCES_PATH,
     AIRFLOW_PROVIDERS_PATH,
     AIRFLOW_ROOT_PATH,
+    console,
 )
 
 # Those are deprecated modules that contain removed Hooks/Sensors/Operators that we left in the code
@@ -85,7 +85,6 @@ CORE_INTEGRATIONS = ["SQL", "Local"]
 
 errors: list[str] = []
 
-console = Console(width=400, color_system="standard")
 # you need to enable warnings for all deprecations - needed by importlib library to show deprecations
 if os.environ.get("PYTHONWARNINGS") != "default":
     console.print(
