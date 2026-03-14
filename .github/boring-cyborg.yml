@@ -102,6 +102,9 @@ labelPRBasedOnFilePath:
   provider:common-ai:
     - providers/common/ai/**
 
+  provider:common-builder:
+    - providers/common/builder/**
+
   provider:common-compat:
     - providers/common/compat/**
 
