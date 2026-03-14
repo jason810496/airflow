@@ -1247,7 +1247,7 @@ def test_update_triggers_populates_bundle_info_for_base_python_trigger(
     Ensure supervisor populates bundle_info when creating workload for BasePythonTrigger
     with a task instance that has dag_version with bundle_name.
     """
-    async def _test_trigger():
+    async def _test_trigger(self):
         yield TriggerEvent({"done": True})
 
     trigger = BasePythonTrigger(callable=_test_trigger)
