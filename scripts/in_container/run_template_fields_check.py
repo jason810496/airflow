@@ -28,14 +28,14 @@ import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
 
-from in_container_utils import AIRFLOW_ROOT_PATH, console
+from in_container_utils import AIRFLOW_PROVIDERS_PATH, AIRFLOW_ROOT_PATH, console
 
 try:
     from yaml import CSafeLoader as SafeLoader
 except ImportError:
     from yaml import SafeLoader  # type: ignore
 
-provider_files_pattern = pathlib.Path(AIRFLOW_ROOT_PATH, "airflow", "providers").rglob("provider.yaml")
+provider_files_pattern = AIRFLOW_PROVIDERS_PATH.rglob("provider.yaml")
 errors: list[str] = []
 
 OPERATORS: list[str] = ["sensors", "operators"]
