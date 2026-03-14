@@ -23,10 +23,13 @@ import sys
 from pathlib import Path
 from types import EllipsisType
 
-AIRFLOW_ROOT = Path(__file__).parents[3].resolve()
-CORE_SECRETS_FILE = AIRFLOW_ROOT / "airflow-core" / "src" / "airflow" / "secrets" / "base_secrets.py"
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from common_prek_utils import AIRFLOW_CORE_SOURCES_PATH, AIRFLOW_TASK_SDK_SOURCES_PATH, console
+
+CORE_SECRETS_FILE = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "secrets" / "base_secrets.py"
 SDK_SECRETS_FILE = (
-    AIRFLOW_ROOT / "task-sdk" / "src" / "airflow" / "sdk" / "execution_time" / "secrets" / "__init__.py"
+    AIRFLOW_TASK_SDK_SOURCES_PATH / "airflow" / "sdk" / "execution_time" / "secrets" / "__init__.py"
 )
 
 
@@ -50,7 +53,7 @@ def extract_from_file(
                             return values
         return None
     except Exception as e:
-        print(f"Error parsing {file_path}: {e}", file=sys.stderr)
+        console.print(f"[red]Error parsing {file_path}: {e}[/]", file=sys.stderr)
         return None
 
 
@@ -58,8 +61,8 @@ def main() -> None:
     # Extract DEFAULT_SECRETS_SEARCH_PATH from airflow-core
     core_path = extract_from_file(CORE_SECRETS_FILE, "DEFAULT_SECRETS_SEARCH_PATH")
     if core_path is None:
-        print(
-            f"ERROR: Could not extract DEFAULT_SECRETS_SEARCH_PATH from {CORE_SECRETS_FILE}",
+        console.print(
+            f"[red]ERROR: Could not extract DEFAULT_SECRETS_SEARCH_PATH from {CORE_SECRETS_FILE}[/]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -67,8 +70,8 @@ def main() -> None:
     # Extract _SERVER_DEFAULT_SECRETS_SEARCH_PATH from task-sdk
     sdk_path = extract_from_file(SDK_SECRETS_FILE, "_SERVER_DEFAULT_SECRETS_SEARCH_PATH")
     if sdk_path is None:
-        print(
-            f"ERROR: Could not extract _SERVER_DEFAULT_SECRETS_SEARCH_PATH from {SDK_SECRETS_FILE}",
+        console.print(
+            f"[red]ERROR: Could not extract _SERVER_DEFAULT_SECRETS_SEARCH_PATH from {SDK_SECRETS_FILE}[/]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -76,15 +79,15 @@ def main() -> None:
     if core_path == sdk_path:
         sys.exit(0)
     else:
-        print("\nERROR: Secrets search paths are not synchronized!", file=sys.stderr)
-        print(
+        console.print("\n[red]ERROR: Secrets search paths are not synchronized![/]", file=sys.stderr)
+        console.print(
             "\nThe DEFAULT_SECRETS_SEARCH_PATH in airflow-core and "
             "_SERVER_DEFAULT_SECRETS_SEARCH_PATH in task-sdk must match.",
             file=sys.stderr,
         )
-        print("\nPlease update either:", file=sys.stderr)
-        print(f"  - {CORE_SECRETS_FILE}", file=sys.stderr)
-        print(f"  - {SDK_SECRETS_FILE}", file=sys.stderr)
+        console.print("\nPlease update either:", file=sys.stderr)
+        console.print(f"  - {CORE_SECRETS_FILE}", file=sys.stderr)
+        console.print(f"  - {SDK_SECRETS_FILE}", file=sys.stderr)
         sys.exit(1)
 
 

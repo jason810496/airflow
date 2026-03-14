@@ -34,6 +34,10 @@ import ast
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from common_prek_utils import AIRFLOW_ROOT_PATH, console
+
 
 def extract_runtime_maps(py_file: Path) -> tuple[set[str], set[str], set[str]]:
     """
@@ -113,7 +117,7 @@ def extract_type_checking_names(py_file: Path) -> set[str]:
 def main():
     """Validate TYPE_CHECKING block matches runtime maps."""
     sdk_py = (
-        Path(__file__).parent.parent.parent.parent
+        AIRFLOW_ROOT_PATH
         / "providers"
         / "common"
         / "compat"
@@ -126,7 +130,7 @@ def main():
     )
 
     if not sdk_py.exists():
-        print(f"❌ ERROR: {sdk_py} not found")
+        console.print(f"[red]ERROR: {sdk_py} not found[/]")
         sys.exit(1)
 
     # Extract runtime maps
@@ -143,7 +147,7 @@ def main():
     errors = []
 
     if missing_in_type_checking:
-        errors.append("\n❌ Items in runtime maps but MISSING in TYPE_CHECKING block:")
+        errors.append("\n[red]Items in runtime maps but MISSING in TYPE_CHECKING block:[/]")
         for name in sorted(missing_in_type_checking):
             # Determine which map it's from
             map_name = []
@@ -156,26 +160,26 @@ def main():
             errors.append(f"  - {name} (in {', '.join(map_name)})")
 
     if extra_in_type_checking:
-        errors.append("\n❌ Items in TYPE_CHECKING block but NOT in any runtime map:")
+        errors.append("\n[red]Items in TYPE_CHECKING block but NOT in any runtime map:[/]")
         for name in sorted(extra_in_type_checking):
             errors.append(f"  - {name}")
 
     if errors:
-        print("\n".join(errors))
-        print("\n❌ FAILED: TYPE_CHECKING block and runtime maps are out of sync!")
-        print("\nTo fix:")
-        print(f"1. Add missing items to TYPE_CHECKING block in {sdk_py}")
-        print("2. Remove extra items from TYPE_CHECKING block")
-        print(
+        console.print("\n".join(errors))
+        console.print("\n[red]FAILED: TYPE_CHECKING block and runtime maps are out of sync![/]")
+        console.print("\nTo fix:")
+        console.print(f"1. Add missing items to TYPE_CHECKING block in {sdk_py}")
+        console.print("2. Remove extra items from TYPE_CHECKING block")
+        console.print(
             "3. Ensure every item in _IMPORT_MAP/_RENAME_MAP/_MODULE_MAP has a corresponding TYPE_CHECKING import"
         )
         sys.exit(1)
 
-    print("✅ SUCCESS: TYPE_CHECKING block matches runtime maps")
-    print(f"   - {len(import_names)} items in _IMPORT_MAP")
-    print(f"   - {len(rename_names)} items in _RENAME_MAP")
-    print(f"   - {len(module_names)} items in _MODULE_MAP")
-    print(f"   - {len(type_checking_names)} items in TYPE_CHECKING")
+    console.print("[green]SUCCESS: TYPE_CHECKING block matches runtime maps[/]")
+    console.print(f"   - {len(import_names)} items in _IMPORT_MAP")
+    console.print(f"   - {len(rename_names)} items in _RENAME_MAP")
+    console.print(f"   - {len(module_names)} items in _MODULE_MAP")
+    console.print(f"   - {len(type_checking_names)} items in TYPE_CHECKING")
     sys.exit(0)
 
 

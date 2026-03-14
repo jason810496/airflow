@@ -24,6 +24,10 @@ import pathlib
 import sys
 from collections.abc import Iterator
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+
+from common_prek_utils import console
+
 
 def iter_decorated_operators(source: pathlib.Path) -> Iterator[ast.ClassDef]:
     mod = ast.parse(source.read_text("utf-8"), str(source))
@@ -50,7 +54,7 @@ def main(*args: str) -> int:
     results = ((k.name, check_missing_custom_operator_name(k)) for k in classes)
     failures = [name for name, success in results if not success]
     for failure in failures:
-        print(f"Missing custom_operator_name in class: {failure}")
+        console.print(f"[red]Missing custom_operator_name in class: {failure}[/]")
     return len(failures)
 
 

@@ -28,16 +28,16 @@ import sys
 from pathlib import Path
 
 import yaml
-from rich.console import Console
+
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from common_prek_utils import console
 
 if __name__ not in ("__main__", "__mp_main__"):
     raise SystemExit(
         "This file is intended to be executed as an executable program. You cannot use it as a module."
         f"To run this script, run the ./{__file__} command [FILE] ..."
     )
-
-
-console = Console(color_system="standard", width=200)
 
 
 def check_file(the_file: Path) -> int:

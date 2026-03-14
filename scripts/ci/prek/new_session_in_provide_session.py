@@ -25,6 +25,10 @@ import pathlib
 import sys
 import typing
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+
+from common_prek_utils import console
+
 
 class _SessionArgument(typing.NamedTuple):
     argument: ast.arg
@@ -112,12 +116,14 @@ def main(argv: list[str]) -> int:
     paths = (pathlib.Path(filename) for filename in argv[1:])
     errors = [(path, error) for path in paths for error in _iter_incorrect_new_session_usages(path)]
     if errors:
-        print("Incorrect @provide_session and NEW_SESSION usages:", end="\n\n")
+        console.print("[red]Incorrect @provide_session and NEW_SESSION usages:[/]", end="\n\n")
         for path, error in errors:
-            print(f"{path}:{error.lineno}")
-            print(f"\tdef {error.name}(...", end="\n\n")
-        print("Only function decorated with @provide_session should use 'session: Session = NEW_SESSION'.")
-        print(
+            console.print(f"{path}:{error.lineno}")
+            console.print(f"\tdef {error.name}(...", end="\n\n")
+        console.print(
+            "Only function decorated with @provide_session should use 'session: Session = NEW_SESSION'."
+        )
+        console.print(
             "See: https://github.com/apache/airflow/blob/main/"
             "contributing-docs/05_pull_requests.rst#database-session-handling"
         )

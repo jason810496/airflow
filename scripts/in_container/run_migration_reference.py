@@ -24,27 +24,28 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import textwrap
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from alembic.script import ScriptDirectory
-from rich.console import Console
 from tabulate import tabulate
 
 from airflow import __version__ as airflow_version
 from airflow.providers.fab import __version__ as fab_version
 from airflow.utils.db import _get_alembic_config
 
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from in_container_utils import AIRFLOW_ROOT_PATH, console
+
 if TYPE_CHECKING:
     from alembic.script import Script
 
-console = Console(width=400, color_system="standard")
-
 airflow_version = re.match(r"(\d+\.\d+\.\d+).*", airflow_version).group(1)  # type: ignore
 fab_version = re.match(r"(\d+\.\d+\.\d+).*", fab_version).group(1)  # type: ignore
-project_root = Path(__file__).parents[2].resolve()
 
 
 def replace_text_between(file: Path, start: str, end: str, replacement_text: str):
@@ -154,9 +155,9 @@ def update_docs(revisions: Iterable[Script], app="airflow"):
             )
         )
     if app == "fab":
-        filepath = project_root / "providers" / "fab" / "docs" / "migrations-ref.rst"
+        filepath = AIRFLOW_ROOT_PATH / "providers" / "fab" / "docs" / "migrations-ref.rst"
     else:
-        filepath = project_root / "airflow-core" / "docs" / "migrations-ref.rst"
+        filepath = AIRFLOW_ROOT_PATH / "airflow-core" / "docs" / "migrations-ref.rst"
 
     update_doc(
         file=filepath,

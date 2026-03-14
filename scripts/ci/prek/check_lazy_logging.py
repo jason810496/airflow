@@ -31,9 +31,10 @@ import re
 import sys
 
 import astor as astor
-from rich.console import Console
 
-console = Console(color_system="standard", width=200)
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+
+from common_prek_utils import console
 
 LOGGING_MATCHER = re.compile(r'^log.?[a-z]*\.[a-z]*\(f.*["\']')
 SELF_LOG_MATCHER = re.compile(r'^self\.log\.[a-z]*\(f.*["\']')

@@ -35,7 +35,8 @@ click.rich_click.COLOR_SYSTEM = "standard"
 console = Console(width=400, color_system="standard")
 
 AIRFLOW_ROOT_PATH = Path(__file__).resolve().parents[2]
-AIRFLOW_CORE_SOURCES_PATH = AIRFLOW_ROOT_PATH / "airflow-core" / "src"
+AIRFLOW_CORE_ROOT_PATH = AIRFLOW_ROOT_PATH / "airflow-core"
+AIRFLOW_CORE_SOURCES_PATH = AIRFLOW_CORE_ROOT_PATH / "src"
 AIRFLOW_PROVIDERS_PATH = AIRFLOW_ROOT_PATH / "providers"
 AIRFLOW_DOCS_PATH = AIRFLOW_ROOT_PATH / "docs"
 AIRFLOW_DIST_PATH = Path("/dist")

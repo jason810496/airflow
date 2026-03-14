@@ -21,6 +21,10 @@ import ast
 import pathlib
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
+
+from common_prek_utils import console
+
 
 def check_test_file(file: str) -> int:
     node = ast.parse(pathlib.Path(file).read_text("utf-8"), file)
@@ -37,7 +41,9 @@ def check_test_file(file: str) -> int:
         ):
             found += 1
             prefix = f"{file}:{c.lineno}:"
-            print(f"{prefix} The class {c.name!r} inherits from TestCase, please use pytest instead")
+            console.print(
+                f"[red]{prefix} The class {c.name!r} inherits from TestCase, please use pytest instead[/]"
+            )
             known_classes.add(c.name)  # Also use to found inherited classes in the same module
     return found
 
@@ -46,7 +52,7 @@ def main(*args: str) -> int:
     errors = sum(check_test_file(file) for file in args[1:])
     if not errors:
         return 0
-    print(f"Found {errors} error{'s' if errors > 1 else ''}.")
+    console.print(f"[red]Found {errors} error{'s' if errors > 1 else ''}.[/]")
     return 1
 
 

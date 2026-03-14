@@ -25,9 +25,12 @@ import json
 import sys
 from pathlib import Path
 
-AIRFLOW_ROOT = Path(__file__).parents[3].resolve()
-TYPES_PY = AIRFLOW_ROOT / "dev" / "registry" / "registry_tools" / "types.py"
-TYPES_JSON = AIRFLOW_ROOT / "registry" / "src" / "_data" / "types.json"
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+
+from common_prek_utils import AIRFLOW_ROOT_PATH, console
+
+TYPES_PY = AIRFLOW_ROOT_PATH / "dev" / "registry" / "registry_tools" / "types.py"
+TYPES_JSON = AIRFLOW_ROOT_PATH / "registry" / "src" / "_data" / "types.json"
 
 
 def _extract_string(node: ast.expr) -> str | None:
@@ -74,14 +77,14 @@ def load_types_from_py() -> list[dict]:
                     result.append({"id": type_id, "label": info["label"], "icon": info["icon"]})
             return result
 
-    print(f"ERROR: Could not find MODULE_TYPES in {TYPES_PY}", file=sys.stderr)
+    console.print(f"[red]ERROR: Could not find MODULE_TYPES in {TYPES_PY}[/]", file=sys.stderr)
     sys.exit(1)
 
 
 def main() -> None:
     if not TYPES_JSON.exists():
-        print(f"ERROR: {TYPES_JSON} does not exist.", file=sys.stderr)
-        print("Run: uv run python dev/registry/generate_types_json.py", file=sys.stderr)
+        console.print(f"[red]ERROR: {TYPES_JSON} does not exist.[/]", file=sys.stderr)
+        console.print("Run: uv run python dev/registry/generate_types_json.py", file=sys.stderr)
         sys.exit(1)
 
     expected = load_types_from_py()
@@ -90,10 +93,10 @@ def main() -> None:
     if expected == actual:
         sys.exit(0)
 
-    print("ERROR: registry/src/_data/types.json is out of sync with", file=sys.stderr)
-    print("       dev/registry/registry_tools/types.py", file=sys.stderr)
-    print("", file=sys.stderr)
-    print("Run: uv run python dev/registry/generate_types_json.py", file=sys.stderr)
+    console.print("[red]ERROR: registry/src/_data/types.json is out of sync with[/]", file=sys.stderr)
+    console.print("       dev/registry/registry_tools/types.py", file=sys.stderr)
+    console.print(file=sys.stderr)
+    console.print("Run: uv run python dev/registry/generate_types_json.py", file=sys.stderr)
     sys.exit(1)
 
 

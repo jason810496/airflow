@@ -33,13 +33,10 @@ from collections.abc import Iterable
 
 import yaml
 from packaging.specifiers import SpecifierSet
-from rich.console import Console
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))
-from common_prek_utils import get_provider_base_dir_from_path
 
-console = Console(color_system="standard", width=200)
-
+from common_prek_utils import console, get_provider_base_dir_from_path
 
 COMMON_SQL_PROVIDER_NAME: str = "apache-airflow-providers-common-sql"
 COMMON_SQL_PROVIDER_MIN_COMPATIBLE_VERSIONS: str = "1.9.1"

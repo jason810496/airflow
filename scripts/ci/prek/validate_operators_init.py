@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import ast
 import sys
+from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
-console = Console(color_system="standard", width=200)
+from common_prek_utils import console
+
 BASE_OPERATOR_CLASS_NAME = "BaseOperator"
 
 

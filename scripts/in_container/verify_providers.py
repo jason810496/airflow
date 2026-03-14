@@ -33,14 +33,13 @@ from pathlib import Path
 from types import GenericAlias
 from typing import NamedTuple
 
-from rich.console import Console
-
 from airflow.exceptions import AirflowOptionalProviderFeatureException
 from airflow.secrets import BaseSecretsBackend
 
-console = Console(width=400, color_system="standard")
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
-AIRFLOW_ROOT_PATH = Path(__file__).parents[2].resolve()
+from in_container_utils import AIRFLOW_ROOT_PATH, console
+
 GENERATED_PROVIDERS_DEPENDENCIES_FILE = AIRFLOW_ROOT_PATH / "generated" / "provider_dependencies.json"
 ALL_DEPENDENCIES = json.loads(GENERATED_PROVIDERS_DEPENDENCIES_FILE.read_text())
 
