@@ -26,6 +26,7 @@ Create Date: 2024-10-02 08:10:01.697128
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -104,14 +105,14 @@ def _drop_fkey_if_exists(table, constraint_name):
     dialect_name = conn.dialect.name
 
     if dialect_name == "sqlite":
-        # SQLite requires foreign key constraints to be disabled during batch operations
         conn.execute(text("PRAGMA foreign_keys=OFF"))
-        try:
-            with op.batch_alter_table(table, schema=None) as batch_op:
-                batch_op.drop_constraint(op.f(constraint_name), type_="foreignkey")
-        except ValueError:
-            pass
-        conn.execute(text("PRAGMA foreign_keys=ON"))
+        with contextlib.ExitStack() as exitstack:
+            exitstack.callback(conn.execute, text("PRAGMA foreign_keys=ON"))
+            try:
+                with op.batch_alter_table(table, schema=None) as batch_op:
+                    batch_op.drop_constraint(op.f(constraint_name), type_="foreignkey")
+            except ValueError:
+                pass
     elif dialect_name == "mysql":
         mysql_drop_foreignkey_if_exists(constraint_name, table, op)
     else:
