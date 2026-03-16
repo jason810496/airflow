@@ -2075,6 +2075,53 @@ class TestDagModel:
             query, _ = DagModel.dags_needing_dagruns(session)
             query.all()
 
+    def test_dags_needing_dagruns_adrq_locked(self, dag_maker, session):
+        """Test that ADRQ records are locked to prevent race conditions between schedulers.
+
+        Verifies the fix for https://github.com/apache/airflow/issues/63507 and
+        https://github.com/apache/airflow/issues/54491. Without locking ADRQ rows,
+        concurrent schedulers could read the same ADRQ records simultaneously and
+        both create duplicate DAG runs for the same asset event.
+        """
+        asset = Asset(uri="test://asset", group="test-group")
+        with dag_maker(
+            session=session,
+            dag_id="my_dag",
+            max_active_runs=1,
+            schedule=[asset],
+            start_date=pendulum.now().add(days=-2),
+        ):
+            EmptyOperator(task_id="dummy")
+
+        dag_model = dag_maker.dag_model
+        asset_models = dag_model.schedule_assets
+        session.add(AssetDagRunQueue(asset_id=asset_models[0].id, target_dag_id=dag_model.dag_id))
+        session.flush()
+
+        from airflow.utils.sqlalchemy import with_row_locks as real_with_row_locks
+
+        with patch(
+            "airflow.models.dag.with_row_locks",
+            wraps=real_with_row_locks,
+        ) as mock_with_row_locks:
+            query, _ = DagModel.dags_needing_dagruns(session)
+            query.all()
+
+        # with_row_locks should be called twice:
+        # 1. For ADRQ query (with of=AssetDagRunQueue, skip_locked=True)
+        # 2. For DagModel query (with of=DagModel, skip_locked=True)
+        assert mock_with_row_locks.call_count == 2
+
+        # First call: ADRQ locking - prevents concurrent schedulers from reading same records
+        adrq_call = mock_with_row_locks.call_args_list[0]
+        assert adrq_call.kwargs.get("skip_locked") is True
+        assert adrq_call.kwargs.get("of") is AssetDagRunQueue
+
+        # Second call: DagModel locking
+        dag_call = mock_with_row_locks.call_args_list[1]
+        assert dag_call.kwargs.get("skip_locked") is True
+        assert dag_call.kwargs.get("of") is DagModel
+
     def test_dags_needing_dagruns_asset_aliases(self, dag_maker, session):
         # link asset_alias hello_alias to asset hello
         asset_model = AssetModel(uri="hello")
