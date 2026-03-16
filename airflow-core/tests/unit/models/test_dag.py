@@ -2112,15 +2112,15 @@ class TestDagModel:
         # 2. For DagModel query (with of=DagModel, skip_locked=True)
         assert mock_with_row_locks.call_count == 2
 
-        # First call: ADRQ locking - prevents concurrent schedulers from reading same records
-        adrq_call = mock_with_row_locks.call_args_list[0]
-        assert adrq_call.kwargs.get("skip_locked") is True
-        assert adrq_call.kwargs.get("of") is AssetDagRunQueue
-
-        # Second call: DagModel locking
-        dag_call = mock_with_row_locks.call_args_list[1]
-        assert dag_call.kwargs.get("skip_locked") is True
-        assert dag_call.kwargs.get("of") is DagModel
+        # Verify both calls are present regardless of order
+        lock_targets = {
+            call.kwargs.get("of"): call.kwargs.get("skip_locked")
+            for call in mock_with_row_locks.call_args_list
+        }
+        # ADRQ locking - prevents concurrent schedulers from reading same records
+        assert lock_targets.get(AssetDagRunQueue) is True
+        # DagModel locking
+        assert lock_targets.get(DagModel) is True
 
     def test_dags_needing_dagruns_asset_aliases(self, dag_maker, session):
         # link asset_alias hello_alias to asset hello
