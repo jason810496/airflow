@@ -40,7 +40,8 @@ Scenarios
 Run inside Breeze with PostgreSQL backend
 -----------------------------------------
     breeze --backend postgres shell
-    python /opt/airflow/scripts/in_container/benchmark__0102_3_2_0_make_external_executor_id_text__migration.py
+    python /opt/airflow/scripts/in_container/\
+benchmark__0102_3_2_0_make_external_executor_id_text__migration.py
 
 Environment variables
 ---------------------
@@ -50,6 +51,7 @@ Environment variables
     BENCHMARK_EXT_ID_PCT      % of rows with external_executor_id set (default: 30)
     BENCHMARK_LONG_ID_PCT     % of those IDs that exceed 250 chars (default: 0)
     BENCHMARK_CLEANUP         Set to "1" to delete all benchmark data and exit
+    BENCHMARK_NUM_WORKERS     Parallel workers for Phase 3 (default: 4)
 
 Default configuration produces:
     100 DAGs x 1,000 runs x 100 tasks = 10,000,000 task_instance rows
@@ -58,10 +60,12 @@ Default configuration produces:
 
 from __future__ import annotations
 
+import io
 import os
 import random
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone as dt_tz
 
 import uuid6
@@ -83,6 +87,7 @@ TASKS_PER_DAG = int(os.environ.get("BENCHMARK_TASKS_PER_DAG", "100"))
 RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "1000"))
 EXT_ID_PCT = int(os.environ.get("BENCHMARK_EXT_ID_PCT", "30")) / 100.0
 LONG_ID_PCT = int(os.environ.get("BENCHMARK_LONG_ID_PCT", "0")) / 100.0
+NUM_WORKERS = int(os.environ.get("BENCHMARK_NUM_WORKERS", "4"))
 
 DAG_PREFIX = "benchmark_dag_"
 RUN_PREFIX = "benchmark_run_"
@@ -133,8 +138,8 @@ def _insert_dag_runs(log_template_id: int) -> None:
     print(f"\n[Phase 2] Inserting {total:,} dag_runs...")
     t0 = time.monotonic()
 
-    # Keep each transaction around ~10K rows
-    dags_per_batch = max(1, 10_000 // RUNS_PER_DAG)
+    # ~50K dag_runs per batch (up from ~10K)
+    dags_per_batch = max(1, 50_000 // RUNS_PER_DAG)
     inserted = 0
 
     for batch_start in range(0, NUM_DAGS, dags_per_batch):
@@ -157,27 +162,29 @@ def _insert_dag_runs(log_template_id: int) -> None:
                     }
                 )
         with create_session() as session:
+            session.execute(text("SET LOCAL synchronous_commit = off"))
             session.execute(insert(DagRun.__table__), rows)
 
         inserted += len(rows)
         elapsed = time.monotonic() - t0
-        print(f"  {inserted:,}/{total:,} ({elapsed:.1f}s)")
+        if inserted % 50_000 == 0 or batch_end == NUM_DAGS:
+            print(f"  {inserted:,}/{total:,} ({elapsed:.1f}s)")
 
     print(f"  Done in {time.monotonic() - t0:.1f}s")
 
 
-def _insert_task_data() -> None:
-    """Insert task_instance and task_instance_history rows for all benchmark DAGs."""
-    total = NUM_DAGS * RUNS_PER_DAG * TASKS_PER_DAG
-    print(f"\n[Phase 3] Inserting {total:,} task_instances + {total:,} task_instance_history...")
-    t0 = time.monotonic()
-    inserted = 0
+def _insert_single_batch(batch_start: int, batch_end: int) -> tuple[int, int]:
+    """Insert task_instance + task_instance_history for a batch of DAGs via COPY.
 
-    for dag_idx in range(NUM_DAGS):
+    Returns ``(num_task_instances, num_task_instance_history)`` inserted.
+    """
+    pool_name = Pool.DEFAULT_POOL_NAME
+    ti_buf = io.StringIO()
+    tih_buf = io.StringIO()
+    ti_count = 0
+
+    for dag_idx in range(batch_start, batch_end):
         dag_id = f"{DAG_PREFIX}{dag_idx}"
-        ti_rows: list[dict] = []
-        tih_rows: list[dict] = []
-
         for run_idx in range(RUNS_PER_DAG):
             gs = dag_idx * RUNS_PER_DAG + run_idx
             run_id = f"{RUN_PREFIX}{gs}"
@@ -186,67 +193,139 @@ def _insert_task_data() -> None:
                 ti_id = uuid6.uuid7()
                 ext_id = _make_ext_id(task_idx, run_id)
                 task_id = f"task_{task_idx}"
-
-                ti_rows.append(
-                    {
-                        "id": ti_id,
-                        "task_id": task_id,
-                        "dag_id": dag_id,
-                        "run_id": run_id,
-                        "map_index": -1,
-                        "state": "success",
-                        "try_number": 1,
-                        "max_tries": 0,
-                        "hostname": "",
-                        "unixname": "",
-                        "pool": Pool.DEFAULT_POOL_NAME,
-                        "pool_slots": 1,
-                        "queue": "default",
-                        "priority_weight": 1,
-                        "custom_operator_name": "",
-                        "executor_config": {},
-                        "external_executor_id": ext_id,
-                        "span_status": "UNSET",
-                    }
+                ext_id_copy = (
+                    ext_id.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
+                    if ext_id is not None
+                    else "\\N"
                 )
 
-                tih_rows.append(
-                    {
-                        "task_instance_id": ti_id,
-                        "task_id": task_id,
-                        "dag_id": dag_id,
-                        "run_id": run_id,
-                        "map_index": -1,
-                        "try_number": 1,
-                        "state": "success",
-                        "max_tries": 0,
-                        "hostname": "",
-                        "unixname": "",
-                        "pool": Pool.DEFAULT_POOL_NAME,
-                        "pool_slots": 1,
-                        "queue": "default",
-                        "priority_weight": 1,
-                        "executor_config": {},
-                        "external_executor_id": ext_id,
-                        "span_status": "UNSET",
-                    }
+                # task_instance columns: id, task_id, dag_id, run_id, map_index,
+                # state, try_number, max_tries, hostname, unixname, pool, pool_slots,
+                # queue, priority_weight, custom_operator_name, executor_config,
+                # external_executor_id, span_status
+                ti_buf.write(
+                    f"{ti_id}\t{task_id}\t{dag_id}\t{run_id}\t-1\tsuccess\t"
+                    f"1\t0\t\t\t{pool_name}\t1\tdefault\t1\t\t"
+                    f"{{}}\t{ext_id_copy}\tUNSET\n"
                 )
 
-        with create_session() as session:
-            session.execute(insert(TaskInstance.__table__), ti_rows)
-            session.execute(insert(TaskInstanceHistory.__table__), tih_rows)
+                # task_instance_history columns: task_instance_id, task_id, dag_id,
+                # run_id, map_index, try_number, state, max_tries, hostname, unixname,
+                # pool, pool_slots, queue, priority_weight, executor_config,
+                # external_executor_id, span_status
+                tih_buf.write(
+                    f"{ti_id}\t{task_id}\t{dag_id}\t{run_id}\t-1\t1\tsuccess\t"
+                    f"0\t\t\t{pool_name}\t1\tdefault\t1\t"
+                    f"{{}}\t{ext_id_copy}\tUNSET\n"
+                )
+                ti_count += 1
 
-        inserted += RUNS_PER_DAG * TASKS_PER_DAG
-        if (dag_idx + 1) % 10 == 0 or dag_idx == NUM_DAGS - 1:
+    # COPY both tables via raw psycopg2 in a single transaction
+    ti_buf.seek(0)
+    tih_buf.seek(0)
+    raw_conn = settings.engine.raw_connection()
+    try:
+        cursor = raw_conn.cursor()
+        cursor.execute("SET synchronous_commit = off")
+        cursor.copy_from(
+            ti_buf,
+            "task_instance",
+            columns=(
+                "id",
+                "task_id",
+                "dag_id",
+                "run_id",
+                "map_index",
+                "state",
+                "try_number",
+                "max_tries",
+                "hostname",
+                "unixname",
+                "pool",
+                "pool_slots",
+                "queue",
+                "priority_weight",
+                "custom_operator_name",
+                "executor_config",
+                "external_executor_id",
+                "span_status",
+            ),
+        )
+        cursor.copy_from(
+            tih_buf,
+            "task_instance_history",
+            columns=(
+                "task_instance_id",
+                "task_id",
+                "dag_id",
+                "run_id",
+                "map_index",
+                "try_number",
+                "state",
+                "max_tries",
+                "hostname",
+                "unixname",
+                "pool",
+                "pool_slots",
+                "queue",
+                "priority_weight",
+                "executor_config",
+                "external_executor_id",
+                "span_status",
+            ),
+        )
+        raw_conn.commit()
+        cursor.close()
+    finally:
+        raw_conn.close()
+
+    return ti_count, ti_count
+
+
+def _insert_task_data() -> None:
+    """Insert task_instance and task_instance_history rows using parallel workers + COPY."""
+    total = NUM_DAGS * RUNS_PER_DAG * TASKS_PER_DAG
+    print(
+        f"\n[Phase 3] Inserting {total:,} task_instances + {total:,} task_instance_history "
+        f"({NUM_WORKERS} workers)..."
+    )
+    t0 = time.monotonic()
+
+    # Target ~50K TI rows per batch.  Each DAG produces RUNS_PER_DAG * TASKS_PER_DAG rows.
+    dags_per_batch = max(1, 50_000 // (RUNS_PER_DAG * TASKS_PER_DAG))
+    total_batches = (NUM_DAGS + dags_per_batch - 1) // dags_per_batch
+    inserted_ti = 0
+    inserted_tih = 0
+    batches_done = 0
+
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+        futures = {}
+        for batch_start in range(0, NUM_DAGS, dags_per_batch):
+            batch_end = min(batch_start + dags_per_batch, NUM_DAGS)
+            future = pool.submit(_insert_single_batch, batch_start, batch_end)
+            futures[future] = (batch_start, batch_end)
+
+        for future in as_completed(futures):
+            ti_count, tih_count = future.result()
+            inserted_ti += ti_count
+            inserted_tih += tih_count
+            batches_done += 1
             elapsed = time.monotonic() - t0
-            rate = inserted / elapsed if elapsed > 0 else 0
-            print(f"  {inserted:,}/{total:,} ({elapsed:.1f}s, {rate:,.0f} rows/s)")
+
+            if batches_done % 10 == 0 or batches_done == total_batches:
+                rate = inserted_ti / elapsed if elapsed > 0 else 0
+                print(
+                    f"  TIs: {inserted_ti:,}/{total:,}, "
+                    f"TIH: {inserted_tih:,}/{total:,} "
+                    f"({elapsed:.1f}s, {rate:,.0f} rows/s)",
+                    flush=True,
+                )
 
     print(f"  Done in {time.monotonic() - t0:.1f}s")
 
 
 def _vacuum_analyze() -> None:
-    """VACUUM ANALYZE both tables to update planner statistics."""
+    """VACUUM ANALYZE key tables to update planner statistics."""
     print("\n[Phase 4] Running VACUUM ANALYZE...")
     t0 = time.monotonic()
     # VACUUM cannot run inside a transaction block
@@ -254,8 +333,9 @@ def _vacuum_analyze() -> None:
     try:
         raw_conn.set_session(autocommit=True)
         cursor = raw_conn.cursor()
-        cursor.execute("VACUUM ANALYZE task_instance")
-        cursor.execute("VACUUM ANALYZE task_instance_history")
+        for tbl in ("task_instance", "task_instance_history", "dag_run"):
+            print(f"  VACUUM ANALYZE {tbl}...")
+            cursor.execute(f"VACUUM ANALYZE {tbl}")
         cursor.close()
     finally:
         raw_conn.close()
@@ -313,6 +393,12 @@ def _cleanup(*, session=NEW_SESSION) -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    # Force line-buffered stdout so progress is visible in docker exec without -t.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    # Ensure the ORM engine/session is initialized (required for standalone scripts).
+    settings.configure_orm()
+
     if os.environ.get("BENCHMARK_CLEANUP", "0") == "1":
         _cleanup()
         return 0
@@ -331,6 +417,7 @@ def main() -> int:
     print(f"  Total TI history:  {total_tis:,}")
     print(f"  External ID %:     {EXT_ID_PCT * 100:.0f}%")
     print(f"  Long ID (>250) %:  {LONG_ID_PCT * 100:.0f}%")
+    print(f"  Workers:           {NUM_WORKERS}")
     print("=" * 60)
 
     overall_start = time.monotonic()
