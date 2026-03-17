@@ -86,7 +86,7 @@ NUM_DAGS = int(os.environ.get("BENCHMARK_NUM_DAGS", "100"))
 TASKS_PER_DAG = int(os.environ.get("BENCHMARK_TASKS_PER_DAG", "100"))
 RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "100"))
 EXT_ID_PCT = int(os.environ.get("BENCHMARK_EXT_ID_PCT", "30")) / 100.0
-LONG_ID_PCT = int(os.environ.get("BENCHMARK_LONG_ID_PCT", "0")) / 100.0
+LONG_ID_PCT = int(os.environ.get("BENCHMARK_LONG_ID_PCT", "30")) / 100.0
 NUM_WORKERS = int(os.environ.get("BENCHMARK_NUM_WORKERS", "4"))
 
 DAG_PREFIX = "benchmark_dag_"
