@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = "a5a3e5eb9b8d"
@@ -57,20 +58,28 @@ def upgrade():
         )
 
 
+def _downgrade_external_executor_id_column(table_name: str) -> None:
+    op.add_column(
+        table_name, sa.Column("external_executor_id_varchar", sa.VARCHAR(length=250), nullable=True)
+    )
+    op.execute(
+        text(
+            f"""
+            UPDATE {table_name}
+            SET external_executor_id_varchar = external_executor_id
+            """
+        )
+    )
+    op.drop_column(table_name, "external_executor_id")
+    op.alter_column(
+        table_name,
+        "external_executor_id_varchar",
+        existing_type=sa.VARCHAR(length=250),
+        new_column_name="external_executor_id",
+    )
+
+
 def downgrade():
     """Revert external_executor_id column from TEXT to VARCHAR(250)."""
-    with op.batch_alter_table("task_instance_history", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
-        )
-
-    with op.batch_alter_table("task_instance", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
-        )
+    _downgrade_external_executor_id_column("task_instance_history")
+    _downgrade_external_executor_id_column("task_instance")
