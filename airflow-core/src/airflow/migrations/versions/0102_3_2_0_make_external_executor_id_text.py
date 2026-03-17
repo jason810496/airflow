@@ -28,7 +28,8 @@ Create Date: 2026-01-28 16:35:00.000000
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = "a5a3e5eb9b8d"
@@ -59,7 +60,45 @@ def upgrade():
 
 def downgrade():
     """Revert external_executor_id column from TEXT to VARCHAR(250)."""
-    with op.batch_alter_table("task_instance_history", schema=None) as batch_op:
+    conn = op.get_bind()
+    dialect = conn.dialect.name
+
+    _downgrade_external_executor_id_table("task_instance_history", dialect)
+    _downgrade_external_executor_id_table("task_instance", dialect)
+
+
+def _downgrade_external_executor_id_table(table_name: str, dialect: str) -> None:
+    if dialect == "postgresql":
+        if context.is_offline_mode():
+            # In offline mode we cannot safely validate data length prior to narrowing the column.
+            # Emit direct SQL so generated scripts still include the expected downgrade behavior.
+            op.execute(text(f"ALTER TABLE {table_name} ALTER COLUMN external_executor_id TYPE VARCHAR(250)"))
+            return
+
+        _validate_external_executor_id_length(table_name)
+
+        new_column_name = "external_executor_id_varchar_250"
+        op.add_column(table_name, sa.Column(new_column_name, sa.String(length=250), nullable=True))
+        op.execute(
+            text(
+                f"""
+                UPDATE {table_name}
+                SET {new_column_name} = external_executor_id
+                WHERE external_executor_id IS NOT NULL
+                """
+            )
+        )
+        op.drop_column(table_name, "external_executor_id")
+        op.alter_column(
+            table_name,
+            new_column_name,
+            existing_type=sa.String(length=250),
+            nullable=True,
+            new_column_name="external_executor_id",
+        )
+        return
+
+    with op.batch_alter_table(table_name, schema=None) as batch_op:
         batch_op.alter_column(
             "external_executor_id",
             existing_type=sa.Text(),
@@ -67,10 +106,21 @@ def downgrade():
             existing_nullable=True,
         )
 
-    with op.batch_alter_table("task_instance", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
+
+def _validate_external_executor_id_length(table_name: str) -> None:
+    conn = op.get_bind()
+    too_long_rows = conn.execute(
+        text(
+            f"""
+            SELECT COUNT(*)
+            FROM {table_name}
+            WHERE external_executor_id IS NOT NULL
+              AND LENGTH(external_executor_id) > 250
+            """
+        )
+    ).scalar()
+    if too_long_rows:
+        raise RuntimeError(
+            f"Cannot downgrade {table_name}.external_executor_id to VARCHAR(250): "
+            f"found {too_long_rows} rows exceeding 250 characters."
         )
