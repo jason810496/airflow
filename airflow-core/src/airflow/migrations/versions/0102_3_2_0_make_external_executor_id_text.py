@@ -28,7 +28,8 @@ Create Date: 2026-01-28 16:35:00.000000
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = "a5a3e5eb9b8d"
@@ -59,18 +60,33 @@ def upgrade():
 
 def downgrade():
     """Revert external_executor_id column from TEXT to VARCHAR(250)."""
-    with op.batch_alter_table("task_instance_history", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
+    conn = op.get_bind()
+    if context.is_offline_mode():
+        print(
+            "Unable to migrate data in external_executor_id while in offline mode. "
+            "The downgraded columns will be NULL."
         )
 
-    with op.batch_alter_table("task_instance", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
+    for table_name in ("task_instance_history", "task_instance"):
+        op.add_column(
+            table_name, sa.Column("external_executor_id_varchar_250", sa.VARCHAR(length=250), nullable=True)
+        )
+
+        if not context.is_offline_mode():
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {table_name}
+                    SET external_executor_id_varchar_250 = SUBSTRING(external_executor_id, 1, 250)
+                    WHERE external_executor_id IS NOT NULL
+                    """
+                )
+            )
+
+        op.drop_column(table_name, "external_executor_id")
+        op.alter_column(
+            table_name,
+            "external_executor_id_varchar_250",
+            existing_type=sa.VARCHAR(length=250),
+            new_column_name="external_executor_id",
         )
