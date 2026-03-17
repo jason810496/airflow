@@ -47,15 +47,15 @@ Environment variables
 ---------------------
     BENCHMARK_NUM_DAGS        Number of DAGs (default: 100)
     BENCHMARK_TASKS_PER_DAG   Tasks per DAG (default: 100)
-    BENCHMARK_RUNS_PER_DAG    Runs per DAG (default: 1000)
+    BENCHMARK_RUNS_PER_DAG    Runs per DAG (default: 100)
     BENCHMARK_EXT_ID_PCT      % of rows with external_executor_id set (default: 30)
     BENCHMARK_LONG_ID_PCT     % of those IDs that exceed 250 chars (default: 0)
     BENCHMARK_CLEANUP         Set to "1" to delete all benchmark data and exit
     BENCHMARK_NUM_WORKERS     Parallel workers for Phase 3 (default: 4)
 
 Default configuration produces:
-    100 DAGs x 1,000 runs x 100 tasks = 10,000,000 task_instance rows
-                                       + 10,000,000 task_instance_history rows
+    100 DAGs x 1,00 runs x 100 tasks = 1,000,000 task_instance rows
+                                       + 1,000,000 task_instance_history rows
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ from airflow.utils.session import NEW_SESSION, create_session, provide_session
 # ---------------------------------------------------------------------------
 NUM_DAGS = int(os.environ.get("BENCHMARK_NUM_DAGS", "100"))
 TASKS_PER_DAG = int(os.environ.get("BENCHMARK_TASKS_PER_DAG", "100"))
-RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "1000"))
+RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "100"))
 EXT_ID_PCT = int(os.environ.get("BENCHMARK_EXT_ID_PCT", "30")) / 100.0
 LONG_ID_PCT = int(os.environ.get("BENCHMARK_LONG_ID_PCT", "0")) / 100.0
 NUM_WORKERS = int(os.environ.get("BENCHMARK_NUM_WORKERS", "4"))
@@ -335,7 +335,13 @@ def _vacuum_analyze() -> None:
         cursor = raw_conn.cursor()
         for tbl in ("task_instance", "task_instance_history", "dag_run"):
             print(f"  VACUUM ANALYZE {tbl}...")
-            cursor.execute(f"VACUUM ANALYZE {tbl}")
+            try:
+                cursor.execute(f"VACUUM ANALYZE {tbl}")
+            except Exception:
+                # VACUUM can fail in memory-constrained containers (e.g. Docker shm too small).
+                # Fall back to ANALYZE-only which still updates planner statistics.
+                print(f"    VACUUM ANALYZE failed, falling back to ANALYZE {tbl}...")
+                cursor.execute(f"ANALYZE {tbl}")
         cursor.close()
     finally:
         raw_conn.close()
@@ -428,8 +434,16 @@ def main() -> int:
 
     _insert_dag_runs(log_template_id)
     _insert_task_data()
-    _vacuum_analyze()
-    _print_report()
+    # after inserting all the data, rest of the steps are optional
+    try:
+        _vacuum_analyze()
+    except Exception as e:
+        print(f"  Warning: VACUUM ANALYZE failed: {e}")
+        print("  This may lead to slower migration performance due to outdated planner statistics.")
+    try:
+        _print_report()
+    except Exception as e:
+        print(f"  Warning: Failed to print report: {e}")
 
     total_elapsed = time.monotonic() - overall_start
     print(f"\nTotal elapsed: {total_elapsed:.1f}s")
