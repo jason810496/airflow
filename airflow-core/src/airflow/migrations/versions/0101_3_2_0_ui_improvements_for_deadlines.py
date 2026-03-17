@@ -104,8 +104,26 @@ def upgrade() -> None:
 
     with op.batch_alter_table("deadline", schema=None) as batch_op:
         batch_op.add_column(sa.Column("deadline_alert_id", sa.Uuid(), nullable=True))
-        batch_op.add_column(sa.Column("created_at", UtcDateTime, nullable=True))
-        batch_op.add_column(sa.Column("last_updated_at", UtcDateTime, nullable=True))
+        # Add both columns as NOT NULL with a temporary server default so existing rows are
+        # backfilled without a long-running UPDATE and follow-up ALTER .. SET NOT NULL lock.
+        # The defaults are removed immediately after this migration step so new rows must still
+        # provide timestamps explicitly.
+        batch_op.add_column(
+            sa.Column(
+                "created_at",
+                UtcDateTime,
+                nullable=False,
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "last_updated_at",
+                UtcDateTime,
+                nullable=False,
+                server_default=sa.text("CURRENT_TIMESTAMP"),
+            )
+        )
         batch_op.create_foreign_key(
             batch_op.f("deadline_deadline_alert_id_fkey"),
             "deadline_alert",
@@ -113,22 +131,8 @@ def upgrade() -> None:
             ["id"],
             ondelete="SET NULL",
         )
-
-    # For migration/backcompat purposes if no timestamp is there from the migration, use now()
-    # then lock the columns down so all new entries require the timestamps to be provided.
-    now = timezone.utcnow()
-    conn.execute(
-        sa.text("""
-            UPDATE deadline
-            SET created_at = :now, last_updated_at = :now
-            WHERE created_at IS NULL OR last_updated_at IS NULL
-        """),
-        {"now": now},
-    )
-
-    with op.batch_alter_table("deadline", schema=None) as batch_op:
-        batch_op.alter_column("created_at", existing_type=UtcDateTime, nullable=False)
-        batch_op.alter_column("last_updated_at", existing_type=UtcDateTime, nullable=False)
+        batch_op.alter_column("created_at", existing_type=UtcDateTime, server_default=None)
+        batch_op.alter_column("last_updated_at", existing_type=UtcDateTime, server_default=None)
 
     with op.batch_alter_table("deadline_alert", schema=None) as batch_op:
         batch_op.create_foreign_key(
