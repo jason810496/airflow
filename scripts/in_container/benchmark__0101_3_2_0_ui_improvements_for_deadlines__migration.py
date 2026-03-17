@@ -55,6 +55,7 @@ Environment variables
     BENCHMARK_DEADLINES_PER_RUN   Deadlines per run (default: 1)
     BENCHMARK_ALERTS_PER_DAG      Deadline alerts per serialized DAG (default: 2)
     BENCHMARK_CLEANUP             Set to "1" to delete all benchmark data and exit
+    BENCHMARK_NUM_WORKERS         Parallel workers for Phase 3 (default: 4)
 
 Default configuration produces:
     100,000 DAGs x 100 runs x 1 deadline = 10,000,000 deadline rows
@@ -63,10 +64,12 @@ Default configuration produces:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone as dt_tz
 
 import uuid6
@@ -89,6 +92,7 @@ NUM_DAGS = int(os.environ.get("BENCHMARK_NUM_DAGS", "100000"))
 RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "100"))
 DEADLINES_PER_RUN = int(os.environ.get("BENCHMARK_DEADLINES_PER_RUN", "1"))
 ALERTS_PER_DAG = int(os.environ.get("BENCHMARK_ALERTS_PER_DAG", "2"))
+NUM_WORKERS = int(os.environ.get("BENCHMARK_NUM_WORKERS", "4"))
 
 DAG_PREFIX = "benchmark_dag_"
 RUN_PREFIX = "benchmark_run_"
@@ -178,7 +182,7 @@ def _insert_dags_and_serialized_dags() -> None:
     print(f"\n[Phase 2] Inserting {NUM_DAGS:,} dags + dag_versions + serialized_dags...")
     t0 = time.monotonic()
 
-    batch_size = 1000
+    batch_size = 5000
     inserted = 0
     now = datetime(2024, 1, 1, tzinfo=dt_tz.utc)
 
@@ -235,6 +239,7 @@ def _insert_dags_and_serialized_dags() -> None:
             )
 
         with create_session() as session:
+            session.execute(text("SET LOCAL synchronous_commit = off"))
             session.execute(insert(DagModel.__table__), dag_rows)
             session.execute(insert(DagVersion.__table__), dv_rows)
             session.execute(insert(SerializedDagModel.__table__), sd_rows)
@@ -247,99 +252,130 @@ def _insert_dags_and_serialized_dags() -> None:
     print(f"  Done in {time.monotonic() - t0:.1f}s")
 
 
-def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
-    """Insert DagRun and Deadline rows in batches.
+def _insert_single_batch(
+    batch_start: int,
+    batch_end: int,
+    log_template_id: int,
+    copy_callback: str,
+) -> tuple[int, int]:
+    """Insert dag_runs (INSERT RETURNING) + deadlines (COPY) for one batch.
 
-    For each batch of DAGs:
-    1. Insert dag_run rows.
-    2. Query back the auto-generated dag_run.id values.
-    3. Insert deadline rows (with inline JSON callback) using those IDs.
+    Returns ``(num_dag_runs, num_deadlines)`` inserted.
     """
+    # ── Build dag_run rows ──────────────────────────────────────────────
+    dr_rows: list[dict] = []
+    for dag_idx in range(batch_start, batch_end):
+        dag_id = f"{DAG_PREFIX}{dag_idx}"
+        for run_idx in range(RUNS_PER_DAG):
+            gs = dag_idx * RUNS_PER_DAG + run_idx
+            logical_date = BASE_DATE + timedelta(seconds=gs)
+            dr_rows.append(
+                {
+                    "dag_id": dag_id,
+                    "run_id": f"{RUN_PREFIX}{gs}",
+                    "run_type": "manual",
+                    "state": "success",
+                    "logical_date": logical_date,
+                    "run_after": logical_date,
+                    "log_template_id": log_template_id,
+                    "clear_number": 0,
+                }
+            )
+
+    # ── INSERT dag_runs with RETURNING (avoids separate SELECT) ─────────
+    with create_session() as session:
+        session.execute(text("SET LOCAL synchronous_commit = off"))
+        result = session.execute(
+            insert(DagRun.__table__).returning(
+                DagRun.__table__.c.id,
+                DagRun.__table__.c.run_id,
+            ),
+            dr_rows,
+        )
+        run_id_to_db_id = {row.run_id: row.id for row in result}
+
+    # ── Build deadline TSV and COPY via raw psycopg2 ────────────────────
+    buf = io.StringIO()
+    dl_count = 0
+    for dag_idx in range(batch_start, batch_end):
+        for run_idx in range(RUNS_PER_DAG):
+            gs = dag_idx * RUNS_PER_DAG + run_idx
+            db_id = run_id_to_db_id[f"{RUN_PREFIX}{gs}"]
+
+            for dl_idx in range(DEADLINES_PER_RUN):
+                dl_id = uuid6.uuid7()
+                deadline_time = BASE_DATE + timedelta(seconds=gs, hours=dl_idx + 1)
+                buf.write(f"{dl_id}\t{db_id}\t{deadline_time.isoformat()}\t{copy_callback}\n")
+                dl_count += 1
+
+    buf.seek(0)
+    raw_conn = settings.engine.raw_connection()
+    try:
+        cursor = raw_conn.cursor()
+        cursor.execute("SET synchronous_commit = off")
+        cursor.copy_from(
+            buf,
+            "deadline",
+            columns=("id", "dagrun_id", "deadline_time", "callback"),
+        )
+        raw_conn.commit()
+        cursor.close()
+    finally:
+        raw_conn.close()
+
+    return len(dr_rows), dl_count
+
+
+def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
+    """Insert DagRun and Deadline rows using parallel workers + COPY."""
     total_runs = NUM_DAGS * RUNS_PER_DAG
     total_deadlines = total_runs * DEADLINES_PER_RUN
-    print(f"\n[Phase 3] Inserting {total_runs:,} dag_runs + {total_deadlines:,} deadlines...")
+    print(
+        f"\n[Phase 3] Inserting {total_runs:,} dag_runs + {total_deadlines:,} deadlines "
+        f"({NUM_WORKERS} workers)..."
+    )
     t0 = time.monotonic()
 
-    # Keep each transaction around ~10K dag_runs
-    dags_per_batch = max(1, 10_000 // RUNS_PER_DAG)
+    # Pre-escape the callback JSON for PostgreSQL COPY TEXT format.
+    serialized_callback = _make_serialized_callback()
+    callback_json = json.dumps(serialized_callback)
+    copy_callback = callback_json.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n")
+
+    # ~50K dag_runs per batch → manageable transaction + COPY size.
+    dags_per_batch = max(1, 50_000 // RUNS_PER_DAG)
+    total_batches = (NUM_DAGS + dags_per_batch - 1) // dags_per_batch
     inserted_runs = 0
     inserted_deadlines = 0
-    serialized_callback = _make_serialized_callback()
+    batches_done = 0
 
-    for batch_start in range(0, NUM_DAGS, dags_per_batch):
-        batch_end = min(batch_start + dags_per_batch, NUM_DAGS)
-        dag_ids_in_batch = [f"{DAG_PREFIX}{i}" for i in range(batch_start, batch_end)]
-
-        # Build dag_run rows — only columns that exist in 3.1.8
-        dr_rows: list[dict] = []
-        for dag_idx in range(batch_start, batch_end):
-            dag_id = f"{DAG_PREFIX}{dag_idx}"
-            for run_idx in range(RUNS_PER_DAG):
-                gs = dag_idx * RUNS_PER_DAG + run_idx
-                logical_date = BASE_DATE + timedelta(seconds=gs)
-                dr_rows.append(
-                    {
-                        "dag_id": dag_id,
-                        "run_id": f"{RUN_PREFIX}{gs}",
-                        "run_type": "manual",
-                        "state": "success",
-                        "logical_date": logical_date,
-                        "run_after": logical_date,
-                        "log_template_id": log_template_id,
-                        "clear_number": 0,
-                    }
-                )
-
-        with create_session() as session:
-            # Insert dag_runs — the DB assigns auto-increment IDs
-            session.execute(insert(DagRun.__table__), dr_rows)
-            session.flush()
-
-            # Query back the auto-generated dag_run.id for each run_id
-            result = session.execute(
-                select(DagRun.__table__.c.id, DagRun.__table__.c.run_id).where(
-                    DagRun.__table__.c.dag_id.in_(dag_ids_in_batch)
-                )
+    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
+        futures = {}
+        for batch_start in range(0, NUM_DAGS, dags_per_batch):
+            batch_end = min(batch_start + dags_per_batch, NUM_DAGS)
+            future = pool.submit(
+                _insert_single_batch,
+                batch_start,
+                batch_end,
+                log_template_id,
+                copy_callback,
             )
-            run_id_to_db_id = {row.run_id: row.id for row in result}
+            futures[future] = (batch_start, batch_end)
 
-            # Build deadline rows using Deadline.__table__ which matches the
-            # 3.1.8 schema: inline JSON callback, callback_state, trigger_id.
-            # The SQL column name is "callback" (Python attr is _callback).
-            dl_rows: list[dict] = []
-            for dag_idx in range(batch_start, batch_end):
-                for run_idx in range(RUNS_PER_DAG):
-                    gs = dag_idx * RUNS_PER_DAG + run_idx
-                    run_id = f"{RUN_PREFIX}{gs}"
-                    db_id = run_id_to_db_id[run_id]
+        for future in as_completed(futures):
+            runs, deadlines = future.result()
+            inserted_runs += runs
+            inserted_deadlines += deadlines
+            batches_done += 1
+            elapsed = time.monotonic() - t0
 
-                    for dl_idx in range(DEADLINES_PER_RUN):
-                        dl_id = uuid6.uuid7()
-                        deadline_time = BASE_DATE + timedelta(seconds=gs, hours=dl_idx + 1)
-
-                        dl_rows.append(
-                            {
-                                "id": dl_id,
-                                "dagrun_id": db_id,
-                                "deadline_time": deadline_time,
-                                "callback": serialized_callback,
-                            }
-                        )
-
-            session.execute(insert(Deadline.__table__), dl_rows)
-
-        inserted_runs += len(dr_rows)
-        inserted_deadlines += len(dl_rows)
-        elapsed = time.monotonic() - t0
-
-        batch_num = batch_start // dags_per_batch + 1
-        if batch_num % 10 == 0 or batch_end == NUM_DAGS:
-            rate = inserted_deadlines / elapsed if elapsed > 0 else 0
-            print(
-                f"  dag_runs: {inserted_runs:,}/{total_runs:,}, "
-                f"deadlines: {inserted_deadlines:,}/{total_deadlines:,} "
-                f"({elapsed:.1f}s, {rate:,.0f} dl/s)"
-            )
+            if batches_done % 10 == 0 or batches_done == total_batches:
+                rate = inserted_deadlines / elapsed if elapsed > 0 else 0
+                print(
+                    f"  dag_runs: {inserted_runs:,}/{total_runs:,}, "
+                    f"deadlines: {inserted_deadlines:,}/{total_deadlines:,} "
+                    f"({elapsed:.1f}s, {rate:,.0f} dl/s)",
+                    flush=True,
+                )
 
     print(f"  Done in {time.monotonic() - t0:.1f}s")
 
@@ -445,6 +481,9 @@ def _cleanup() -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    # Force line-buffered stdout so progress is visible in docker exec without -t.
+    sys.stdout.reconfigure(line_buffering=True)
+
     # Ensure the ORM engine/session is initialized (required for standalone scripts).
     settings.configure_orm()
 
@@ -465,6 +504,7 @@ def main() -> int:
     print(f"  Total dag_runs:      {total_runs:,}")
     print(f"  Total deadlines:     {total_deadlines:,}")
     print(f"  Total serialized:    {NUM_DAGS:,}")
+    print(f"  Workers:             {NUM_WORKERS}")
     print("=" * 60)
 
     overall_start = time.monotonic()
