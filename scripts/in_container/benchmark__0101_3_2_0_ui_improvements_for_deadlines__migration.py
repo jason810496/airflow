@@ -71,7 +71,7 @@ from datetime import datetime, timedelta, timezone as dt_tz
 
 import sqlalchemy as sa
 import uuid6
-from sqlalchemy import column, func, insert, select, table, text
+from sqlalchemy import column, insert, select, table, text
 
 from airflow import settings
 from airflow.models.dag import DagModel
@@ -79,9 +79,8 @@ from airflow.models.dag_version import DagVersion
 from airflow.models.dagbundle import DagBundleModel
 from airflow.models.dagrun import DagRun
 from airflow.models.serialized_dag import SerializedDagModel
-from airflow.models.tasklog import LogTemplate
 from airflow.utils.hashlib_wrapper import md5
-from airflow.utils.session import NEW_SESSION, create_session, provide_session
+from airflow.utils.session import create_session
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -168,18 +167,41 @@ def _compute_dag_hash(dag_data: dict) -> str:
 # ---------------------------------------------------------------------------
 # Phase functions
 # ---------------------------------------------------------------------------
-@provide_session
-def _ensure_prerequisites(*, session=NEW_SESSION) -> int:
-    """Ensure log_template and dag_bundle exist. Returns log_template_id."""
-    log_template_id = session.scalar(select(func.max(LogTemplate.id)))
-    if log_template_id is None:
-        lt = LogTemplate(filename="benchmark.log", elasticsearch_id="benchmark")
-        session.add(lt)
-        session.flush()
-        log_template_id = lt.id
+def _check_schema() -> None:
+    """Verify the database has been initialized with at least the 3.1.8 schema."""
+    inspector = sa.inspect(settings.engine)
+    required_tables = ("deadline", "dag_run", "serialized_dag", "dag", "dag_version", "dag_bundle")
+    missing = [t for t in required_tables if not inspector.has_table(t)]
+    if missing:
+        print(
+            f"ERROR: Required tables missing: {', '.join(missing)}\n"
+            "The database must be initialized before running this benchmark.\n"
+            "To set up the 3.1.8 schema:\n"
+            "  airflow db migrate --to-revision 509b94a1042d\n"
+        )
+        sys.exit(1)
 
-    if not session.scalar(select(DagBundleModel).where(DagBundleModel.name == BENCHMARK_BUNDLE)):
-        session.add(DagBundleModel(name=BENCHMARK_BUNDLE))
+
+def _ensure_prerequisites() -> int:
+    """Ensure log_template and dag_bundle rows exist. Returns log_template_id."""
+    with create_session() as session:
+        # Use raw SQL — the ORM LogTemplate model on main may not match the 3.1.8 schema.
+        log_template_id = session.scalar(text("SELECT max(id) FROM log_template"))
+        if log_template_id is None:
+            session.execute(
+                text(
+                    "INSERT INTO log_template (filename, elasticsearch_id, created_at) "
+                    "VALUES (:filename, :elasticsearch_id, :created_at)"
+                ),
+                {"filename": "benchmark.log", "elasticsearch_id": "benchmark", "created_at": BASE_DATE},
+            )
+            log_template_id = session.scalar(text("SELECT max(id) FROM log_template"))
+
+        existing = session.scalar(
+            text("SELECT name FROM dag_bundle WHERE name = :name"), {"name": BENCHMARK_BUNDLE}
+        )
+        if not existing:
+            session.execute(text("INSERT INTO dag_bundle (name) VALUES (:name)"), {"name": BENCHMARK_BUNDLE})
 
     return log_template_id
 
@@ -372,16 +394,16 @@ def _vacuum_analyze() -> None:
     print(f"  Done in {time.monotonic() - t0:.1f}s")
 
 
-@provide_session
-def _print_report(*, session=NEW_SESSION) -> None:
+def _print_report() -> None:
     """Print table sizes and row counts."""
-    dl_count = session.scalar(text("SELECT count(*) FROM deadline"))
-    dr_count = session.scalar(select(func.count()).select_from(DagRun.__table__))
-    sd_count = session.scalar(select(func.count()).select_from(SerializedDagModel.__table__))
+    with create_session() as session:
+        dl_count = session.scalar(text("SELECT count(*) FROM deadline"))
+        dr_count = session.scalar(text("SELECT count(*) FROM dag_run"))
+        sd_count = session.scalar(text("SELECT count(*) FROM serialized_dag"))
 
-    dl_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('deadline'))"))
-    dr_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('dag_run'))"))
-    sd_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('serialized_dag'))"))
+        dl_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('deadline'))"))
+        dr_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('dag_run'))"))
+        sd_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('serialized_dag'))"))
 
     print("\n" + "=" * 60)
     print("RESULTS")
@@ -476,7 +498,8 @@ def main() -> int:
 
     overall_start = time.monotonic()
 
-    print("\n[Phase 1] Setting up prerequisites...")
+    print("\n[Phase 1] Checking schema and setting up prerequisites...")
+    _check_schema()
     log_template_id = _ensure_prerequisites()
     print(f"  log_template id={log_template_id}")
 
