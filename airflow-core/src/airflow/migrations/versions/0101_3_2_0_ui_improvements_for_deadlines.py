@@ -104,8 +104,12 @@ def upgrade() -> None:
 
     with op.batch_alter_table("deadline", schema=None) as batch_op:
         batch_op.add_column(sa.Column("deadline_alert_id", sa.Uuid(), nullable=True))
-        batch_op.add_column(sa.Column("created_at", UtcDateTime, nullable=True))
-        batch_op.add_column(sa.Column("last_updated_at", UtcDateTime, nullable=True))
+        batch_op.add_column(
+            sa.Column("created_at_shadow", UtcDateTime, nullable=False, server_default=sa.func.now())
+        )
+        batch_op.add_column(
+            sa.Column("last_updated_at_shadow", UtcDateTime, nullable=False, server_default=sa.func.now())
+        )
         batch_op.create_foreign_key(
             batch_op.f("deadline_deadline_alert_id_fkey"),
             "deadline_alert",
@@ -114,21 +118,13 @@ def upgrade() -> None:
             ondelete="SET NULL",
         )
 
-    # For migration/backcompat purposes if no timestamp is there from the migration, use now()
-    # then lock the columns down so all new entries require the timestamps to be provided.
-    now = timezone.utcnow()
-    conn.execute(
-        sa.text("""
-            UPDATE deadline
-            SET created_at = :now, last_updated_at = :now
-            WHERE created_at IS NULL OR last_updated_at IS NULL
-        """),
-        {"now": now},
-    )
-
     with op.batch_alter_table("deadline", schema=None) as batch_op:
-        batch_op.alter_column("created_at", existing_type=UtcDateTime, nullable=False)
-        batch_op.alter_column("last_updated_at", existing_type=UtcDateTime, nullable=False)
+        batch_op.alter_column("created_at_shadow", server_default=None)
+        batch_op.alter_column("last_updated_at_shadow", server_default=None)
+        batch_op.alter_column("created_at_shadow", new_column_name="created_at", existing_type=UtcDateTime)
+        batch_op.alter_column(
+            "last_updated_at_shadow", new_column_name="last_updated_at", existing_type=UtcDateTime
+        )
 
     with op.batch_alter_table("deadline_alert", schema=None) as batch_op:
         batch_op.create_foreign_key(
