@@ -20,24 +20,27 @@
 Benchmark data generator for migration 0101_3_2_0_ui_improvements_for_deadlines.
 
 Populates deadline, serialized_dag, and supporting tables with configurable row counts
-to measure migration timing for the deadline UI improvements migration.
+to measure the full upgrade path from Airflow 3.1.8 schema to main.
 
-The migration has three performance-critical phases:
-1. UPDATE deadline SET created_at=now, last_updated_at=now — holds row-level locks
-   on all deadline rows for the duration of the update (~7 min at 10M rows).
-2. ALTER COLUMN created_at/last_updated_at SET NOT NULL — acquires ACCESS EXCLUSIVE lock
-   on the deadline table, blocking all reads and writes.
-3. Migrate deadline alert data from serialized_dag JSON into the new deadline_alert table.
+Data is inserted in the **3.1.8 schema format** — the deadline table stores the callback
+as inline JSON (no separate callback table), and the serialized_dag table contains
+deadline alert definitions in its dag JSON.
+
+Key migrations that process this data:
+  0093 — Creates the callback table (renames callback_request → callback).
+  0094 — Replaces deadline.callback (JSON) with deadline.callback_id FK + deadline.missed.
+  0101 — Adds deadline.created_at / last_updated_at, creates deadline_alert table,
+         migrates data from serialized_dag JSON.
 
 Scenarios
 ---------
-1. **Pre-migration benchmark** (recommended):
-       Downgrade to revision e79fc784f145 (the revision before 0101), run this script
-       to populate data, then apply the migration and measure timing.
+1. **Full upgrade benchmark** (recommended):
+       Start from the 3.1.8 schema, run this script to populate data,
+       then ``airflow db migrate`` to apply all migrations and measure timing.
 
-2. **Shadow-column migration benchmark**:
-       Same data as scenario 1, but test the alternative shadow-column migration path
-       (add new column, backfill, swap) to compare lock duration.
+2. **Single-migration benchmark** (0101 only):
+       Run migrations through 0100, populate data (deadlines will already have
+       callback_id/missed from 0094), then apply only migration 0101.
 
 Run inside Breeze with PostgreSQL backend
 -----------------------------------------
@@ -55,7 +58,6 @@ Environment variables
 
 Default configuration produces:
     100,000 DAGs x 100 runs x 1 deadline = 10,000,000 deadline rows
-                                         + 10,000,000 callback rows
     100,000 serialized_dag rows (with 2 deadline alerts each)
 """
 
@@ -67,16 +69,15 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone as dt_tz
 
+import sqlalchemy as sa
 import uuid6
-from sqlalchemy import func, insert, select, text
+from sqlalchemy import column, func, insert, select, table, text
 
 from airflow import settings
-from airflow.models.callback import Callback
 from airflow.models.dag import DagModel
 from airflow.models.dag_version import DagVersion
 from airflow.models.dagbundle import DagBundleModel
 from airflow.models.dagrun import DagRun
-from airflow.models.deadline import Deadline
 from airflow.models.serialized_dag import SerializedDagModel
 from airflow.models.tasklog import LogTemplate
 from airflow.utils.hashlib_wrapper import md5
@@ -95,10 +96,36 @@ RUN_PREFIX = "benchmark_run_"
 BASE_DATE = datetime(2020, 1, 1, tzinfo=dt_tz.utc)
 BENCHMARK_BUNDLE = "benchmark"
 
+# ---------------------------------------------------------------------------
+# 3.1.8 table definitions
+# ---------------------------------------------------------------------------
+# The deadline table in Airflow 3.1.8 stores the callback as inline JSON.
+# There is no separate callback table. We define the table explicitly
+# because the current ORM model on main has a completely different layout
+# (callback_id FK, missed boolean, etc.).
+deadline_table = table(
+    "deadline",
+    column("id", sa.Uuid()),
+    column("dagrun_id", sa.Integer()),
+    column("deadline_time", sa.DateTime(timezone=True)),
+    column("callback", sa.JSON()),
+    column("callback_state", sa.String(20)),
+    column("trigger_id", sa.Integer()),
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _make_serialized_callback() -> dict:
+    """Create a callback in the 3.1.8 serde format (airflow.serialization.serde)."""
+    return {
+        "__data__": {"path": "benchmark.callback_func", "kwargs": {}},
+        "__classname__": "airflow.sdk.definitions.deadline.AsyncCallback",
+        "__version__": 0,
+    }
+
+
 def _make_dag_data(dag_id: str) -> dict:
     """Create minimal serialized DAG data with deadline alerts embedded in the JSON."""
     deadline_alerts = []
@@ -180,6 +207,9 @@ def _insert_dags_and_serialized_dags() -> None:
             dag_data = _make_dag_data(dag_id)
             dag_hash = _compute_dag_hash(dag_data)
 
+            # Only include columns that exist in the 3.1.8 schema.
+            # Columns like timetable_type, fail_fast, exceeds_max_non_backfill
+            # are added by later migrations (0092, 0099, 0100).
             dag_rows.append(
                 {
                     "dag_id": dag_id,
@@ -189,7 +219,6 @@ def _insert_dags_and_serialized_dags() -> None:
                     "max_active_tasks": 16,
                     "max_consecutive_failed_dag_runs": 0,
                     "has_task_concurrency_limits": False,
-                    "timetable_type": "",
                 }
             )
 
@@ -203,7 +232,7 @@ def _insert_dags_and_serialized_dags() -> None:
                 }
             )
 
-            # Column name in the table is "data" (not "_data")
+            # Column name in the SQL table is "data" (mapped as _data in ORM)
             sd_rows.append(
                 {
                     "id": sd_id,
@@ -230,31 +259,29 @@ def _insert_dags_and_serialized_dags() -> None:
 
 
 def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
-    """Insert DagRun, Callback, and Deadline rows in batches.
+    """Insert DagRun and Deadline rows in batches.
 
     For each batch of DAGs:
     1. Insert dag_run rows.
     2. Query back the auto-generated dag_run.id values.
-    3. Insert callback + deadline rows using those IDs.
+    3. Insert deadline rows (with inline JSON callback) using those IDs.
     """
     total_runs = NUM_DAGS * RUNS_PER_DAG
     total_deadlines = total_runs * DEADLINES_PER_RUN
-    print(
-        f"\n[Phase 3] Inserting {total_runs:,} dag_runs "
-        f"+ {total_deadlines:,} callbacks + {total_deadlines:,} deadlines..."
-    )
+    print(f"\n[Phase 3] Inserting {total_runs:,} dag_runs + {total_deadlines:,} deadlines...")
     t0 = time.monotonic()
 
     # Keep each transaction around ~10K dag_runs
     dags_per_batch = max(1, 10_000 // RUNS_PER_DAG)
     inserted_runs = 0
     inserted_deadlines = 0
+    serialized_callback = _make_serialized_callback()
 
     for batch_start in range(0, NUM_DAGS, dags_per_batch):
         batch_end = min(batch_start + dags_per_batch, NUM_DAGS)
         dag_ids_in_batch = [f"{DAG_PREFIX}{i}" for i in range(batch_start, batch_end)]
 
-        # Build dag_run rows
+        # Build dag_run rows — only columns that exist in 3.1.8
         dr_rows: list[dict] = []
         for dag_idx in range(batch_start, batch_end):
             dag_id = f"{DAG_PREFIX}{dag_idx}"
@@ -287,8 +314,8 @@ def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
             )
             run_id_to_db_id = {row.run_id: row.id for row in result}
 
-            # Build callback + deadline rows using the dag_run IDs
-            cb_rows: list[dict] = []
+            # Build deadline rows using the 3.1.8 schema (inline JSON callback,
+            # no separate callback table, no missed/callback_id columns).
             dl_rows: list[dict] = []
             for dag_idx in range(batch_start, batch_end):
                 for run_idx in range(RUNS_PER_DAG):
@@ -297,40 +324,19 @@ def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
                     db_id = run_id_to_db_id[run_id]
 
                     for dl_idx in range(DEADLINES_PER_RUN):
-                        cb_id = uuid6.uuid7()
                         dl_id = uuid6.uuid7()
                         deadline_time = BASE_DATE + timedelta(seconds=gs, hours=dl_idx + 1)
 
-                        cb_rows.append(
-                            {
-                                "id": cb_id,
-                                "type": "triggerer",
-                                "fetch_method": "import_path",
-                                "data": {
-                                    "path": "benchmark.callback_func",
-                                    "kwargs": {},
-                                    "prefix": "deadline_alerts",
-                                },
-                                "state": "scheduled",
-                                "priority_weight": 1,
-                                "created_at": BASE_DATE,
-                            }
-                        )
-
-                        # Only include pre-migration columns: the migration adds
-                        # created_at, last_updated_at, and deadline_alert_id later.
                         dl_rows.append(
                             {
                                 "id": dl_id,
                                 "dagrun_id": db_id,
                                 "deadline_time": deadline_time,
-                                "missed": False,
-                                "callback_id": cb_id,
+                                "callback": serialized_callback,
                             }
                         )
 
-            session.execute(insert(Callback.__table__), cb_rows)
-            session.execute(insert(Deadline.__table__), dl_rows)
+            session.execute(insert(deadline_table), dl_rows)
 
         inserted_runs += len(dr_rows)
         inserted_deadlines += len(dl_rows)
@@ -357,9 +363,9 @@ def _vacuum_analyze() -> None:
     try:
         raw_conn.set_session(autocommit=True)
         cursor = raw_conn.cursor()
-        for table in ("deadline", "callback", "dag_run", "serialized_dag"):
-            print(f"  VACUUM ANALYZE {table}...")
-            cursor.execute(f"VACUUM ANALYZE {table}")
+        for tbl in ("deadline", "dag_run", "serialized_dag"):
+            print(f"  VACUUM ANALYZE {tbl}...")
+            cursor.execute(f"VACUUM ANALYZE {tbl}")
         cursor.close()
     finally:
         raw_conn.close()
@@ -369,13 +375,11 @@ def _vacuum_analyze() -> None:
 @provide_session
 def _print_report(*, session=NEW_SESSION) -> None:
     """Print table sizes and row counts."""
-    dl_count = session.scalar(select(func.count()).select_from(Deadline.__table__))
-    cb_count = session.scalar(select(func.count()).select_from(Callback.__table__))
+    dl_count = session.scalar(text("SELECT count(*) FROM deadline"))
     dr_count = session.scalar(select(func.count()).select_from(DagRun.__table__))
     sd_count = session.scalar(select(func.count()).select_from(SerializedDagModel.__table__))
 
     dl_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('deadline'))"))
-    cb_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('callback'))"))
     dr_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('dag_run'))"))
     sd_size = session.scalar(text("SELECT pg_size_pretty(pg_total_relation_size('serialized_dag'))"))
 
@@ -383,7 +387,6 @@ def _print_report(*, session=NEW_SESSION) -> None:
     print("RESULTS")
     print("=" * 60)
     print(f"  deadline:          {dl_count:,} rows  ({dl_size})")
-    print(f"  callback:          {cb_count:,} rows  ({cb_size})")
     print(f"  dag_run:           {dr_count:,} rows  ({dr_size})")
     print(f"  serialized_dag:    {sd_count:,} rows  ({sd_size})")
     print("=" * 60)
@@ -394,19 +397,17 @@ def _cleanup() -> None:
     print("Cleaning up benchmark data...")
     t0 = time.monotonic()
 
-    # Phase 1: Delete deadlines and their callbacks in batches.
-    # We batch because collecting 10M+ IDs at once is impractical.
+    # Delete deadlines in batches (10M rows is too many for a single DELETE).
     total_dl = 0
-    total_cb = 0
     batch_size = 50_000
 
     while True:
         with create_session() as session:
             rows = session.execute(
-                select(Deadline.__table__.c.id, Deadline.__table__.c.callback_id)
+                select(deadline_table.c.id)
                 .join(
                     DagRun.__table__,
-                    Deadline.__table__.c.dagrun_id == DagRun.__table__.c.id,
+                    deadline_table.c.dagrun_id == DagRun.__table__.c.id,
                 )
                 .where(DagRun.__table__.c.dag_id.like(f"{DAG_PREFIX}%"))
                 .limit(batch_size)
@@ -416,17 +417,13 @@ def _cleanup() -> None:
                 break
 
             dl_ids = [r[0] for r in rows]
-            cb_ids = [r[1] for r in rows]
-
-            session.execute(Deadline.__table__.delete().where(Deadline.__table__.c.id.in_(dl_ids)))
-            session.execute(Callback.__table__.delete().where(Callback.__table__.c.id.in_(cb_ids)))
+            session.execute(deadline_table.delete().where(deadline_table.c.id.in_(dl_ids)))
 
         total_dl += len(dl_ids)
-        total_cb += len(cb_ids)
         elapsed = time.monotonic() - t0
-        print(f"  {total_dl:,} deadlines, {total_cb:,} callbacks ({elapsed:.1f}s)")
+        print(f"  {total_dl:,} deadlines ({elapsed:.1f}s)")
 
-    # Phase 2: Delete remaining supporting data
+    # Delete remaining supporting data
     with create_session() as session:
         dr_del = session.execute(
             DagRun.__table__.delete().where(DagRun.__table__.c.dag_id.like(f"{DAG_PREFIX}%"))
@@ -448,7 +445,7 @@ def _cleanup() -> None:
 
     total_elapsed = time.monotonic() - t0
     print(
-        f"Deleted: {total_dl:,} deadlines, {total_cb:,} callbacks, {dr_del:,} dag_runs, "
+        f"Deleted: {total_dl:,} deadlines, {dr_del:,} dag_runs, "
         f"{sd_del:,} serialized_dags, {dv_del:,} dag_versions, {dm_del:,} dag_models "
         f"({total_elapsed:.1f}s)"
     )
@@ -474,7 +471,6 @@ def main() -> int:
     print(f"  Alerts/DAG (JSON):   {ALERTS_PER_DAG:,}")
     print(f"  Total dag_runs:      {total_runs:,}")
     print(f"  Total deadlines:     {total_deadlines:,}")
-    print(f"  Total callbacks:     {total_deadlines:,}")
     print(f"  Total serialized:    {NUM_DAGS:,}")
     print("=" * 60)
 
@@ -492,8 +488,7 @@ def main() -> int:
     total_elapsed = time.monotonic() - overall_start
     print(f"\nTotal elapsed: {total_elapsed:.1f}s")
     print("\nData is ready. Run the migration to benchmark:")
-    print("  airflow db migrate                      # upgrade")
-    print("  airflow db downgrade -r e79fc784f145     # downgrade back to pre-0101")
+    print("  airflow db migrate    # apply all migrations from 3.1.8 to main")
 
     return 0
 
