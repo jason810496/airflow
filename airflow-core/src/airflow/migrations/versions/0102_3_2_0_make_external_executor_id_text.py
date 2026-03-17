@@ -28,7 +28,8 @@ Create Date: 2026-01-28 16:35:00.000000
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision = "a5a3e5eb9b8d"
@@ -59,18 +60,61 @@ def upgrade():
 
 def downgrade():
     """Revert external_executor_id column from TEXT to VARCHAR(250)."""
-    with op.batch_alter_table("task_instance_history", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
-        )
+    conn = op.get_bind()
 
-    with op.batch_alter_table("task_instance", schema=None) as batch_op:
-        batch_op.alter_column(
-            "external_executor_id",
-            existing_type=sa.Text(),
-            type_=sa.VARCHAR(length=250),
-            existing_nullable=True,
+    if conn.dialect.name != "postgresql":
+        with op.batch_alter_table("task_instance_history", schema=None) as batch_op:
+            batch_op.alter_column(
+                "external_executor_id",
+                existing_type=sa.Text(),
+                type_=sa.VARCHAR(length=250),
+                existing_nullable=True,
+            )
+
+        with op.batch_alter_table("task_instance", schema=None) as batch_op:
+            batch_op.alter_column(
+                "external_executor_id",
+                existing_type=sa.Text(),
+                type_=sa.VARCHAR(length=250),
+                existing_nullable=True,
+            )
+        return
+
+    if context.is_offline_mode():
+        print(
+            "WARNING: Unable to validate external_executor_id length in offline mode. "
+            "Downgrade may fail if values exceed 250 characters."
         )
+    else:
+        for table_name in ("task_instance", "task_instance_history"):
+            too_long_count = conn.execute(
+                text(
+                    f"""
+                    SELECT count(*)
+                    FROM {table_name}
+                    WHERE external_executor_id IS NOT NULL
+                    AND length(external_executor_id) > 250
+                    """
+                )
+            ).scalar_one()
+            if too_long_count:
+                raise ValueError(
+                    f"Cannot downgrade: {table_name}.external_executor_id has {too_long_count} rows longer "
+                    "than 250 characters."
+                )
+
+    for table_name in ("task_instance_history", "task_instance"):
+        temp_column = "external_executor_id_varchar"
+        op.add_column(table_name, sa.Column(temp_column, sa.VARCHAR(length=250), nullable=True))
+        conn.execute(
+            text(
+                f"""
+                UPDATE {table_name}
+                SET {temp_column} = external_executor_id
+                WHERE external_executor_id IS NOT NULL
+                """
+            )
+        )
+        with op.batch_alter_table(table_name, schema=None) as batch_op:
+            batch_op.drop_column("external_executor_id")
+            batch_op.alter_column(temp_column, new_column_name="external_executor_id")
