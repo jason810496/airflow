@@ -521,8 +521,16 @@ def main() -> int:
 
     _insert_dags_and_serialized_dags()
     _insert_dag_runs_and_deadlines(log_template_id)
-    _vacuum_analyze()
-    _print_report()
+    # after inserting all the data, rest of the steps are optional
+    try:
+        _vacuum_analyze()
+    except Exception as e:
+        print(f"  Warning: VACUUM ANALYZE failed: {e}")
+        print("  This may lead to slower migration performance due to outdated planner statistics.")
+    try:
+        _print_report()
+    except Exception as e:
+        print(f"  Warning: Failed to print report: {e}")
 
     total_elapsed = time.monotonic() - overall_start
     print(f"\nTotal elapsed: {total_elapsed:.1f}s")
