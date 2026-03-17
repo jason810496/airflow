@@ -391,7 +391,13 @@ def _vacuum_analyze() -> None:
         cursor = raw_conn.cursor()
         for tbl in ("deadline", "dag_run", "serialized_dag"):
             print(f"  VACUUM ANALYZE {tbl}...")
-            cursor.execute(f"VACUUM ANALYZE {tbl}")
+            try:
+                cursor.execute(f"VACUUM ANALYZE {tbl}")
+            except Exception:
+                # VACUUM can fail in memory-constrained containers (e.g. Docker shm too small).
+                # Fall back to ANALYZE-only which still updates planner statistics.
+                print(f"    VACUUM ANALYZE failed, falling back to ANALYZE {tbl}...")
+                cursor.execute(f"ANALYZE {tbl}")
         cursor.close()
     finally:
         raw_conn.close()
