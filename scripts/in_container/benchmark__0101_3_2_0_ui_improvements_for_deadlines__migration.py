@@ -27,7 +27,7 @@ as inline JSON (no separate callback table), and the serialized_dag table contai
 deadline alert definitions in its dag JSON.
 
 Key migrations that process this data:
-  0093 — Creates the callback table (renames callback_request → callback).
+  0093 — Creates the callback table (renames callback_request -> callback).
   0094 — Replaces deadline.callback (JSON) with deadline.callback_id FK + deadline.missed.
   0101 — Adds deadline.created_at / last_updated_at, creates deadline_alert table,
          migrates data from serialized_dag JSON.
@@ -69,15 +69,15 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone as dt_tz
 
-import sqlalchemy as sa
 import uuid6
-from sqlalchemy import column, insert, select, table, text
+from sqlalchemy import insert, select, text
 
 from airflow import settings
 from airflow.models.dag import DagModel
 from airflow.models.dag_version import DagVersion
 from airflow.models.dagbundle import DagBundleModel
 from airflow.models.dagrun import DagRun
+from airflow.models.deadline import Deadline
 from airflow.models.serialized_dag import SerializedDagModel
 from airflow.utils.hashlib_wrapper import md5
 from airflow.utils.session import create_session
@@ -94,23 +94,6 @@ DAG_PREFIX = "benchmark_dag_"
 RUN_PREFIX = "benchmark_run_"
 BASE_DATE = datetime(2020, 1, 1, tzinfo=dt_tz.utc)
 BENCHMARK_BUNDLE = "benchmark"
-
-# ---------------------------------------------------------------------------
-# 3.1.8 table definitions
-# ---------------------------------------------------------------------------
-# The deadline table in Airflow 3.1.8 stores the callback as inline JSON.
-# There is no separate callback table. We define the table explicitly
-# because the current ORM model on main has a completely different layout
-# (callback_id FK, missed boolean, etc.).
-deadline_table = table(
-    "deadline",
-    column("id", sa.Uuid()),
-    column("dagrun_id", sa.Integer()),
-    column("deadline_time", sa.DateTime(timezone=True)),
-    column("callback", sa.JSON()),
-    column("callback_state", sa.String(20)),
-    column("trigger_id", sa.Integer()),
-)
 
 
 # ---------------------------------------------------------------------------
@@ -167,25 +150,9 @@ def _compute_dag_hash(dag_data: dict) -> str:
 # ---------------------------------------------------------------------------
 # Phase functions
 # ---------------------------------------------------------------------------
-def _check_schema() -> None:
-    """Verify the database has been initialized with at least the 3.1.8 schema."""
-    inspector = sa.inspect(settings.engine)
-    required_tables = ("deadline", "dag_run", "serialized_dag", "dag", "dag_version", "dag_bundle")
-    missing = [t for t in required_tables if not inspector.has_table(t)]
-    if missing:
-        print(
-            f"ERROR: Required tables missing: {', '.join(missing)}\n"
-            "The database must be initialized before running this benchmark.\n"
-            "To set up the 3.1.8 schema:\n"
-            "  airflow db migrate --to-revision 509b94a1042d\n"
-        )
-        sys.exit(1)
-
-
 def _ensure_prerequisites() -> int:
     """Ensure log_template and dag_bundle rows exist. Returns log_template_id."""
     with create_session() as session:
-        # Use raw SQL — the ORM LogTemplate model on main may not match the 3.1.8 schema.
         log_template_id = session.scalar(text("SELECT max(id) FROM log_template"))
         if log_template_id is None:
             session.execute(
@@ -336,8 +303,9 @@ def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
             )
             run_id_to_db_id = {row.run_id: row.id for row in result}
 
-            # Build deadline rows using the 3.1.8 schema (inline JSON callback,
-            # no separate callback table, no missed/callback_id columns).
+            # Build deadline rows using Deadline.__table__ which matches the
+            # 3.1.8 schema: inline JSON callback, callback_state, trigger_id.
+            # The SQL column name is "callback" (Python attr is _callback).
             dl_rows: list[dict] = []
             for dag_idx in range(batch_start, batch_end):
                 for run_idx in range(RUNS_PER_DAG):
@@ -358,7 +326,7 @@ def _insert_dag_runs_and_deadlines(log_template_id: int) -> None:
                             }
                         )
 
-            session.execute(insert(deadline_table), dl_rows)
+            session.execute(insert(Deadline.__table__), dl_rows)
 
         inserted_runs += len(dr_rows)
         inserted_deadlines += len(dl_rows)
@@ -426,10 +394,10 @@ def _cleanup() -> None:
     while True:
         with create_session() as session:
             rows = session.execute(
-                select(deadline_table.c.id)
+                select(Deadline.__table__.c.id)
                 .join(
                     DagRun.__table__,
-                    deadline_table.c.dagrun_id == DagRun.__table__.c.id,
+                    Deadline.__table__.c.dagrun_id == DagRun.__table__.c.id,
                 )
                 .where(DagRun.__table__.c.dag_id.like(f"{DAG_PREFIX}%"))
                 .limit(batch_size)
@@ -439,7 +407,7 @@ def _cleanup() -> None:
                 break
 
             dl_ids = [r[0] for r in rows]
-            session.execute(deadline_table.delete().where(deadline_table.c.id.in_(dl_ids)))
+            session.execute(Deadline.__table__.delete().where(Deadline.__table__.c.id.in_(dl_ids)))
 
         total_dl += len(dl_ids)
         elapsed = time.monotonic() - t0
@@ -477,6 +445,9 @@ def _cleanup() -> None:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    # Ensure the ORM engine/session is initialized (required for standalone scripts).
+    settings.configure_orm()
+
     if os.environ.get("BENCHMARK_CLEANUP", "0") == "1":
         _cleanup()
         return 0
@@ -498,8 +469,7 @@ def main() -> int:
 
     overall_start = time.monotonic()
 
-    print("\n[Phase 1] Checking schema and setting up prerequisites...")
-    _check_schema()
+    print("\n[Phase 1] Setting up prerequisites...")
     log_template_id = _ensure_prerequisites()
     print(f"  log_template id={log_template_id}")
 
