@@ -50,16 +50,16 @@ benchmark__0101_3_2_0_ui_improvements_for_deadlines__migration.py
 
 Environment variables
 ---------------------
-    BENCHMARK_NUM_DAGS            Number of DAGs (default: 100000)
-    BENCHMARK_RUNS_PER_DAG        Runs per DAG (default: 100)
+    BENCHMARK_NUM_DAGS            Number of DAGs (default: 1000)
+    BENCHMARK_RUNS_PER_DAG        Runs per DAG (default: 1000)
     BENCHMARK_DEADLINES_PER_RUN   Deadlines per run (default: 1)
     BENCHMARK_ALERTS_PER_DAG      Deadline alerts per serialized DAG (default: 2)
     BENCHMARK_CLEANUP             Set to "1" to delete all benchmark data and exit
     BENCHMARK_NUM_WORKERS         Parallel workers for Phase 3 (default: 4)
 
 Default configuration produces:
-    100,000 DAGs x 100 runs x 1 deadline = 10,000,000 deadline rows
-    100,000 serialized_dag rows (with 2 deadline alerts each)
+    1,000 DAGs x 1,000 runs x 1 deadline = 1,000,000 deadline rows
+    1,000 serialized_dag rows (with 2 deadline alerts each)
 """
 
 from __future__ import annotations
@@ -88,8 +88,8 @@ from airflow.utils.session import create_session
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-NUM_DAGS = int(os.environ.get("BENCHMARK_NUM_DAGS", "100000"))
-RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "100"))
+NUM_DAGS = int(os.environ.get("BENCHMARK_NUM_DAGS", "1000"))
+RUNS_PER_DAG = int(os.environ.get("BENCHMARK_RUNS_PER_DAG", "1000"))
 DEADLINES_PER_RUN = int(os.environ.get("BENCHMARK_DEADLINES_PER_RUN", "1"))
 ALERTS_PER_DAG = int(os.environ.get("BENCHMARK_ALERTS_PER_DAG", "2"))
 NUM_WORKERS = int(os.environ.get("BENCHMARK_NUM_WORKERS", "4"))
