@@ -116,6 +116,36 @@ def _is_mysql_foreign_key_index_error(conn: Connection, exc: sa.exc.OperationalE
     return bool(error_args) and error_args[0] == 1553
 
 
+def _quote_identifier(conn, identifier: str) -> str:
+    """Quote an identifier for dialect-specific DDL statements."""
+    return conn.dialect.identifier_preparer.quote(identifier)
+
+
+def _create_postgres_concurrent_index(index_name: str, table_name: str, columns: list[str]) -> None:
+    """Create a temporary PostgreSQL index without blocking reads or writes."""
+    conn = op.get_bind()
+    quoted_index_name = _quote_identifier(conn, index_name)
+    quoted_table_name = _quote_identifier(conn, table_name)
+    quoted_columns = ", ".join(_quote_identifier(conn, column) for column in columns)
+
+    with op.get_context().autocommit_block():
+        op.execute(
+            sa.text(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {quoted_index_name} "
+                f"ON {quoted_table_name} ({quoted_columns})"
+            )
+        )
+
+
+def _drop_postgres_concurrent_index(index_name: str) -> None:
+    """Drop a temporary PostgreSQL index without blocking table access."""
+    conn = op.get_bind()
+    quoted_index_name = _quote_identifier(conn, index_name)
+
+    with op.get_context().autocommit_block():
+        op.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {quoted_index_name}"))
+
+
 def temporary_index(index_name, table_name, columns):
     """Create an index before the wrapped function runs and drop it after, even on error."""
 
@@ -132,12 +162,20 @@ def temporary_index(index_name, table_name, columns):
                 )
                 return func(*args, **kwargs)
 
-            op.create_index(index_name, table_name, columns)
+            dialect_name = conn.dialect.name
+            if dialect_name == "postgresql":
+                _create_postgres_concurrent_index(index_name, table_name, columns)
+            else:
+                op.create_index(index_name, table_name, columns)
+
             try:
                 return func(*args, **kwargs)
             finally:
                 try:
-                    op.drop_index(index_name, table_name=table_name)
+                    if dialect_name == "postgresql":
+                        _drop_postgres_concurrent_index(index_name)
+                    else:
+                        op.drop_index(index_name, table_name=table_name)
                 except sa.exc.OperationalError as exc:
                     if not _is_mysql_foreign_key_index_error(conn, exc):
                         raise
@@ -455,13 +493,14 @@ def _begin_nested_transaction(conn):
         with conn.engine.begin() as new_conn:
             yield new_conn
         return
+    savepoint = conn.begin_nested()
     try:
-        savepoint = conn.begin_nested()
         yield conn
     except Exception:
         savepoint.rollback()
         raise
-    savepoint.commit()
+    else:
+        savepoint.commit()
 
 
 def migrate_existing_deadline_alert_data_from_serialized_dag() -> None:
