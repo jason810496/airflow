@@ -595,6 +595,18 @@ def _migrate_deadline_alerts() -> None:
             deadline_alerts = dag_deadline if isinstance(dag_deadline, list) else [dag_deadline]
 
             def _migrate_dag_deadlines(dag_conn: Connection) -> Iterable[str]:
+                dagrun_ids = [
+                    row[0]
+                    for row in dag_conn.execute(
+                        sa.text("""
+                            SELECT dr.id
+                            FROM dag_run dr
+                            JOIN serialized_dag sd ON dr.dag_id = sd.dag_id
+                            WHERE sd.id = :serialized_dag_id
+                        """),
+                        {"serialized_dag_id": serialized_dag_id},
+                    ).fetchall()
+                ]
                 for serialized_alert in deadline_alerts:
                     if not isinstance(serialized_alert, dict):
                         continue
@@ -654,20 +666,6 @@ def _migrate_deadline_alerts() -> None:
                             continue
 
                         yield deadline_alert_id
-                        # Fetch dagrun IDs once per DAG to avoid repeating the
-                        # expensive dag_run/serialized_dag JOIN for every alert.
-                        dagrun_ids = [
-                            row[0]
-                            for row in dag_conn.execute(
-                                sa.text("""
-                                    SELECT dr.id
-                                    FROM dag_run dr
-                                    JOIN serialized_dag sd ON dr.dag_id = sd.dag_id
-                                    WHERE sd.id = :serialized_dag_id
-                                """),
-                                {"serialized_dag_id": serialized_dag_id},
-                            ).fetchall()
-                        ]
                         if dagrun_ids:
                             dag_conn.execute(
                                 sa.text("""
