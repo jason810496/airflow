@@ -647,11 +647,13 @@ def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
             conf.configuration_description["core"]["options"]["fernet_key"]["default"] = (
                 _SecretKeys.fernet_key
             )
+            conf._default_values.set("core", "fernet_key", _SecretKeys.fernet_key)
 
         _SecretKeys.jwt_secret_key = b64encode(os.urandom(16)).decode("utf-8")
         conf.configuration_description["api_auth"]["options"]["jwt_secret"]["default"] = (
             _SecretKeys.jwt_secret_key
         )
+        conf._default_values.set("api_auth", "jwt_secret", _SecretKeys.jwt_secret_key)
         pathlib.Path(airflow_config.__fspath__()).touch()
         make_group_other_inaccessible(airflow_config.__fspath__())
         with open(airflow_config, "w") as file:
