@@ -280,13 +280,24 @@ class AirflowConfigParser(ConfigParser):
         ]
 
     def _get_config_sources_for_as_dict(self) -> list[tuple[str, ConfigParser]]:
-        """Override the base method to add provider fallbacks."""
-        return [
-            ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
-            ("provider-metadata-fallback-defaults", self._provider_metadata_config_fallback_default_values),
+        """Override the base method to add provider fallbacks when providers are loaded."""
+        sources: list[tuple[str, ConfigParser]] = [
             ("default", self._default_values),
             ("airflow.cfg", self),
         ]
+        if self._providers_configuration_loaded:
+            sources.insert(
+                0,
+                (
+                    "provider-metadata-fallback-defaults",
+                    self._provider_metadata_config_fallback_default_values,
+                ),
+            )
+            sources.insert(
+                0,
+                ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
+            )
+        return sources
 
     def _get_option_from_provider_cfg_config_fallbacks(
         self,
@@ -1908,10 +1919,10 @@ class AirflowConfigParser(ConfigParser):
         :param extra_spacing: Add extra spacing before examples and after variables
         :param only_defaults: Only include default values when writing the config, not the actual values
         """
-        sources_dict = {}
-        if include_sources:
-            sources_dict = self.as_dict(display_source=True)
         with self.make_sure_configuration_loaded(with_providers=include_providers):
+            sources_dict = {}
+            if include_sources:
+                sources_dict = self.as_dict(display_source=True)
             for section_to_write in self.get_sections_including_defaults():
                 section_config_description = self.configuration_description.get(section_to_write, {})
                 if section_to_write != section and section is not None:

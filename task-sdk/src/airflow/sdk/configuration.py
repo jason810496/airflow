@@ -32,7 +32,6 @@ from airflow.sdk._shared.configuration.parser import (
     configure_parser_from_configuration_description,
 )
 from airflow.sdk.execution_time.secrets import _SERVER_DEFAULT_SECRETS_SEARCH_PATH
-from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +125,8 @@ class AirflowSDKConfigParser(_SharedAirflowConfigParser):
         *args,
         **kwargs,
     ):
+        from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
+
         # Read Core's config.yml (Phase 1: shared config.yml)
         configuration_description = retrieve_configuration_description()
         # Create default values parser
