@@ -54,10 +54,23 @@ def _create_empty_config_parser(desc: dict) -> ConfigParser:
     return ConfigParser()
 
 
+def _create_default_config_parser(desc: dict) -> ConfigParser:
+    parser = ConfigParser()
+    configure_parser_from_configuration_description(parser, desc, {})
+    return parser
+
+
 class AirflowConfigParser(_SharedAirflowConfigParser):
     """Test parser that extends shared parser for testing."""
 
-    def __init__(self, default_config: str | None = None, *args, **kwargs):
+    def __init__(
+        self,
+        default_config: str | None = None,
+        provider_manager_type=_NoOpProvidersManager,
+        create_default_config_parser_callable=_create_empty_config_parser,
+        *args,
+        **kwargs,
+    ):
         configuration_description = {
             "test": {
                 "options": {
@@ -73,8 +86,8 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
         super().__init__(
             configuration_description,
             _default_values,
-            _NoOpProvidersManager,
-            _create_empty_config_parser,
+            provider_manager_type,
+            create_default_config_parser_callable,
             "",
             *args,
             **kwargs,
@@ -841,6 +854,42 @@ existing_list = one,two,three
 
         test_conf.write(StringIO(), include_sources=True, include_providers=True)
         assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
+
+    def test_get_uses_provider_metadata_fallback_before_loading_providers(self):
+        provider_configs = [
+            (
+                "apache-airflow-providers-test",
+                {
+                    "test_provider": {
+                        "options": {
+                            "test_option": {
+                                "default": "provider-default",
+                            }
+                        }
+                    }
+                },
+            )
+        ]
+
+        class ProvidersManagerWithConfig:
+            @property
+            def provider_configs(self):
+                return provider_configs
+
+            @property
+            def already_initialized_provider_configs(self):
+                return []
+
+        test_conf = AirflowConfigParser(
+            provider_manager_type=ProvidersManagerWithConfig,
+            create_default_config_parser_callable=_create_default_config_parser,
+        )
+
+        assert test_conf._providers_configuration_loaded is False
+        assert test_conf.configuration_description.get("test_provider") is None
+        assert test_conf.get("test_provider", "test_option") == "provider-default"
+        assert test_conf._providers_configuration_loaded is False
+        assert test_conf.configuration_description.get("test_provider") is None
 
     def test_set_case_insensitive(self):
         # both get and set should be case insensitive

@@ -613,7 +613,7 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of provider configuration metadata and merge it into ``conf``."""
         self.initialize_providers_list()
         self._discover_config()
-        # Now update conf with the new provider configuration from providers
+        # Imported lazily to avoid a configuration/providers_manager import cycle during startup.
         from airflow.configuration import conf
 
         conf.load_providers_configuration()
@@ -1479,7 +1479,7 @@ class ProvidersManager(LoggingMixin):
         self._queue_class_name_set.clear()
         self._provider_configs.clear()
 
-        # clear provider config cache in conf as well
+        # Imported lazily to avoid a configuration/providers_manager import cycle during cleanup.
         from airflow.configuration import conf
 
         conf.invalidate_cache()

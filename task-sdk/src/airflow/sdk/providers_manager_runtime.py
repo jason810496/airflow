@@ -225,7 +225,7 @@ class ProvidersManagerTaskRuntime(LoggingMixin):
         """Lazy initialization of provider configuration metadata and merge it into SDK ``conf``."""
         self.initialize_providers_list()
         self._discover_config()
-        # Now update conf with the new provider configuration from providers
+        # Imported lazily to preserve SDK conf lazy initialization and avoid a configuration/runtime cycle.
         from airflow.sdk.configuration import conf
 
         conf.load_providers_configuration()
@@ -637,7 +637,7 @@ class ProvidersManagerTaskRuntime(LoggingMixin):
         self._asset_to_openlineage_converters.clear()
         self._provider_configs.clear()
 
-        # clear provider config cache in conf as well
+        # Imported lazily to preserve SDK conf lazy initialization and avoid a configuration/runtime cycle.
         from airflow.sdk.configuration import conf
 
         conf.invalidate_cache()

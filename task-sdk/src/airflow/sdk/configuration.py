@@ -125,6 +125,8 @@ class AirflowSDKConfigParser(_SharedAirflowConfigParser):
         *args,
         **kwargs,
     ):
+        # Imported lazily to preserve the module-level lazy ``conf`` initialization and avoid a
+        # configuration/providers_manager_runtime import cycle.
         from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
 
         # Read Core's config.yml (Phase 1: shared config.yml)
