@@ -327,7 +327,7 @@ class AirflowConfigParser(ConfigParser):
     ) -> str | ValueNotFound:
         """Get config option from provider metadata fallback defaults."""
         value = self.get_from_provider_metadata_config_fallback_defaults(section, key, **kwargs)
-        if value is not None:
+        if value is not VALUE_NOT_FOUND_SENTINEL:
             return value
         return VALUE_NOT_FOUND_SENTINEL
 
@@ -345,6 +345,7 @@ class AirflowConfigParser(ConfigParser):
         base_configuration_description: dict[str, dict[str, Any]] = {}
         for _, config in self._provider_manager_type().provider_configs:
             base_configuration_description.update(config)
+        self._providers_configuration_loaded = True
         return self._create_default_config_parser_callable(base_configuration_description)
 
     def get_from_provider_metadata_config_fallback_defaults(self, section: str, key: str, **kwargs) -> Any:
@@ -352,7 +353,7 @@ class AirflowConfigParser(ConfigParser):
         raw = kwargs.get("raw", False)
         vars_ = kwargs.get("vars")
         return self._provider_metadata_config_fallback_default_values.get(
-            section, key, fallback=None, raw=raw, vars=vars_
+            section, key, fallback=VALUE_NOT_FOUND_SENTINEL, raw=raw, vars=vars_
         )
 
     @property
@@ -1199,7 +1200,7 @@ class AirflowConfigParser(ConfigParser):
         log.debug("Loading providers configuration")
 
         self.restore_core_default_configuration()
-        for provider, config in self._provider_manager_type().already_initialized_provider_configs:
+        for provider, config in self._provider_manager_type().provider_configs:
             for provider_section, provider_section_content in config.items():
                 provider_options = provider_section_content["options"]
                 section_in_current_config = self.configuration_description.get(provider_section)
@@ -1222,10 +1223,6 @@ class AirflowConfigParser(ConfigParser):
                         "provider's configuration.",
                         UserWarning,
                     )
-        self._default_values = self._create_default_config_parser_callable(self.configuration_description)
-        # Cached properties derived from configuration_description (e.g. sensitive_config_values) need
-        # to be recomputed now that provider config has been merged in.
-        self.invalidate_cache()
         self._providers_configuration_loaded = True
 
     def restore_core_default_configuration(self) -> None:
@@ -1563,13 +1560,13 @@ class AirflowConfigParser(ConfigParser):
             value = self.get(
                 section,
                 option,
-                fallback=None,
+                fallback=VALUE_NOT_FOUND_SENTINEL,
                 _extra_stacklevel=1,
                 suppress_warnings=True,
                 lookup_from_deprecated=lookup_from_deprecated,
                 **kwargs,
             )
-            if value is None:
+            if value is VALUE_NOT_FOUND_SENTINEL:
                 return False
             return True
         except (NoOptionError, NoSectionError, AirflowConfigException):
@@ -1984,12 +1981,16 @@ class AirflowConfigParser(ConfigParser):
 
     def _ensure_providers_config_loaded(self) -> None:
         """Ensure providers configurations are loaded."""
-        raise NotImplementedError("Subclasses must implement _ensure_providers_config_loaded method")
+        if not self._providers_configuration_loaded:
+            self.load_providers_configuration()
 
     def _ensure_providers_config_unloaded(self) -> bool:
         """Ensure providers configurations are unloaded temporarily to load core configs. Returns True if providers get unloaded."""
-        raise NotImplementedError("Subclasses must implement _ensure_providers_config_unloaded method")
+        if self._providers_configuration_loaded:
+            self.restore_core_default_configuration()
+            return True
+        return False
 
     def _reload_provider_configs(self) -> None:
         """Reload providers configuration."""
-        raise NotImplementedError("Subclasses must implement _reload_provider_configs method")
+        self.load_providers_configuration()

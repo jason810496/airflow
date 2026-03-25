@@ -367,24 +367,6 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
             if content:
                 file.write(f"{content}\n\n")
 
-    def _ensure_providers_config_loaded(self) -> None:
-        """Ensure providers configurations are loaded."""
-        if not self._providers_configuration_loaded:
-            from airflow.providers_manager import ProvidersManager
-
-            ProvidersManager().initialize_providers_configuration()
-
-    def _ensure_providers_config_unloaded(self) -> bool:
-        """Ensure providers configurations are unloaded temporarily to load core configs. Returns True if providers get unloaded."""
-        if self._providers_configuration_loaded:
-            self.restore_core_default_configuration()
-            return True
-        return False
-
-    def _reload_provider_configs(self) -> None:
-        """Reload providers configuration."""
-        self.load_providers_configuration()
-
     def _upgrade_postgres_metastore_conn(self):
         """
         Upgrade SQL schemas.

@@ -225,10 +225,6 @@ class ProvidersManagerTaskRuntime(LoggingMixin):
         """Lazy initialization of provider configuration metadata and merge it into SDK ``conf``."""
         self.initialize_providers_list()
         self._discover_config()
-        # Imported lazily to preserve SDK conf lazy initialization and avoid a configuration/runtime cycle.
-        from airflow.sdk.configuration import conf
-
-        conf.load_providers_configuration()
 
     def _discover_config(self) -> None:
         """Retrieve all configs defined in the providers."""
@@ -618,10 +614,6 @@ class ProvidersManagerTaskRuntime(LoggingMixin):
     @property
     def provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
         self.initialize_provider_configs()
-        return sorted(self._provider_configs.items(), key=lambda x: x[0])
-
-    @property
-    def already_initialized_provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
         return sorted(self._provider_configs.items(), key=lambda x: x[0])
 
     def _cleanup(self):

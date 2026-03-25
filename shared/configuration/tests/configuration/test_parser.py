@@ -45,10 +45,6 @@ class _NoOpProvidersManager:
     def provider_configs(self):
         return []
 
-    @property
-    def already_initialized_provider_configs(self):
-        return []
-
 
 def _create_empty_config_parser(desc: dict) -> ConfigParser:
     return ConfigParser()
@@ -98,32 +94,6 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
 
         if default_config is not None:
             self._update_defaults_from_string(default_config)
-
-    def _update_defaults_from_string(self, config_string: str):
-        """Update defaults from string for testing."""
-        parser = ConfigParser()
-        parser.read_string(config_string)
-        for section in parser.sections():
-            if section not in self._default_values.sections():
-                self._default_values.add_section(section)
-            for key, value in parser.items(section):
-                self._default_values.set(section, key, value)
-
-    def _ensure_providers_config_loaded(self) -> None:
-        """Load provider configuration for tests when requested."""
-        if not self._providers_configuration_loaded:
-            self.load_providers_configuration()
-
-    def _ensure_providers_config_unloaded(self) -> bool:
-        """Unload provider configuration for tests when requested."""
-        if self._providers_configuration_loaded:
-            self.restore_core_default_configuration()
-            return True
-        return False
-
-    def _reload_provider_configs(self) -> None:
-        """Reload provider configuration for tests after temporary unloads."""
-        self.load_providers_configuration()
 
 
 class TestAirflowConfigParser:
@@ -855,7 +825,7 @@ existing_list = one,two,three
         test_conf.write(StringIO(), include_sources=True, include_providers=True)
         assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
 
-    def test_get_uses_provider_metadata_fallback_before_loading_providers(self):
+    def test_get_uses_provider_metadata_fallback_will_init_provider_configuration(self):
         provider_configs = [
             (
                 "apache-airflow-providers-test",
@@ -876,10 +846,6 @@ existing_list = one,two,three
             def provider_configs(self):
                 return provider_configs
 
-            @property
-            def already_initialized_provider_configs(self):
-                return []
-
         test_conf = AirflowConfigParser(
             provider_manager_type=ProvidersManagerWithConfig,
             create_default_config_parser_callable=_create_default_config_parser,
@@ -888,8 +854,46 @@ existing_list = one,two,three
         assert test_conf._providers_configuration_loaded is False
         assert test_conf.configuration_description.get("test_provider") is None
         assert test_conf.get("test_provider", "test_option") == "provider-default"
-        assert test_conf._providers_configuration_loaded is False
-        assert test_conf.configuration_description.get("test_provider") is None
+        assert test_conf._providers_configuration_loaded is True
+        assert test_conf.configuration_description.get("test_provider") is not None
+
+    def test_has_option_uses_provider_metadata_fallback(self):
+        """has_option must reach provider-metadata fallback for provider-only sections.
+
+        Regression test: has_option passes ``fallback=None`` to get(), which leaked
+        into _get_option_from_defaults via **kwargs.  The ``"fallback" in kwargs``
+        guard caused _get_option_from_defaults to return None (the fallback) instead
+        of VALUE_NOT_FOUND_SENTINEL, short-circuiting the lookup before the provider
+        metadata fallback was consulted.
+        """
+        provider_configs = [
+            (
+                "apache-airflow-providers-test",
+                {
+                    "test_provider": {
+                        "options": {
+                            "test_option": {
+                                "default": "provider-default",
+                            }
+                        }
+                    }
+                },
+            )
+        ]
+
+        class ProvidersManagerWithConfig:
+            @property
+            def provider_configs(self):
+                return provider_configs
+
+        test_conf = AirflowConfigParser(
+            provider_manager_type=ProvidersManagerWithConfig,
+            create_default_config_parser_callable=_create_default_config_parser,
+        )
+
+        assert test_conf.has_option("test_provider", "test_option") is True
+        assert test_conf.has_option("test_provider", "nonexistent_option") is False
+        assert test_conf.has_option("nonexistent_section", "nonexistent_option") is False
 
     def test_set_case_insensitive(self):
         # both get and set should be case insensitive

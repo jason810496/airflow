@@ -613,10 +613,6 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of provider configuration metadata and merge it into ``conf``."""
         self.initialize_providers_list()
         self._discover_config()
-        # Imported lazily to avoid a configuration/providers_manager import cycle during startup.
-        from airflow.configuration import conf
-
-        conf.load_providers_configuration()
 
     @provider_info_cache("plugins")
     def initialize_providers_plugins(self):
@@ -1453,10 +1449,6 @@ class ProvidersManager(LoggingMixin):
     @property
     def provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
         self.initialize_providers_configuration()
-        return sorted(self._provider_configs.items(), key=lambda x: x[0])
-
-    @property
-    def already_initialized_provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
         return sorted(self._provider_configs.items(), key=lambda x: x[0])
 
     def _cleanup(self):
