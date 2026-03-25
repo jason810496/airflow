@@ -303,7 +303,7 @@ class AirflowConfigParser(ConfigParser):
         if not self._use_providers_configuration:
             return self._configuration_description
 
-        merged_description: dict[str, dict[str, Any]] = deepcopy(self._base_configuration_description)
+        merged_description: dict[str, dict[str, Any]] = deepcopy(self._configuration_description)
 
         # Merge default values from cfg-based fallbacks (these only have key=value,
         # no metadata, but ensure sections/options exist with at least a default).
@@ -474,7 +474,6 @@ class AirflowConfigParser(ConfigParser):
         """
         super().__init__(*args, **kwargs)
         self._configuration_description = configuration_description
-        self._base_configuration_description = deepcopy(configuration_description)
         self._default_values = _default_values
         self._provider_manager_type = provider_manager_type
         self._create_default_config_parser_callable = create_default_config_parser_callable
