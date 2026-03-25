@@ -806,16 +806,6 @@ existing_list = one,two,three
         with pytest.raises(ValueError, match=r"The value test/missing_key should be set!"):
             test_conf.get_mandatory_list_value("test", "missing_key", fallback=None)
 
-    def test_as_dict_only_materializes_provider_sources_after_loading_providers(self):
-        test_conf = AirflowConfigParser()
-
-        test_conf.as_dict(display_source=True)
-        assert "_provider_metadata_config_fallback_default_values" not in test_conf.__dict__
-
-        test_conf.load_providers_configuration()
-        test_conf.as_dict(display_source=True)
-        assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
-
     def test_write_materializes_provider_sources_in_requested_context(self):
         test_conf = AirflowConfigParser()
 
@@ -823,6 +813,10 @@ existing_list = one,two,three
         assert "_provider_metadata_config_fallback_default_values" not in test_conf.__dict__
 
         test_conf.write(StringIO(), include_sources=True, include_providers=True)
+        assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
+
+        # we will not clear the cached _provider_metadata_config_fallback_default_values after the first call
+        test_conf.write(StringIO(), include_sources=True, include_providers=False)
         assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
 
     def test_get_uses_provider_metadata_fallback_will_init_provider_configuration(self):
@@ -851,11 +845,17 @@ existing_list = one,two,three
             create_default_config_parser_callable=_create_default_config_parser,
         )
 
-        assert test_conf._providers_configuration_loaded is False
+        assert test_conf._use_providers_configuration is True
         assert test_conf.configuration_description.get("test_provider") is None
         assert test_conf.get("test_provider", "test_option") == "provider-default"
-        assert test_conf._providers_configuration_loaded is True
-        assert test_conf.configuration_description.get("test_provider") is not None
+        # The base configuration from config.yaml will not be updated with provider configuration
+        assert test_conf.configuration_description.get("test_provider") is None
+        # but the provider metadata fallback default values will be initialized and contain the provider configuration
+        assert test_conf._provider_metadata_config_fallback_default_values is not None
+        assert (
+            test_conf._provider_metadata_config_fallback_default_values.get("test_provider", "test_option")
+            == "provider-default"
+        )
 
     def test_has_option_uses_provider_metadata_fallback(self):
         """has_option must reach provider-metadata fallback for provider-only sections.

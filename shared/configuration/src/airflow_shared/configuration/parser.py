@@ -279,24 +279,67 @@ class AirflowConfigParser(ConfigParser):
             self._get_option_from_provider_metadata_config_fallbacks,
         ]
 
-    def _get_config_sources_for_as_dict(self) -> list[tuple[str, ConfigParser]]:
+    @functools.cached_property
+    def configuration_description(self) -> dict[str, dict[str, Any]]:
+        """
+        Return configuration description from multiple sources.
+
+        Respects the ``_use_providers_configuration`` flag to decide whether to include
+        provider configuration.
+
+        The priority order is as follows (later sources override earlier ones):
+
+        1. The base configuration description provided in ``__init__``, usually loaded
+           from ``config.yml`` in core.
+        2. ``_provider_cfg_config_fallback_default_values``, loaded from
+           ``provider_config_fallback_defaults.cfg``.
+        3. ``_provider_metadata_config_fallback_default_values``, loaded from provider
+           packages' ``get_provider_info`` method (via ProvidersManager /
+           RuntimeProvidersManager's ``.provider_configs`` property).
+
+        We use ``cached_property`` to cache the merged result; clear this cache (via
+        ``invalidate_cache``) when toggling ``_use_providers_configuration``.
+        """
+        if not self._use_providers_configuration:
+            return self._configuration_description
+
+        merged_description: dict[str, dict[str, Any]] = deepcopy(self._base_configuration_description)
+
+        # Merge configuration descriptions based on the priority order defined above.
+        for provider_config in (
+            self._provider_cfg_config_fallback_default_values,
+            self._provider_metadata_config_fallback_default_values,
+        ):
+            for section in provider_config.sections():
+                if section not in merged_description:
+                    merged_description[section] = {"options": {}}
+                for option in provider_config.options(section):
+                    if option not in merged_description[section]["options"]:
+                        merged_description[section]["options"][option] = {}
+                    merged_description[section]["options"][option]["default"] = provider_config.get(
+                        section, option
+                    )
+
+        return merged_description
+
+    @property
+    def _config_sources_for_as_dict(self) -> list[tuple[str, ConfigParser]]:
         """Override the base method to add provider fallbacks when providers are loaded."""
         sources: list[tuple[str, ConfigParser]] = [
             ("default", self._default_values),
             ("airflow.cfg", self),
         ]
-        if self._providers_configuration_loaded:
-            sources.insert(
-                0,
-                (
-                    "provider-metadata-fallback-defaults",
-                    self._provider_metadata_config_fallback_default_values,
-                ),
-            )
-            sources.insert(
-                0,
-                ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
-            )
+        if not self._use_providers_configuration:
+            return sources
+
+        # Provider fallback defaults are added as the last source, so they have the lowest priority.
+        sources += [
+            ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
+            (
+                "provider-metadata-fallback-defaults",
+                self._provider_metadata_config_fallback_default_values,
+            ),
+        ]
         return sources
 
     def _get_option_from_provider_cfg_config_fallbacks(
@@ -345,7 +388,6 @@ class AirflowConfigParser(ConfigParser):
         base_configuration_description: dict[str, dict[str, Any]] = {}
         for _, config in self._provider_manager_type().provider_configs:
             base_configuration_description.update(config)
-        self._providers_configuration_loaded = True
         return self._create_default_config_parser_callable(base_configuration_description)
 
     def get_from_provider_metadata_config_fallback_defaults(self, section: str, key: str, **kwargs) -> Any:
@@ -429,7 +471,7 @@ class AirflowConfigParser(ConfigParser):
         :param provider_config_fallback_defaults_cfg_path: Path to the `provider_config_fallback_defaults.cfg` file.
         """
         super().__init__(*args, **kwargs)
-        self.configuration_description = configuration_description
+        self._configuration_description = configuration_description
         self._base_configuration_description = deepcopy(configuration_description)
         self._default_values = _default_values
         self._provider_manager_type = provider_manager_type
@@ -439,7 +481,9 @@ class AirflowConfigParser(ConfigParser):
         )
         self._suppress_future_warnings = False
         self.upgraded_values: dict[tuple[str, str], str] = {}
-        self._providers_configuration_loaded = False
+        # The _use_providers_configuration flag will always be True unless we call `write(include_providers=False)` or `with self.make_sure_configuration_loaded(with_providers=False)`.
+        # Even we call those methods, the flag will be set back to True after the method is done, so it only affects the current call to `as_dict()` and does not have any effect on subsequent calls.
+        self._use_providers_configuration = True
 
     def invalidate_cache(self) -> None:
         """
@@ -1186,52 +1230,6 @@ class AirflowConfigParser(ConfigParser):
 
         return section, key, deprecated_section, deprecated_key, warning_emitted
 
-    def load_providers_configuration(self) -> None:
-        """
-        Load configuration for providers.
-
-        This should be done after initial configuration have been performed. Initializing and discovering
-        providers is an expensive operation and cannot be performed when we load configuration for the first
-        time when airflow starts, because we initialize configuration very early, during importing of the
-        `airflow` package and the module is not yet ready to be used when it happens and until configuration
-        and settings are loaded. Therefore, in order to reload provider configuration we need to additionally
-        load provider - specific configuration.
-        """
-        log.debug("Loading providers configuration")
-
-        self.restore_core_default_configuration()
-        for provider, config in self._provider_manager_type().provider_configs:
-            for provider_section, provider_section_content in config.items():
-                provider_options = provider_section_content["options"]
-                section_in_current_config = self.configuration_description.get(provider_section)
-                if not section_in_current_config:
-                    self.configuration_description[provider_section] = deepcopy(provider_section_content)
-                    section_in_current_config = self.configuration_description.get(provider_section)
-                    section_in_current_config["source"] = f"default-{provider}"
-                    for option in provider_options:
-                        section_in_current_config["options"][option]["source"] = f"default-{provider}"
-                else:
-                    section_source = section_in_current_config.get("source", "Airflow's core package").split(
-                        "default-"
-                    )[-1]
-                    raise AirflowConfigException(
-                        f"The provider {provider} is attempting to contribute "
-                        f"configuration section {provider_section} that "
-                        f"has already been added before. The source of it: {section_source}. "
-                        "This is forbidden. A provider can only add new sections. It "
-                        "cannot contribute options to existing sections or override other "
-                        "provider's configuration.",
-                        UserWarning,
-                    )
-        self._providers_configuration_loaded = True
-
-    def restore_core_default_configuration(self) -> None:
-        """Restore the parser state before provider-contributed sections were loaded."""
-        self.configuration_description = deepcopy(self._base_configuration_description)
-        self._default_values = self._create_default_config_parser_callable(self.configuration_description)
-        self.invalidate_cache()
-        self._providers_configuration_loaded = False
-
     @overload  # type: ignore[override]
     def get(self, section: str, key: str, fallback: str = ..., **kwargs) -> str: ...
 
@@ -1666,7 +1664,7 @@ class AirflowConfigParser(ConfigParser):
         config_sources: ConfigSourcesType = {}
 
         # We check sequentially all those sources and the last one we saw it in will "win"
-        configs = self._get_config_sources_for_as_dict()
+        configs = self._config_sources_for_as_dict
 
         self._replace_config_with_display_sources(
             config_sources,
@@ -1965,32 +1963,19 @@ class AirflowConfigParser(ConfigParser):
         """
         Make sure configuration is loaded with or without providers.
 
-        This happens regardless if the provider configuration has been loaded before or not.
-        Restores configuration to the state before entering the context.
+        The context manager will only toggle the `self._use_providers_configuration` flag if `with_providers` is False, and will reset `self._use_providers_configuration` to True after the context block.
+        Nop for `with_providers=True` as the configuration already loads providers configuration by default.
 
         :param with_providers: whether providers should be loaded
         """
-        needs_reload = False
-        if with_providers:
-            self._ensure_providers_config_loaded()
-        else:
-            needs_reload = self._ensure_providers_config_unloaded()
-        yield
-        if needs_reload:
-            self._reload_provider_configs()
-
-    def _ensure_providers_config_loaded(self) -> None:
-        """Ensure providers configurations are loaded."""
-        if not self._providers_configuration_loaded:
-            self.load_providers_configuration()
-
-    def _ensure_providers_config_unloaded(self) -> bool:
-        """Ensure providers configurations are unloaded temporarily to load core configs. Returns True if providers get unloaded."""
-        if self._providers_configuration_loaded:
-            self.restore_core_default_configuration()
-            return True
-        return False
-
-    def _reload_provider_configs(self) -> None:
-        """Reload providers configuration."""
-        self.load_providers_configuration()
+        if not with_providers:
+            self._use_providers_configuration = False
+            # clear configuration_description cache
+            self.configuration_description.clear()
+        try:
+            yield
+        finally:
+            if not with_providers:
+                self._use_providers_configuration = True
+                # clear configuration_description cache again to reload providers configuration when needed
+                self.configuration_description.clear()
