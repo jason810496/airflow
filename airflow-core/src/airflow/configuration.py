@@ -196,17 +196,17 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
         *args,
         **kwargs,
     ):
-        configuration_description = retrieve_configuration_description(include_providers=False)
+        _configuration_description = retrieve_configuration_description(include_providers=False)
         # For those who would like to use a different data structure to keep defaults:
         # We have to keep the default values in a ConfigParser rather than in any other
         # data structure, because the values we have might contain %% which are ConfigParser
         # interpolation placeholders. The _default_values config parser will interpolate them
         # properly when we call get() on it.
-        _default_values = create_default_config_parser(configuration_description)
+        _default_values = create_default_config_parser(_configuration_description)
         from airflow.providers_manager import ProvidersManager
 
         super().__init__(
-            configuration_description,
+            _configuration_description,
             _default_values,
             ProvidersManager,
             create_default_config_parser,
@@ -214,7 +214,7 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
             *args,
             **kwargs,
         )
-        self.configuration_description = configuration_description
+        self._configuration_description = _configuration_description
         self._default_values = _default_values
         if default_config is not None:
             self._update_defaults_from_string(default_config)
@@ -626,16 +626,24 @@ def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
             # We know that fernet_key is not set, so we can generate it, set as global key
             # and also write it to the config file so that same key will be used next time
             _SecretKeys.fernet_key = _generate_fernet_key()
-            conf.configuration_description["core"]["options"]["fernet_key"]["default"] = (
+            conf._configuration_description["core"]["options"]["fernet_key"]["default"] = (
+                _SecretKeys.fernet_key
+            )
+            conf._base_configuration_description["core"]["options"]["fernet_key"]["default"] = (
                 _SecretKeys.fernet_key
             )
             conf._default_values.set("core", "fernet_key", _SecretKeys.fernet_key)
 
         _SecretKeys.jwt_secret_key = b64encode(os.urandom(16)).decode("utf-8")
-        conf.configuration_description["api_auth"]["options"]["jwt_secret"]["default"] = (
+        conf._configuration_description["api_auth"]["options"]["jwt_secret"]["default"] = (
+            _SecretKeys.jwt_secret_key
+        )
+        conf._base_configuration_description["api_auth"]["options"]["jwt_secret"]["default"] = (
             _SecretKeys.jwt_secret_key
         )
         conf._default_values.set("api_auth", "jwt_secret", _SecretKeys.jwt_secret_key)
+        # Invalidate cached configuration_description so it recomputes with the updated base
+        conf.__dict__.pop("configuration_description", None)
         pathlib.Path(airflow_config.__fspath__()).touch()
         make_group_other_inaccessible(airflow_config.__fspath__())
         with open(airflow_config, "w") as file:

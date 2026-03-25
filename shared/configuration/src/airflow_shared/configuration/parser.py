@@ -305,19 +305,21 @@ class AirflowConfigParser(ConfigParser):
 
         merged_description: dict[str, dict[str, Any]] = deepcopy(self._base_configuration_description)
 
-        # Merge configuration descriptions based on the priority order defined above.
-        for provider_config in (
+        # Merge default values from cfg-based fallbacks (these only have key=value,
+        # no metadata, but ensure sections/options exist with at least a default).
+        for provider_config_fallback_defaults in (
             self._provider_cfg_config_fallback_default_values,
             self._provider_metadata_config_fallback_default_values,
         ):
-            for section in provider_config.sections():
+            for section in provider_config_fallback_defaults.sections():
                 if section not in merged_description:
                     merged_description[section] = {"options": {}}
-                for option in provider_config.options(section):
-                    if option not in merged_description[section]["options"]:
+                for option in provider_config_fallback_defaults.options(section):
+                    if option not in merged_description[section].setdefault("options", {}):
                         merged_description[section]["options"][option] = {}
-                    merged_description[section]["options"][option]["default"] = provider_config.get(
-                        section, option
+                    merged_description[section]["options"][option].setdefault(
+                        "default",
+                        provider_config_fallback_defaults.get(section, option),
                     )
 
         return merged_description
@@ -565,12 +567,13 @@ class AirflowConfigParser(ConfigParser):
 
     def get_default_value(self, section: str, key: str, fallback: Any = None, raw=False, **kwargs) -> Any:
         """
-        Retrieve default value from default config parser.
+        Retrieve default value from default config parser, including provider fallbacks.
 
-        This will retrieve the default value from the default config parser. Optionally a raw, stored
-        value can be retrieved by setting skip_interpolation to True. This is useful for example when
-        we want to write the default value to a file, and we don't want the interpolation to happen
-        as it is going to be done later when the config is read.
+        This will retrieve the default value from the core default config parser first. If not found
+        and providers configuration is loaded, it also checks provider fallback defaults.
+        Optionally a raw, stored value can be retrieved by setting skip_interpolation to True.
+        This is useful for example when we want to write the default value to a file, and we don't
+        want the interpolation to happen as it is going to be done later when the config is read.
 
         :param section: section of the config
         :param key: key to use
@@ -579,7 +582,17 @@ class AirflowConfigParser(ConfigParser):
         :param kwargs: other args
         :return:
         """
-        value = self._default_values.get(section, key, fallback=fallback, **kwargs)
+        value = self._default_values.get(section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs)
+        if value is VALUE_NOT_FOUND_SENTINEL and self._use_providers_configuration:
+            value = self._provider_cfg_config_fallback_default_values.get(
+                section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs
+            )
+        if value is VALUE_NOT_FOUND_SENTINEL and self._use_providers_configuration:
+            value = self._provider_metadata_config_fallback_default_values.get(
+                section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs
+            )
+        if value is VALUE_NOT_FOUND_SENTINEL:
+            value = fallback
         if raw and value is not None:
             return value.replace("%", "%%")
         return value
@@ -1516,6 +1529,17 @@ class AirflowConfigParser(ConfigParser):
         """
         super().read_dict(dictionary=dictionary, source=source)
 
+    def _has_section_in_any_defaults(self, section: str) -> bool:
+        """Check if section exists in core defaults or provider fallback defaults."""
+        if self._default_values.has_section(section):
+            return True
+        if self._use_providers_configuration:
+            if self._provider_cfg_config_fallback_default_values.has_section(section):
+                return True
+            if self._provider_metadata_config_fallback_default_values.has_section(section):
+                return True
+        return False
+
     def get_sections_including_defaults(self) -> list[str]:
         """
         Retrieve all sections from the configuration parser, including sections defined by built-in defaults.
@@ -1597,7 +1621,7 @@ class AirflowConfigParser(ConfigParser):
         if super().has_option(section, option):
             super().remove_option(section, option)
 
-        if self.get_default_value(section, option) is not None and remove_default:
+        if remove_default and self._default_values.has_option(section, option):
             self._default_values.remove_option(section, option)
 
     def optionxform(self, optionstr: str) -> str:
@@ -1922,7 +1946,7 @@ class AirflowConfigParser(ConfigParser):
                 section_config_description = self.configuration_description.get(section_to_write, {})
                 if section_to_write != section and section is not None:
                     continue
-                if self._default_values.has_section(section_to_write) or self.has_section(section_to_write):
+                if self._has_section_in_any_defaults(section_to_write) or self.has_section(section_to_write):
                     self._write_section_header(
                         file, include_descriptions, section_config_description, section_to_write
                     )
@@ -1970,12 +1994,14 @@ class AirflowConfigParser(ConfigParser):
         """
         if not with_providers:
             self._use_providers_configuration = False
-            # clear configuration_description cache
-            self.configuration_description.clear()
+            # Invalidate cached_property so it recomputes without providers on next access
+            self.__dict__.pop("configuration_description", None)
+            self.__dict__.pop("sensitive_config_values", None)
         try:
             yield
         finally:
             if not with_providers:
                 self._use_providers_configuration = True
-                # clear configuration_description cache again to reload providers configuration when needed
-                self.configuration_description.clear()
+                # Invalidate again so it recomputes with providers on next access
+                self.__dict__.pop("configuration_description", None)
+                self.__dict__.pop("sensitive_config_values", None)
