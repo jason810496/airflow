@@ -2012,12 +2012,16 @@ class AirflowConfigParser(ConfigParser):
         """
         if not with_providers:
             self._use_providers_configuration = False
-            # Invalidate cached_property so it recomputes without providers on next access
-            self.invalidate_cache()
+            # Only invalidate cached properties that depend on _use_providers_configuration.
+            # Do NOT use invalidate_cache() here — it would also evict expensive provider-discovery
+            # caches (_provider_metadata_configuration_description, _provider_metadata_config_fallback_default_values)
+            # that don't depend on this flag.
+            self.__dict__.pop("configuration_description", None)
+            self.__dict__.pop("sensitive_config_values", None)
         try:
             yield
         finally:
             if not with_providers:
                 self._use_providers_configuration = True
-                # Invalidate again so it recomputes with providers on next access
-                self.invalidate_cache()
+                self.__dict__.pop("configuration_description", None)
+                self.__dict__.pop("sensitive_config_values", None)
