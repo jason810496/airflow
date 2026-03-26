@@ -20,6 +20,38 @@ from __future__ import annotations
 import contextlib
 import os
 
+# Provider config test data: (section, option, expected_value)
+# Options defined in provider metadata (provider.yaml) with non-None defaults.
+PROVIDER_METADATA_CONFIG_OPTIONS: list[tuple[str, str, str]] = [
+    ("celery", "celery_app_name", "airflow.providers.celery.executors.celery_executor"),
+    ("celery", "worker_concurrency", "16"),
+    ("celery", "task_acks_late", "True"),
+    ("kubernetes_executor", "namespace", "default"),
+    ("kubernetes_executor", "delete_worker_pods", "True"),
+    ("celery_kubernetes_executor", "kubernetes_queue", "kubernetes"),
+]
+
+# Options defined in provider_config_fallback_defaults.cfg.
+CFG_FALLBACK_CONFIG_OPTIONS: list[tuple[str, str, str]] = [
+    ("celery", "broker_url", "redis://redis:6379/0"),
+    ("celery", "pool", "prefork"),
+    ("celery", "worker_precheck", "False"),
+    ("kubernetes_executor", "in_cluster", "True"),
+    ("kubernetes_executor", "verify_ssl", "True"),
+    ("elasticsearch", "end_of_log_mark", "end_of_log"),
+]
+
+# Options where provider metadata and cfg fallback have DIFFERENT default values.
+# (section, option, metadata_value, cfg_fallback_value)
+PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK: list[tuple[str, str, str, str]] = [
+    (
+        "celery",
+        "celery_app_name",
+        "airflow.providers.celery.executors.celery_executor",
+        "airflow.executors.celery_executor",
+    ),
+]
+
 
 @contextlib.contextmanager
 def conf_vars(overrides):
