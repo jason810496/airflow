@@ -44,10 +44,14 @@ if __name__ == "__main__":
         # Write default config cmd output to a temporary file
         default_config_file = os.path.join(tmp_dir, "airflow.cfg")
         with open(default_config_file, "w") as f:
-            result = subprocess.run(list_default_config_cmd, check=False, stdout=f, env=env)
+            result = subprocess.run(
+                list_default_config_cmd, check=False, stdout=f, stderr=subprocess.PIPE, env=env
+            )
         if result.returncode != 0:
             print(f"\033[0;31mERROR: when running `{' '.join(list_default_config_cmd)}`\033[0m\n")
-            print(result.stdout.decode())
+            if result.stderr:
+                print(result.stderr.decode())
+            print(f"Default config (if any) was written to: {default_config_file}")
             exit(1)
         # Run airflow config lint to check the default config
         env["AIRFLOW_HOME"] = tmp_dir

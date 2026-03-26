@@ -287,15 +287,20 @@ class AirflowConfigParser(ConfigParser):
         Respects the ``_use_providers_configuration`` flag to decide whether to include
         provider configuration.
 
-        The priority order is as follows (later sources override earlier ones):
+        The merged description is built as follows:
 
-        1. The base configuration description provided in ``__init__``, usually loaded
-           from ``config.yml`` in core.
-        2. ``_provider_cfg_config_fallback_default_values``, loaded from
-           ``provider_config_fallback_defaults.cfg``.
-        3. ``_provider_metadata_config_fallback_default_values``, loaded from provider
-           packages' ``get_provider_info`` method (via ProvidersManager /
-           RuntimeProvidersManager's ``.provider_configs`` property).
+        1. Start from the base configuration description provided in ``__init__``, usually
+           loaded from ``config.yml`` in core. Values defined here are never overridden.
+        2. Merge provider metadata from ``_provider_metadata_configuration_description``,
+           loaded from provider packages' ``get_provider_info`` method. Only adds missing
+           sections/options; does not overwrite existing entries from the base configuration.
+        3. Merge default values from ``_provider_cfg_config_fallback_default_values``,
+           loaded from ``provider_config_fallback_defaults.cfg``. Only sets ``"default"``
+           (and heuristically ``"sensitive"``) for options that do not already define them.
+
+        Base configuration takes precedence, then provider metadata fills in missing
+        descriptions/options, and finally cfg-based fallbacks provide defaults only where
+        none are defined.
 
         We use ``cached_property`` to cache the merged result; clear this cache (via
         ``invalidate_cache``) when toggling ``_use_providers_configuration``.
@@ -335,20 +340,20 @@ class AirflowConfigParser(ConfigParser):
     @property
     def _config_sources_for_as_dict(self) -> list[tuple[str, ConfigParser]]:
         """Override the base method to add provider fallbacks when providers are loaded."""
-        sources: list[tuple[str, ConfigParser]] = [
+        sources: list[tuple[str, ConfigParser]] = []
+        if self._use_providers_configuration:
+            # Provider fallback defaults are listed first so they have the lowest priority
+            # in as_dict()'s "last source wins" semantics.
+            sources += [
+                ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
+                (
+                    "provider-metadata-fallback-defaults",
+                    self._provider_metadata_config_fallback_default_values,
+                ),
+            ]
+        sources += [
             ("default", self._default_values),
             ("airflow.cfg", self),
-        ]
-        if not self._use_providers_configuration:
-            return sources
-
-        # Provider fallback defaults are added as the last source, so they have the lowest priority.
-        sources += [
-            ("provider-cfg-fallback-defaults", self._provider_cfg_config_fallback_default_values),
-            (
-                "provider-metadata-fallback-defaults",
-                self._provider_metadata_config_fallback_default_values,
-            ),
         ]
         return sources
 
