@@ -631,7 +631,7 @@ def write_default_airflow_configuration_if_needed() -> AirflowConfigParser:
         )
         conf._default_values.set("api_auth", "jwt_secret", _SecretKeys.jwt_secret_key)
         # Invalidate cached configuration_description so it recomputes with the updated base
-        conf.__dict__.pop("configuration_description", None)
+        conf.invalidate_cache()
         pathlib.Path(airflow_config.__fspath__()).touch()
         make_group_other_inaccessible(airflow_config.__fspath__())
         with open(airflow_config, "w") as file:
