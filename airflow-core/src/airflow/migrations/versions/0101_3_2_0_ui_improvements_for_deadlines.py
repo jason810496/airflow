@@ -72,7 +72,7 @@ DEADLINE_KEY = "deadline"
 INTERVAL_KEY = "interval"
 REFERENCE_KEY = "reference"
 DEADLINE_ALERT_REQUIRED_FIELDS = {REFERENCE_KEY, CALLBACK_KEY, INTERVAL_KEY}
-DEFAULT_BATCH_SIZE = 1000
+DEFAULT_BATCH_SIZE = conf.getint("database", "migration_batch_size", fallback=1000)
 ENCODING_TYPE = "deadline_alert"
 
 
@@ -442,6 +442,40 @@ def _sort_serialized_dag_dict(serialized_dag: Any):
     return serialized_dag
 
 
+def bulk_update_deadline_alert_ids(
+    conn: Connection,
+    mappings: list[tuple[str, str]],
+) -> None:
+    """
+    Efficiently update deadline.deadline_alert_id using bulk operations.
+
+    Instead of issuing one UPDATE per deadline alert inside per-DAG nested
+    transactions (which holds locks longer), this defers all updates to a
+    single executemany call after every batch has been processed.
+
+    :param conn: Database connection.
+    :param mappings: List of (deadline_alert_id, serialized_dag_id) tuples.
+    """
+    if not mappings:
+        return
+
+    log.info("Performing bulk UPDATE of deadline_alert_id", mapping_count=len(mappings))
+
+    conn.execute(
+        sa.text("""
+            UPDATE deadline
+            SET deadline_alert_id = :alert_id
+            WHERE dagrun_id IN (
+                SELECT dr.id
+                FROM dag_run dr
+                JOIN serialized_dag sd ON dr.dag_id = sd.dag_id
+                WHERE sd.id = :serialized_dag_id
+            ) AND deadline_alert_id IS NULL
+        """),
+        [{"alert_id": alert_id, "serialized_dag_id": dag_id} for alert_id, dag_id in mappings],
+    )
+
+
 @contextlib.contextmanager
 def _begin_nested_transaction(conn):
     """
@@ -488,6 +522,7 @@ def _migrate_deadline_alerts() -> None:
     migrated_alerts_count: int = 0
     dags_with_errors: ErrorDict = defaultdict(list)
     batch_num = 0
+    alert_to_dag_mappings: list[tuple[str, str]] = []
     # Paginate by primary key (id) instead of dag_id because id is indexed (PK)
     # while dag_id has no index — using dag_id would cause a full table scan + sort
     # on every batch. UUID7 ids are time-ordered so the pagination order is stable.
@@ -595,18 +630,6 @@ def _migrate_deadline_alerts() -> None:
             deadline_alerts = dag_deadline if isinstance(dag_deadline, list) else [dag_deadline]
 
             def _migrate_dag_deadlines(dag_conn: Connection) -> Iterable[str]:
-                dagrun_ids = [
-                    row[0]
-                    for row in dag_conn.execute(
-                        sa.text("""
-                            SELECT dr.id
-                            FROM dag_run dr
-                            JOIN serialized_dag sd ON dr.dag_id = sd.dag_id
-                            WHERE sd.id = :serialized_dag_id
-                        """),
-                        {"serialized_dag_id": serialized_dag_id},
-                    ).fetchall()
-                ]
                 for serialized_alert in deadline_alerts:
                     if not isinstance(serialized_alert, dict):
                         continue
@@ -666,19 +689,6 @@ def _migrate_deadline_alerts() -> None:
                             continue
 
                         yield deadline_alert_id
-                        if dagrun_ids:
-                            dag_conn.execute(
-                                sa.text("""
-                                    UPDATE deadline
-                                    SET deadline_alert_id = :alert_id
-                                    WHERE dagrun_id IN :dagrun_ids
-                                        AND deadline_alert_id IS NULL
-                                """).bindparams(sa.bindparam("dagrun_ids", expanding=True)),
-                                {
-                                    "alert_id": deadline_alert_id,
-                                    "dagrun_ids": dagrun_ids,
-                                },
-                            )
                     except Exception as e:
                         dags_with_errors[dag_id].append(f"Failed to process {serialized_alert}: {e}")
                         continue
@@ -760,11 +770,19 @@ def _migrate_deadline_alerts() -> None:
                             },
                         )
                     migrated_alerts_count += len(migrated_alert_ids)
+                # Transaction committed — collect mappings for deferred bulk UPDATE.
+                for aid in migrated_alert_ids:
+                    alert_to_dag_mappings.append((str(aid), str(serialized_dag_id)))
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 log.exception("Could not migrate deadline for dag %s", dag_id)
                 dags_with_errors[dag_id].append(f"Could not migrate deadline: {e}")
 
         log.info("Batch complete", batch_num=batch_num, total_batches=total_batches)
+
+    if alert_to_dag_mappings:
+        log.info("Performing bulk UPDATE of deadline rows", mapping_count=len(alert_to_dag_mappings))
+        bulk_update_deadline_alert_ids(conn, alert_to_dag_mappings)
+        log.info("Bulk UPDATE complete")
 
     log.info(
         "Migration complete",
