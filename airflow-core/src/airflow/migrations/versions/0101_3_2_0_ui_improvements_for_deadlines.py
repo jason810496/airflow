@@ -34,8 +34,9 @@ import contextlib
 import functools
 import json
 import zlib
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -73,7 +74,12 @@ INTERVAL_KEY = "interval"
 REFERENCE_KEY = "reference"
 DEADLINE_ALERT_REQUIRED_FIELDS = {REFERENCE_KEY, CALLBACK_KEY, INTERVAL_KEY}
 DEFAULT_BATCH_SIZE = 1000
+UPDATE_CHUNK_SIZE = 1000
 ENCODING_TYPE = "deadline_alert"
+CALLBACK_CLASSNAME_KEY = "__classname__"
+CALLBACK_DATA_KEY = "__data__"
+CALLBACK_TYPE_EXECUTOR = "executor"
+CALLBACK_TYPE_TRIGGERER = "triggerer"
 
 
 def _has_matching_index(conn: Connection, table_name: str, columns: Iterable[str]) -> bool:
@@ -159,6 +165,11 @@ deadline_alert_table = sa.table(
     sa.column("callback_def"),
     sa.column("id"),
     sa.column("serialized_dag_id"),
+)
+deadline_table = sa.table(
+    "deadline",
+    sa.column("id"),
+    sa.column("deadline_alert_id"),
 )
 
 
@@ -401,6 +412,141 @@ def report_errors(errors: ErrorDict, operation: str = "migration") -> None:
         log.info("No Dags encountered errors", operation=operation)
 
 
+def _coerce_json_dict(value: dict[str, Any] | str | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _normalize_callback_key(callback_type: str, callback_data: dict[str, Any] | str | None) -> str:
+    data = _coerce_json_dict(callback_data)
+    normalized = {
+        "type": callback_type,
+        "path": data.get("path"),
+        "kwargs": data.get("kwargs") or {},
+    }
+    if callback_type == CALLBACK_TYPE_EXECUTOR or "executor" in data:
+        normalized["executor"] = data.get("executor")
+    return json.dumps(normalized, sort_keys=True)
+
+
+def _callback_key_from_alert(callback_def: dict[str, Any]) -> str:
+    callback_data = _coerce_json_dict(callback_def.get(CALLBACK_DATA_KEY, callback_def))
+    callback_classname = callback_def.get(CALLBACK_CLASSNAME_KEY, "")
+    if callback_classname.endswith(".SyncCallback") or "executor" in callback_data:
+        callback_type = CALLBACK_TYPE_EXECUTOR
+    else:
+        callback_type = CALLBACK_TYPE_TRIGGERER
+    return _normalize_callback_key(callback_type, callback_data)
+
+
+def _expected_deadline_time(
+    reference_data: dict[str, Any],
+    interval_seconds: float,
+    *,
+    logical_date,
+    queued_at,
+):
+    reference_type = reference_data.get("reference_type")
+    if reference_type == "FixedDatetimeDeadline":
+        base_time = timezone.from_timestamp(reference_data["datetime"])
+    elif reference_type == "DagRunLogicalDateDeadline":
+        base_time = logical_date
+    elif reference_type == "DagRunQueuedAtDeadline":
+        base_time = queued_at
+    else:
+        return None
+
+    if base_time is None:
+        return None
+    return base_time + timedelta(seconds=interval_seconds)
+
+
+def _build_deadline_alert_assignments(
+    deadline_rows: list[dict[str, Any]],
+    migrated_alerts: list[dict[str, Any]],
+) -> tuple[dict[Any, str], int, int]:
+    assignments: dict[Any, str] = {}
+    unmatched_rows = 0
+    unmatched_alert_slots = 0
+    alerts_by_callback_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    rows_by_group: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+
+    for alert in migrated_alerts:
+        alerts_by_callback_key[_callback_key_from_alert(alert[CALLBACK_KEY])].append(alert)
+
+    for row in deadline_rows:
+        row_callback_key = _normalize_callback_key(row["callback_type"], row["callback_data"])
+        rows_by_group[(row["dagrun_id"], row_callback_key)].append(row)
+
+    for (_, callback_key), rows in rows_by_group.items():
+        candidate_alerts = alerts_by_callback_key.get(callback_key, [])
+        if not candidate_alerts:
+            unmatched_rows += len(rows)
+            continue
+
+        rows_by_time: dict[Any, deque[Any]] = defaultdict(deque)
+        for row in rows:
+            rows_by_time[row["deadline_time"]].append(row["deadline_id"])
+
+        assigned_row_ids: set[Any] = set()
+        remaining_alerts: list[dict[str, Any]] = []
+        row_metadata = rows[0]
+
+        for alert in candidate_alerts:
+            expected_time = _expected_deadline_time(
+                alert[REFERENCE_KEY],
+                alert[INTERVAL_KEY],
+                logical_date=row_metadata["logical_date"],
+                queued_at=row_metadata["queued_at"],
+            )
+            if expected_time is None:
+                remaining_alerts.append(alert)
+                continue
+
+            matching_row_ids = rows_by_time.get(expected_time)
+            if not matching_row_ids:
+                remaining_alerts.append(alert)
+                continue
+
+            deadline_id = matching_row_ids.popleft()
+            assignments[deadline_id] = alert["alert_id"]
+            assigned_row_ids.add(deadline_id)
+
+        remaining_row_ids = [row["deadline_id"] for row in rows if row["deadline_id"] not in assigned_row_ids]
+        for deadline_id, alert in zip(remaining_row_ids, remaining_alerts):
+            assignments[deadline_id] = alert["alert_id"]
+
+        unmatched_rows += max(0, len(remaining_row_ids) - len(remaining_alerts))
+        unmatched_alert_slots += max(0, len(remaining_alerts) - len(remaining_row_ids))
+
+    return assignments, unmatched_rows, unmatched_alert_slots
+
+
+def _bulk_update_deadline_alert_ids(conn: Connection, assignments: dict[Any, str]) -> None:
+    if not assignments:
+        return
+
+    assignment_items = list(assignments.items())
+    for chunk_start in range(0, len(assignment_items), UPDATE_CHUNK_SIZE):
+        chunk = assignment_items[chunk_start : chunk_start + UPDATE_CHUNK_SIZE]
+        chunk_map = dict(chunk)
+        conn.execute(
+            sa.update(deadline_table)
+            .where(deadline_table.c.id.in_(list(chunk_map)))
+            .where(deadline_table.c.deadline_alert_id.is_(None))
+            .values(
+                deadline_alert_id=sa.case(
+                    chunk_map,
+                    value=deadline_table.c.id,
+                    else_=deadline_table.c.deadline_alert_id,
+                )
+            )
+        )
+
+
 def hash_dag(dag_data):
     """
     Hash the data to get the dag_hash.
@@ -477,8 +623,8 @@ def migrate_existing_deadline_alert_data_from_serialized_dag() -> None:
     _migrate_deadline_alerts()
 
 
-# Temporary index on deadline.dagrun_id speeds up the per-alert UPDATE that finds
-# matching deadline rows. Without it, every UPDATE full-scans the deadline table.
+# Temporary index on deadline.dagrun_id speeds up the join that gathers existing
+# deadline rows for the current DAG before bulk-updating them by primary key.
 @temporary_index("tmp_deadline_dagrun_id_idx", "deadline", ["dagrun_id"])
 def _migrate_deadline_alerts() -> None:
     BATCH_SIZE = conf.getint("database", "migration_batch_size", fallback=DEFAULT_BATCH_SIZE)
@@ -594,19 +740,41 @@ def _migrate_deadline_alerts() -> None:
             dags_with_deadlines.add(dag_id)
             deadline_alerts = dag_deadline if isinstance(dag_deadline, list) else [dag_deadline]
 
-            def _migrate_dag_deadlines(dag_conn: Connection) -> Iterable[str]:
-                dagrun_ids = [
-                    row[0]
+            def _migrate_dag_deadlines(
+                dag_conn: Connection,
+            ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+                existing_deadline_rows = [
+                    {
+                        "deadline_id": row.deadline_id,
+                        "dagrun_id": row.dagrun_id,
+                        "deadline_time": row.deadline_time,
+                        "logical_date": row.logical_date,
+                        "queued_at": row.queued_at,
+                        "callback_type": row.callback_type,
+                        "callback_data": row.callback_data,
+                    }
                     for row in dag_conn.execute(
                         sa.text("""
-                            SELECT dr.id
-                            FROM dag_run dr
+                            SELECT
+                                d.id AS deadline_id,
+                                d.dagrun_id,
+                                d.deadline_time,
+                                dr.logical_date,
+                                dr.queued_at,
+                                c.type AS callback_type,
+                                c.data AS callback_data
+                            FROM deadline d
+                            JOIN dag_run dr ON d.dagrun_id = dr.id
                             JOIN serialized_dag sd ON dr.dag_id = sd.dag_id
+                            JOIN callback c ON d.callback_id = c.id
                             WHERE sd.id = :serialized_dag_id
+                              AND d.deadline_alert_id IS NULL
+                            ORDER BY d.id
                         """),
                         {"serialized_dag_id": serialized_dag_id},
                     ).fetchall()
                 ]
+                migrated_alerts: list[dict[str, Any]] = []
                 for serialized_alert in deadline_alerts:
                     if not isinstance(serialized_alert, dict):
                         continue
@@ -665,31 +833,37 @@ def _migrate_deadline_alerts() -> None:
                             dags_with_errors[dag_id].append(f"Invalid DeadlineAlert data: {serialized_alert}")
                             continue
 
-                        yield deadline_alert_id
-                        if dagrun_ids:
-                            dag_conn.execute(
-                                sa.text("""
-                                    UPDATE deadline
-                                    SET deadline_alert_id = :alert_id
-                                    WHERE dagrun_id IN :dagrun_ids
-                                        AND deadline_alert_id IS NULL
-                                """).bindparams(sa.bindparam("dagrun_ids", expanding=True)),
-                                {
-                                    "alert_id": deadline_alert_id,
-                                    "dagrun_ids": dagrun_ids,
-                                },
-                            )
+                        migrated_alerts.append(
+                            {
+                                "alert_id": deadline_alert_id,
+                                REFERENCE_KEY: alert_data[REFERENCE_KEY],
+                                INTERVAL_KEY: interval_data,
+                                CALLBACK_KEY: alert_data[CALLBACK_KEY],
+                            }
+                        )
                     except Exception as e:
                         dags_with_errors[dag_id].append(f"Failed to process {serialized_alert}: {e}")
                         continue
+                return migrated_alerts, existing_deadline_rows
 
             try:
                 with _begin_nested_transaction(conn) as dag_conn:
-                    migrated_alert_ids = list(_migrate_dag_deadlines(dag_conn))
-                    if not migrated_alert_ids:
+                    migrated_alerts, existing_deadline_rows = _migrate_dag_deadlines(dag_conn)
+                    if not migrated_alerts:
                         continue
 
-                    uuid_strings = [str(uuid_id) for uuid_id in migrated_alert_ids]
+                    deadline_assignments, unmatched_rows, unmatched_alert_slots = (
+                        _build_deadline_alert_assignments(existing_deadline_rows, migrated_alerts)
+                    )
+                    _bulk_update_deadline_alert_ids(dag_conn, deadline_assignments)
+
+                    if unmatched_rows or unmatched_alert_slots:
+                        dags_with_errors[dag_id].append(
+                            "Could not match all existing deadline rows to migrated DeadlineAlerts "
+                            f"(unmatched_rows={unmatched_rows}, unmatched_alert_slots={unmatched_alert_slots})"
+                        )
+
+                    uuid_strings = [alert["alert_id"] for alert in migrated_alerts]
 
                     # Update the deadline field in the already-parsed dag_data and
                     # write back once, avoiding redundant decompression/recompression.
@@ -759,7 +933,7 @@ def _migrate_deadline_alerts() -> None:
                                 "serialized_dag_id": serialized_dag_id,
                             },
                         )
-                    migrated_alerts_count += len(migrated_alert_ids)
+                    migrated_alerts_count += len(migrated_alerts)
             except (json.JSONDecodeError, KeyError, TypeError) as e:
                 log.exception("Could not migrate deadline for dag %s", dag_id)
                 dags_with_errors[dag_id].append(f"Could not migrate deadline: {e}")
