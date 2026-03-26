@@ -1876,50 +1876,32 @@ def test_sensitive_values():
 
 
 @skip_if_force_lowest_dependencies_marker
-def test_restore_and_reload_provider_configuration():
+def test_provider_configuration_toggle_with_context_manager():
+    """Test that make_sure_configuration_loaded toggles provider config on/off."""
     from airflow.settings import conf
 
-    assert conf.providers_configuration_loaded is True
+    assert conf._use_providers_configuration is True
+    # With providers enabled, the provider value is returned via the fallback lookup chain.
     assert conf.get("celery", "celery_app_name") == "airflow.providers.celery.executors.celery_executor"
-    conf.restore_core_default_configuration()
-    assert conf.providers_configuration_loaded is False
-    # built-in pre-2-7 celery executor
-    assert conf.get("celery", "celery_app_name") == "airflow.executors.celery_executor"
-    conf.load_providers_configuration()
-    assert conf.providers_configuration_loaded is True
+    # When providers are excluded, the cfg fallback value (pre-2.7 path) is used instead.
+    with conf.make_sure_configuration_loaded(with_providers=False):
+        assert conf.get("celery", "celery_app_name") == "airflow.executors.celery_executor"
+    # After the context manager exits, provider config is restored.
     assert conf.get("celery", "celery_app_name") == "airflow.providers.celery.executors.celery_executor"
 
 
 @skip_if_force_lowest_dependencies_marker
-def test_error_when_contributing_to_existing_section():
+def test_provider_sections_do_not_overlap_with_core():
+    """Test that provider config sections don't overlap with core configuration sections."""
     from airflow.settings import conf
 
-    with conf.make_sure_configuration_loaded(with_providers=True):
-        assert conf.providers_configuration_loaded is True
-        assert conf.get("celery", "celery_app_name") == "airflow.providers.celery.executors.celery_executor"
-        conf.restore_core_default_configuration()
-        assert conf.providers_configuration_loaded is False
-        conf.configuration_description["celery"] = {
-            "description": "Celery Executor configuration",
-            "options": {
-                "celery_app_name": {
-                    "default": "test",
-                }
-            },
-        }
-        conf._default_values.add_section("celery")
-        conf._default_values.set("celery", "celery_app_name", "test")
-        assert conf.get("celery", "celery_app_name") == "test"
-        # patching restoring_core_default_configuration to avoid reloading the defaults
-        with patch.object(conf, "restore_core_default_configuration"):
-            with pytest.raises(
-                AirflowConfigException,
-                match="The provider apache-airflow-providers-celery is attempting to contribute "
-                "configuration section celery that has already been added before. "
-                "The source of it: Airflow's core package",
-            ):
-                conf.load_providers_configuration()
-        assert conf.get("celery", "celery_app_name") == "test"
+    core_sections = set(conf._configuration_description.keys())
+    provider_sections = set(conf._provider_metadata_configuration_description.keys())
+    overlap = core_sections & provider_sections
+    assert not overlap, (
+        f"Provider configuration sections overlap with core sections: {overlap}. "
+        "Providers must only add new sections, not contribute to existing ones."
+    )
 
 
 # Technically it's not a DB test, but we want to make sure it's not interfering with xdist non-db tests

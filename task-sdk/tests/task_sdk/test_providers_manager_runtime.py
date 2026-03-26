@@ -260,7 +260,7 @@ class TestProvidersManagerRuntime:
             with patch.object(providers_manager, "initialize_providers_list"):
                 providers_manager.initialize_provider_configs()
 
-        conf.restore_core_default_configuration()
+        conf.invalidate_cache()
         try:
             initialize_provider_configs()
             assert conf.get("test_sdk_provider", "test_option") == "provider-default"
@@ -270,4 +270,4 @@ class TestProvidersManagerRuntime:
             initialize_provider_configs()
             assert conf.get("test_sdk_provider", "test_option") == "provider-default"
         finally:
-            conf.restore_core_default_configuration()
+            conf.invalidate_cache()

@@ -221,7 +221,6 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
         self._update_logging_deprecated_template_to_one_from_defaults()
         self.is_validated = False
         self._suppress_future_warnings = False
-        self._providers_configuration_loaded = False
 
     @property
     def _validators(self) -> list[Callable[[], None]]:
@@ -496,7 +495,7 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
             for key, value in self.items(section):
                 if value is not None:
                     if self.has_option(section, key):
-                        self.remove_option(section, key)
+                        self.remove_option(section, key, remove_default=False)
                     if self.is_template(section, key) or not isinstance(value, str):
                         self.set(section, key, value)
                     else:
@@ -506,11 +505,6 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
         """Remove all read configurations, leaving only default values in the config."""
         for section in self.sections():
             self.remove_section(section)
-
-    @property
-    def providers_configuration_loaded(self) -> bool:
-        """Checks if providers have been loaded."""
-        return self._providers_configuration_loaded
 
     def _get_config_value_from_secret_backend(self, config_key: str) -> str | None:
         """

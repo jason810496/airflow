@@ -305,22 +305,30 @@ class AirflowConfigParser(ConfigParser):
 
         merged_description: dict[str, dict[str, Any]] = deepcopy(self._configuration_description)
 
-        # Merge default values from cfg-based fallbacks (these only have key=value,
-        # no metadata, but ensure sections/options exist with at least a default).
-        for provider_config_fallback_defaults in (
-            self._provider_cfg_config_fallback_default_values,
-            self._provider_metadata_config_fallback_default_values,
-        ):
-            for section in provider_config_fallback_defaults.sections():
-                if section not in merged_description:
-                    merged_description[section] = {"options": {}}
-                for option in provider_config_fallback_defaults.options(section):
-                    if option not in merged_description[section].setdefault("options", {}):
-                        merged_description[section]["options"][option] = {}
-                    merged_description[section]["options"][option].setdefault(
-                        "default",
-                        provider_config_fallback_defaults.get(section, option),
-                    )
+        # Merge full provider config descriptions (with metadata like sensitive, description, etc.)
+        # from provider packages' get_provider_info method, reusing the cached raw dict.
+        for section, section_content in self._provider_metadata_configuration_description.items():
+            if section not in merged_description:
+                merged_description[section] = deepcopy(section_content)
+            else:
+                existing_options = merged_description[section].setdefault("options", {})
+                for option, option_content in section_content.get("options", {}).items():
+                    if option not in existing_options:
+                        existing_options[option] = deepcopy(option_content)
+
+        # Merge default values from cfg-based fallbacks (key=value only, no metadata).
+        # Uses setdefault so provider metadata values above take priority.
+        cfg = self._provider_cfg_config_fallback_default_values
+        for section in cfg.sections():
+            section_options = merged_description.setdefault(section, {"options": {}}).setdefault(
+                "options", {}
+            )
+            for option in cfg.options(section):
+                opt_dict = section_options.setdefault(option, {})
+                opt_dict.setdefault("default", cfg.get(section, option))
+                # For cfg-only options with no provider metadata, infer sensitivity from name.
+                if "sensitive" not in opt_dict and option.endswith(("password", "secret")):
+                    opt_dict["sensitive"] = True
 
         return merged_description
 
@@ -385,12 +393,17 @@ class AirflowConfigParser(ConfigParser):
         )
 
     @functools.cached_property
+    def _provider_metadata_configuration_description(self) -> dict[str, dict[str, Any]]:
+        """Raw provider configuration descriptions with full metadata (sensitive, description, etc.)."""
+        result: dict[str, dict[str, Any]] = {}
+        for _, config in self._provider_manager_type().provider_configs:
+            result.update(config)
+        return result
+
+    @functools.cached_property
     def _provider_metadata_config_fallback_default_values(self) -> ConfigParser:
         """Return Provider metadata config fallback default values."""
-        base_configuration_description: dict[str, dict[str, Any]] = {}
-        for _, config in self._provider_manager_type().provider_configs:
-            base_configuration_description.update(config)
-        return self._create_default_config_parser_callable(base_configuration_description)
+        return self._create_default_config_parser_callable(self._provider_metadata_configuration_description)
 
     def get_from_provider_metadata_config_fallback_defaults(self, section: str, key: str, **kwargs) -> Any:
         """Get provider metadata config fallback default values."""
@@ -582,12 +595,13 @@ class AirflowConfigParser(ConfigParser):
         :return:
         """
         value = self._default_values.get(section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs)
+        # Provider metadata has higher priority than cfg fallback — check it first.
         if value is VALUE_NOT_FOUND_SENTINEL and self._use_providers_configuration:
-            value = self._provider_cfg_config_fallback_default_values.get(
+            value = self._provider_metadata_config_fallback_default_values.get(
                 section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs
             )
         if value is VALUE_NOT_FOUND_SENTINEL and self._use_providers_configuration:
-            value = self._provider_metadata_config_fallback_default_values.get(
+            value = self._provider_cfg_config_fallback_default_values.get(
                 section, key, fallback=VALUE_NOT_FOUND_SENTINEL, **kwargs
             )
         if value is VALUE_NOT_FOUND_SENTINEL:
