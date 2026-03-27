@@ -71,6 +71,5 @@ if __name__ == "__main__":
             with open(default_config_file) as f:
                 print(f.read())
             exit(1)
-        else:
-            print(output)
-            exit(0)
+        print(output)
+        exit(0)
