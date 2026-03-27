@@ -523,6 +523,11 @@ class AirflowConfigParser(ConfigParser):
         ):
             self.__dict__.pop(attr_name, None)
 
+    def _invalidate_provider_flag_caches(self) -> None:
+        """Invalidate caches related to provider configuration flags."""
+        self.__dict__.pop("configuration_description", None)
+        self.__dict__.pop("sensitive_config_values", None)
+
     @functools.cached_property
     def inversed_deprecated_options(self):
         """Build inverse mapping from old options to new options."""
@@ -2021,12 +2026,10 @@ class AirflowConfigParser(ConfigParser):
             # Do NOT use invalidate_cache() here — it would also evict expensive provider-discovery
             # caches (_provider_metadata_configuration_description, _provider_metadata_config_fallback_default_values)
             # that don't depend on this flag.
-            self.__dict__.pop("configuration_description", None)
-            self.__dict__.pop("sensitive_config_values", None)
+            self._invalidate_provider_flag_caches()
         try:
             yield
         finally:
             if not with_providers:
                 self._use_providers_configuration = True
-                self.__dict__.pop("configuration_description", None)
-                self.__dict__.pop("sensitive_config_values", None)
+                self._invalidate_provider_flag_caches()

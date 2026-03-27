@@ -1123,3 +1123,39 @@ existing_list = one,two,three
             {"AIRFLOW__MY_TEAM___MY_SECTION__MY_KEY": "team_value"},
         ):
             assert test_conf.get("my_section", "my_key", team_name="my_team") == "team_value"
+
+    @pytest.mark.parametrize(
+        "populate_caches",
+        [
+            pytest.param(set(), id="neither_cached"),
+            pytest.param({"configuration_description"}, id="only_configuration_description"),
+            pytest.param({"sensitive_config_values"}, id="only_sensitive_config_values"),
+            pytest.param({"configuration_description", "sensitive_config_values"}, id="both_cached"),
+        ],
+    )
+    def test_invalidate_provider_flag_caches(self, populate_caches):
+        """Test that _invalidate_provider_flag_caches clears cached properties without error."""
+        test_conf = AirflowConfigParser()
+        if "configuration_description" in populate_caches:
+            _ = test_conf.configuration_description
+        if "sensitive_config_values" in populate_caches:
+            _ = test_conf.sensitive_config_values
+
+        test_conf._invalidate_provider_flag_caches()
+
+        assert "configuration_description" not in test_conf.__dict__
+        assert "sensitive_config_values" not in test_conf.__dict__
+
+    def test_invalidate_provider_flag_caches_allows_recomputation(self):
+        """Test that cached properties are recomputed after invalidation."""
+        test_conf = AirflowConfigParser()
+        desc_before = test_conf.configuration_description
+        sensitive_before = test_conf.sensitive_config_values
+
+        test_conf._invalidate_provider_flag_caches()
+
+        # Access again — should recompute, not error
+        desc_after = test_conf.configuration_description
+        sensitive_after = test_conf.sensitive_config_values
+        assert desc_after == desc_before
+        assert sensitive_after == sensitive_before
