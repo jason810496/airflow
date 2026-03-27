@@ -1159,3 +1159,32 @@ existing_list = one,two,three
         sensitive_after = test_conf.sensitive_config_values
         assert desc_after == desc_before
         assert sensitive_after == sensitive_before
+
+    def test_load_providers_configuration_emits_deprecation_warning(self):
+        """Test that load_providers_configuration emits a DeprecationWarning."""
+        test_conf = AirflowConfigParser()
+        with pytest.warns(DeprecationWarning, match="load_providers_configuration.*deprecated"):
+            test_conf.load_providers_configuration()
+        assert test_conf._use_providers_configuration is True
+
+    def test_restore_core_default_configuration_emits_deprecation_warning(self):
+        """Test that restore_core_default_configuration emits a DeprecationWarning."""
+        test_conf = AirflowConfigParser()
+        with pytest.warns(DeprecationWarning, match="restore_core_default_configuration.*deprecated"):
+            test_conf.restore_core_default_configuration()
+        assert test_conf._use_providers_configuration is False
+
+    def test_deprecated_load_restore_round_trip(self):
+        """Test that the deprecated methods toggle _use_providers_configuration correctly."""
+        test_conf = AirflowConfigParser()
+        assert test_conf._use_providers_configuration is True
+
+        with pytest.warns(DeprecationWarning, match="restore_core_default_configuration"):
+            test_conf.restore_core_default_configuration()
+        assert test_conf._use_providers_configuration is False
+        assert "configuration_description" not in test_conf.__dict__
+
+        with pytest.warns(DeprecationWarning, match="load_providers_configuration"):
+            test_conf.load_providers_configuration()
+        assert test_conf._use_providers_configuration is True
+        assert "configuration_description" not in test_conf.__dict__

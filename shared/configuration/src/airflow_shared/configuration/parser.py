@@ -1271,6 +1271,43 @@ class AirflowConfigParser(ConfigParser):
 
         return section, key, deprecated_section, deprecated_key, warning_emitted
 
+    def load_providers_configuration(self) -> None:
+        """
+        Load configuration for providers.
+
+        .. deprecated:: 3.2.0
+            Provider configuration is now loaded lazily via the ``configuration_description``
+            cached property.  This method is kept for backwards compatibility and will be
+            removed in a future version.
+        """
+        warnings.warn(
+            "load_providers_configuration() is deprecated. "
+            "Provider configuration is now loaded lazily via the "
+            "`configuration_description` cached property.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._use_providers_configuration = True
+        self._invalidate_provider_flag_caches()
+
+    def restore_core_default_configuration(self) -> None:
+        """
+        Restore the parser state before provider-contributed sections were loaded.
+
+        .. deprecated:: 3.2.0
+            Use ``make_sure_configuration_loaded(with_providers=False)`` context manager
+            instead.  This method is kept for backwards compatibility and will be removed
+            in a future version.
+        """
+        warnings.warn(
+            "restore_core_default_configuration() is deprecated. "
+            "Use `make_sure_configuration_loaded(with_providers=False)` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self._use_providers_configuration = False
+        self._invalidate_provider_flag_caches()
+
     @overload  # type: ignore[override]
     def get(self, section: str, key: str, fallback: str = ..., **kwargs) -> str: ...
 
