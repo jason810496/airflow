@@ -50,6 +50,7 @@ from tests_common.test_utils.config import (
     PROVIDER_METADATA_CONFIG_OPTIONS,
     PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK,
     conf_vars,
+    create_fresh_airflow_config,
 )
 from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker
 from tests_common.test_utils.reset_warning_registry import reset_warning_registry
@@ -1917,12 +1918,7 @@ def test_provider_sections_do_not_overlap_with_core():
 
 @skip_if_force_lowest_dependencies_marker
 class TestProviderConfigPriority:
-    """Tests that conf.get and conf.has_option respect provider metadata and cfg fallbacks with correct priority.
-
-    Note: tests that use conf_vars must come AFTER tests that check make_sure_configuration_loaded,
-    because conf_vars restores provider-sourced values into the config-file layer, which then
-    persists even when providers are disabled.
-    """
+    """Tests that conf.get and conf.has_option respect provider metadata and cfg fallbacks with correct priority."""
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
@@ -2004,24 +2000,22 @@ class TestProviderConfigPriority:
     )
     def test_providers_disabled_dont_get_cfg_defaults_or_provider_metadata(self, section, option, expected):
         """With providers disabled, conf.get raises for provider-only options."""
-        from airflow.settings import conf
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
+        test_conf = create_fresh_airflow_config()
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
             with pytest.raises(
                 AirflowConfigException,
                 match=re.escape(f"section/key [{section}/{option}] not found in config"),
             ):
-                conf.get(section, option)
+                test_conf.get(section, option)
 
     def test_provider_section_absent_when_providers_disabled(self):
         """Provider-contributed sections are excluded from configuration_description when providers disabled."""
-        from airflow.settings import conf
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
-            desc = conf.configuration_description
-            provider_only_sections = set(conf._provider_metadata_configuration_description.keys())
+        test_conf = create_fresh_airflow_config()
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
+            desc = test_conf.configuration_description
+            provider_only_sections = set(test_conf._provider_metadata_configuration_description.keys())
             for section in provider_only_sections:
-                if section not in conf._configuration_description:
+                if section not in test_conf._configuration_description:
                     assert section not in desc
 
     @pytest.mark.parametrize(
@@ -2033,10 +2027,9 @@ class TestProviderConfigPriority:
         self, section, option, expected
     ):
         """With providers disabled, conf.has_option returns False for cfg-fallback-only options."""
-        from airflow.settings import conf
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is False
+        test_conf = create_fresh_airflow_config()
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
+            assert test_conf.has_option(section, option) is False
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
@@ -2047,10 +2040,9 @@ class TestProviderConfigPriority:
         self, section, option, expected
     ):
         """With providers disabled, conf.has_option returns False for provider-metadata-only options."""
-        from airflow.settings import conf
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is False
+        test_conf = create_fresh_airflow_config()
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
+            assert test_conf.has_option(section, option) is False
 
     def test_env_var_overrides_provider_values(self):
         """Environment variables override both provider metadata and cfg fallback values."""

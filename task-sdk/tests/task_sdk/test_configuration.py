@@ -22,7 +22,7 @@ from unittest import mock
 
 import pytest
 
-from airflow._shared.configuration.exceptions import AirflowConfigException
+from airflow.sdk._shared.configuration.exceptions import AirflowConfigException
 from airflow.sdk.configuration import conf
 from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
 
@@ -31,6 +31,7 @@ from tests_common.test_utils.config import (
     PROVIDER_METADATA_CONFIG_OPTIONS,
     PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK,
     conf_vars,
+    create_fresh_airflow_config,
 )
 from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker
 
@@ -43,12 +44,7 @@ def restore_providers_manager_runtime_configuration():
 
 @skip_if_force_lowest_dependencies_marker
 class TestSDKProviderConfigPriority:
-    """Tests that SDK conf.get and conf.has_option respect provider metadata and cfg fallbacks.
-
-    Note: tests that use conf_vars must come AFTER tests that check make_sure_configuration_loaded,
-    because conf_vars restores provider-sourced values into the config-file layer, which then
-    persists even when providers are disabled.
-    """
+    """Tests that SDK conf.get and conf.has_option respect provider metadata and cfg fallbacks."""
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
@@ -116,14 +112,13 @@ class TestSDKProviderConfigPriority:
     )
     def test_providers_disabled_dont_get_cfg_defaults_or_provider_metadata(self, section, option, expected):
         """With providers disabled, conf.get raises for provider-only options."""
-        from airflow.settings import conf
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
+        test_conf = create_fresh_airflow_config("task-sdk")
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
             with pytest.raises(
                 AirflowConfigException,
                 match=re.escape(f"section/key [{section}/{option}] not found in config"),
             ):
-                conf.get(section, option)
+                test_conf.get(section, option)
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
@@ -134,9 +129,9 @@ class TestSDKProviderConfigPriority:
         self, section, option, expected
     ):
         """With providers disabled, conf.has_option returns False for cfg-fallback-only options."""
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is False
+        test_conf = create_fresh_airflow_config("task-sdk")
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
+            assert test_conf.has_option(section, option) is False
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
@@ -147,9 +142,9 @@ class TestSDKProviderConfigPriority:
         self, section, option, expected
     ):
         """With providers disabled, conf.has_option returns False for provider-metadata-only options."""
-
-        with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is False
+        test_conf = create_fresh_airflow_config("task-sdk")
+        with test_conf.make_sure_configuration_loaded(with_providers=False):
+            assert test_conf.has_option(section, option) is False
 
     def test_env_var_overrides_provider_values(self):
         """Environment variables override both provider metadata and cfg fallback values."""

@@ -19,6 +19,11 @@ from __future__ import annotations
 
 import contextlib
 import os
+from typing import TYPE_CHECKING, Literal, overload
+
+if TYPE_CHECKING:
+    from airflow.configuration import AirflowConfigParser
+    from airflow.sdk.configuration import AirflowSDKConfigParser
 
 # Provider config test data for parametrized tests.
 # Options listed here must NOT be overridden in unit_tests.cfg, otherwise
@@ -111,6 +116,37 @@ def conf_vars(overrides):
 
         if "airflow.configuration" in sys.modules:
             settings.configure_vars()
+
+
+@overload
+def create_fresh_airflow_config(variant: Literal["core"] = ...) -> AirflowConfigParser: ...
+
+
+@overload
+def create_fresh_airflow_config(variant: Literal["task-sdk"]) -> AirflowSDKConfigParser: ...
+
+
+def create_fresh_airflow_config(
+    variant: Literal["core", "task-sdk"] = "core",
+) -> AirflowConfigParser | AirflowSDKConfigParser:
+    """Create a fresh, fully-initialized config parser independent of the singleton.
+
+    Use this instead of ``from airflow.settings import conf`` when the test mutates
+    parser state (e.g. ``make_sure_configuration_loaded(with_providers=False)``).
+    A fresh instance avoids interference with other tests that may run in parallel.
+
+    :param variant: Which config parser to create — ``"core"`` (default) for the
+        full Airflow config, or ``"task-sdk"`` for the lightweight SDK config.
+    """
+    if variant == "core":
+        from airflow.configuration import initialize_config as initialize_core_config
+
+        return initialize_core_config()
+    if variant == "task-sdk":
+        from airflow.sdk.configuration import initialize_config as initialize_sdk_config
+
+        return initialize_sdk_config()
+    raise ValueError(f"Unknown variant: {variant!r}. Expected 'core' or 'task-sdk'.")
 
 
 @contextlib.contextmanager
