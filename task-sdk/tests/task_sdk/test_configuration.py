@@ -17,10 +17,12 @@
 # under the License.
 from __future__ import annotations
 
+import re
 from unittest import mock
 
 import pytest
 
+from airflow._shared.configuration.exceptions import AirflowConfigException
 from airflow.sdk.configuration import conf
 from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
 
@@ -108,24 +110,46 @@ class TestSDKProviderConfigPriority:
         assert conf.get_default_value(section, option) == metadata_value
 
     @pytest.mark.parametrize(
-        ("section", "option", "metadata_value", "cfg_value"),
-        PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK,
-        ids=[f"{s}.{o}" for s, o, _, _ in PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK],
+        ("section", "option", "expected"),
+        CFG_FALLBACK_CONFIG_OPTIONS + PROVIDER_METADATA_CONFIG_OPTIONS,
+        ids=[f"{s}.{o}" for s, o, _ in CFG_FALLBACK_CONFIG_OPTIONS + PROVIDER_METADATA_CONFIG_OPTIONS],
     )
-    def test_providers_disabled_falls_back_to_cfg_defaults(self, section, option, metadata_value, cfg_value):
-        """With providers disabled, cfg fallback is used instead of provider metadata."""
+    def test_providers_disabled_dont_get_cfg_defaults_or_provider_metadata(self, section, option, expected):
+        """With providers disabled, conf.get raises for provider-only options."""
+        from airflow.settings import conf
+
         with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.get(section, option) == cfg_value
+            with pytest.raises(
+                AirflowConfigException,
+                match=re.escape(f"section/key [{section}/{option}] not found in config"),
+            ):
+                conf.get(section, option)
 
     @pytest.mark.parametrize(
         ("section", "option", "expected"),
         CFG_FALLBACK_CONFIG_OPTIONS,
         ids=[f"{s}.{o}" for s, o, _ in CFG_FALLBACK_CONFIG_OPTIONS],
     )
-    def test_cfg_fallback_available_when_providers_disabled(self, section, option, expected):
-        """cfg fallback options remain accessible even with providers disabled."""
+    def test_has_option_returns_false_for_cfg_fallback_when_providers_disabled(
+        self, section, option, expected
+    ):
+        """With providers disabled, conf.has_option returns False for cfg-fallback-only options."""
+
         with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is True
+            assert conf.has_option(section, option) is False
+
+    @pytest.mark.parametrize(
+        ("section", "option", "expected"),
+        PROVIDER_METADATA_CONFIG_OPTIONS,
+        ids=[f"{s}.{o}" for s, o, _ in PROVIDER_METADATA_CONFIG_OPTIONS],
+    )
+    def test_has_option_returns_false_for_provider_metadata_when_providers_disabled(
+        self, section, option, expected
+    ):
+        """With providers disabled, conf.has_option returns False for provider-metadata-only options."""
+
+        with conf.make_sure_configuration_loaded(with_providers=False):
+            assert conf.has_option(section, option) is False
 
     def test_env_var_overrides_provider_values(self):
         """Environment variables override both provider metadata and cfg fallback values."""

@@ -1888,10 +1888,16 @@ def test_provider_configuration_toggle_with_context_manager():
     assert conf._use_providers_configuration is True
     # With providers enabled, the provider value is returned via the fallback lookup chain.
     assert conf.get("celery", "celery_app_name") == "airflow.providers.celery.executors.celery_executor"
-    # When providers are excluded, the cfg fallback value (pre-2.7 path) is used instead.
+
     with conf.make_sure_configuration_loaded(with_providers=False):
-        assert conf.get("celery", "celery_app_name") == "airflow.executors.celery_executor"
+        assert conf._use_providers_configuration is False
+        with pytest.raises(
+            AirflowConfigException,
+            match=re.escape("section/key [celery/celery_app_name] not found in config"),
+        ):
+            conf.get("celery", "celery_app_name")
     # After the context manager exits, provider config is restored.
+    assert conf._use_providers_configuration is True
     assert conf.get("celery", "celery_app_name") == "airflow.providers.celery.executors.celery_executor"
 
 
@@ -1992,16 +1998,20 @@ class TestProviderConfigPriority:
         assert conf.get_default_value(section, option) == metadata_value
 
     @pytest.mark.parametrize(
-        ("section", "option", "metadata_value", "cfg_value"),
-        PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK,
-        ids=[f"{s}.{o}" for s, o, _, _ in PROVIDER_METADATA_OVERRIDES_CFG_FALLBACK],
+        ("section", "option", "expected"),
+        CFG_FALLBACK_CONFIG_OPTIONS + PROVIDER_METADATA_CONFIG_OPTIONS,
+        ids=[f"{s}.{o}" for s, o, _ in CFG_FALLBACK_CONFIG_OPTIONS + PROVIDER_METADATA_CONFIG_OPTIONS],
     )
-    def test_providers_disabled_falls_back_to_cfg_defaults(self, section, option, metadata_value, cfg_value):
-        """With providers disabled, cfg fallback is used instead of provider metadata."""
+    def test_providers_disabled_dont_get_cfg_defaults_or_provider_metadata(self, section, option, expected):
+        """With providers disabled, conf.get raises for provider-only options."""
         from airflow.settings import conf
 
         with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.get(section, option) == cfg_value
+            with pytest.raises(
+                AirflowConfigException,
+                match=re.escape(f"section/key [{section}/{option}] not found in config"),
+            ):
+                conf.get(section, option)
 
     def test_provider_section_absent_when_providers_disabled(self):
         """Provider-contributed sections are excluded from configuration_description when providers disabled."""
@@ -2019,12 +2029,28 @@ class TestProviderConfigPriority:
         CFG_FALLBACK_CONFIG_OPTIONS,
         ids=[f"{s}.{o}" for s, o, _ in CFG_FALLBACK_CONFIG_OPTIONS],
     )
-    def test_cfg_fallback_available_when_providers_disabled(self, section, option, expected):
-        """cfg fallback options remain accessible even with providers disabled."""
+    def test_has_option_returns_false_for_cfg_fallback_when_providers_disabled(
+        self, section, option, expected
+    ):
+        """With providers disabled, conf.has_option returns False for cfg-fallback-only options."""
         from airflow.settings import conf
 
         with conf.make_sure_configuration_loaded(with_providers=False):
-            assert conf.has_option(section, option) is True
+            assert conf.has_option(section, option) is False
+
+    @pytest.mark.parametrize(
+        ("section", "option", "expected"),
+        PROVIDER_METADATA_CONFIG_OPTIONS,
+        ids=[f"{s}.{o}" for s, o, _ in PROVIDER_METADATA_CONFIG_OPTIONS],
+    )
+    def test_has_option_returns_false_for_provider_metadata_when_providers_disabled(
+        self, section, option, expected
+    ):
+        """With providers disabled, conf.has_option returns False for provider-metadata-only options."""
+        from airflow.settings import conf
+
+        with conf.make_sure_configuration_loaded(with_providers=False):
+            assert conf.has_option(section, option) is False
 
     def test_env_var_overrides_provider_values(self):
         """Environment variables override both provider metadata and cfg fallback values."""

@@ -20,11 +20,16 @@ from __future__ import annotations
 import contextlib
 import os
 
-# Provider config test data: (section, option, expected_value)
+# Provider config test data for parametrized tests.
+# Options listed here must NOT be overridden in unit_tests.cfg, otherwise
+# tests that assert default values via conf.get() will see the unit_tests.cfg
+# value instead.
+
+# (section, option, expected_value)
 # Options defined in provider metadata (provider.yaml) with non-None defaults.
 PROVIDER_METADATA_CONFIG_OPTIONS: list[tuple[str, str, str]] = [
     ("celery", "celery_app_name", "airflow.providers.celery.executors.celery_executor"),
-    ("celery", "worker_concurrency", "16"),
+    ("celery", "worker_enable_remote_control", "true"),
     ("celery", "task_acks_late", "True"),
     ("kubernetes_executor", "namespace", "default"),
     ("kubernetes_executor", "delete_worker_pods", "True"),
@@ -33,7 +38,7 @@ PROVIDER_METADATA_CONFIG_OPTIONS: list[tuple[str, str, str]] = [
 
 # Options defined in provider_config_fallback_defaults.cfg.
 CFG_FALLBACK_CONFIG_OPTIONS: list[tuple[str, str, str]] = [
-    ("celery", "broker_url", "redis://redis:6379/0"),
+    ("celery", "flower_host", "0.0.0.0"),
     ("celery", "pool", "prefork"),
     ("celery", "worker_precheck", "False"),
     ("kubernetes_executor", "in_cluster", "True"),

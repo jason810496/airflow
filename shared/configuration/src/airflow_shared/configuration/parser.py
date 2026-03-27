@@ -269,15 +269,20 @@ class AirflowConfigParser(ConfigParser):
 
         Subclasses can override this to customise lookup order.
         """
-        return [
+        lookup_methods = [
             self._get_environment_variables,
             self._get_option_from_config_file,
             self._get_option_from_commands,
             self._get_option_from_secrets,
             self._get_option_from_defaults,
-            self._get_option_from_provider_cfg_config_fallbacks,
-            self._get_option_from_provider_metadata_config_fallbacks,
         ]
+        if self._use_providers_configuration:
+            # Provider fallback lookups are last so they have the lowest priority in the lookup sequence.
+            lookup_methods += [
+                self._get_option_from_provider_metadata_config_fallbacks,
+                self._get_option_from_provider_cfg_config_fallbacks,
+            ]
+        return lookup_methods
 
     @functools.cached_property
     def configuration_description(self) -> dict[str, dict[str, Any]]:

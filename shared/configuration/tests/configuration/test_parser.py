@@ -88,7 +88,7 @@ class AirflowConfigParser(_SharedAirflowConfigParser):
             *args,
             **kwargs,
         )
-        self.configuration_description = configuration_description
+        self._configuration_description = configuration_description
         self._default_values = _default_values
         self._suppress_future_warnings = False
 
@@ -819,7 +819,8 @@ existing_list = one,two,three
         test_conf.write(StringIO(), include_sources=True, include_providers=False)
         assert "_provider_metadata_config_fallback_default_values" in test_conf.__dict__
 
-    def test_get_uses_provider_metadata_fallback_will_init_provider_configuration(self):
+    def test_get_resolves_provider_metadata_fallback(self):
+        """conf.get returns values from provider metadata for provider-only sections."""
         provider_configs = [
             (
                 "apache-airflow-providers-test",
@@ -846,16 +847,11 @@ existing_list = one,two,three
         )
 
         assert test_conf._use_providers_configuration is True
-        assert test_conf.configuration_description.get("test_provider") is None
         assert test_conf.get("test_provider", "test_option") == "provider-default"
-        # The base configuration from config.yaml will not be updated with provider configuration
-        assert test_conf.configuration_description.get("test_provider") is None
-        # but the provider metadata fallback default values will be initialized and contain the provider configuration
-        assert test_conf._provider_metadata_config_fallback_default_values is not None
-        assert (
-            test_conf._provider_metadata_config_fallback_default_values.get("test_provider", "test_option")
-            == "provider-default"
-        )
+        # Provider metadata is merged into configuration_description
+        assert test_conf.configuration_description.get("test_provider") is not None
+        # Base configuration is not mutated
+        assert "test_provider" not in test_conf._configuration_description
 
     def test_has_option_uses_provider_metadata_fallback(self):
         """has_option must reach provider-metadata fallback for provider-only sections.
