@@ -1599,10 +1599,9 @@ class AirflowConfigParser(ConfigParser):
         if self._default_values.has_section(section):
             return True
         if self._use_providers_configuration:
-            if self._provider_cfg_config_fallback_default_values.has_section(section):
-                return True
-            if self._provider_metadata_config_fallback_default_values.has_section(section):
-                return True
+            return self._provider_cfg_config_fallback_default_values.has_section(
+                section
+            ) or self._provider_metadata_config_fallback_default_values.has_section(section)
         return False
 
     def get_sections_including_defaults(self) -> list[str]:
