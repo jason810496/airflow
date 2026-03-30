@@ -506,7 +506,7 @@ class AirflowConfigParser(ConfigParser):
         self._suppress_future_warnings = False
         self.upgraded_values: dict[tuple[str, str], str] = {}
         # The _use_providers_configuration flag will always be True unless we call `write(include_providers=False)` or `with self.make_sure_configuration_loaded(with_providers=False)`.
-        # Even we call those methods, the flag will be set back to True after the method is done, so it only affects the current call to `as_dict()` and does not have any effect on subsequent calls.
+        # Even when we call those methods, the flag will be set back to True after the method is done, so it only affects the current call to `as_dict()` and does not have any effect on subsequent calls.
         self._use_providers_configuration = True
 
     def invalidate_cache(self) -> None:
