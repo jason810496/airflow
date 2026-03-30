@@ -56,8 +56,8 @@ const isHighlightOption = (
 
 export const HITLResponseForm = ({ hitlDetail }: HITLResponseFormProps) => {
   const { t: translate } = useTranslation("hitl");
-  const [errors, setErrors] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [errors, setErrors] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { paramsDict } = useParamStore("hitl");
   const [searchParams] = useSearchParams();
   const { preloadedHITLOptions } = getPreloadHITLFormData(searchParams, hitlDetail);

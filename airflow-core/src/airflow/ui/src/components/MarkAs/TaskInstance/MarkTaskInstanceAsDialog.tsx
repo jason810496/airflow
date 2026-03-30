@@ -50,7 +50,7 @@ const MarkTaskInstanceAsDialog = ({ onClose, open, state, taskInstance }: Props)
   const upstream = selectedOptions.includes("upstream");
   const downstream = selectedOptions.includes("downstream");
 
-  const [note, setNote] = useState<string | null>(taskInstance.note);
+  const [note, setNote] = useState(taskInstance.note);
 
   const { isPending, mutate } = usePatchTaskInstance({
     dagId,

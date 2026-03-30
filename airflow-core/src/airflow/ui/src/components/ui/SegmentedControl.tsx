@@ -29,7 +29,7 @@ type SegmentedControlProps = {
 };
 
 const SegmentedControl = ({ defaultValues, multiple = false, onChange, options }: SegmentedControlProps) => {
-  const [selectedOptions, setSelectedOptions] = useState<Array<string>>(defaultValues ?? []);
+  const [selectedOptions, setSelectedOptions] = useState(defaultValues ?? []);
 
   const onClick = (selected: string) => {
     if (multiple) {

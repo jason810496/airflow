@@ -41,7 +41,7 @@ export const useGridTiSummariesStream = ({
   runIds: Array<string>;
   states?: Array<TaskInstanceState | null | undefined>;
 }) => {
-  const [summariesByRunId, setSummariesByRunId] = useState<Map<string, GridTISummaries>>(new Map());
+  const [summariesByRunId, setSummariesByRunId] = useState(new Map());
   const [refreshTick, setRefreshTick] = useState(0);
 
   const baseRefetchInterval = useAutoRefresh({ dagId });

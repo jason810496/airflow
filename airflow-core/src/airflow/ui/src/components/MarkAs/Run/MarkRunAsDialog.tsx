@@ -38,7 +38,7 @@ const MarkRunAsDialog = ({ dagRun, onClose, open, state }: Props) => {
   const dagRunId = dagRun.dag_run_id;
   const { t: translate } = useTranslation();
 
-  const [note, setNote] = useState<string | null>(dagRun.note);
+  const [note, setNote] = useState(dagRun.note);
   const { isPending, mutate } = usePatchDagRun({ dagId, dagRunId, onSuccess: onClose });
 
   return (

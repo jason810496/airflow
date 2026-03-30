@@ -34,7 +34,7 @@ dayjs.extend(timezone);
 const TimezoneSelector: React.FC = () => {
   const { selectedTimezone, setSelectedTimezone } = useTimezone();
   const { t: translate } = useTranslation("common");
-  const [currentTime, setCurrentTime] = useState<string>("");
+  const [currentTime, setCurrentTime] = useState("");
 
   const tzList = Intl.supportedValuesOf("timeZone");
   const guessedTz = dayjs.tz.guess();

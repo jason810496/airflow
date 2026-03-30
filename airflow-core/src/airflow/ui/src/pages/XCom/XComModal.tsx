@@ -52,7 +52,7 @@ const XComModal = ({ dagId, isOpen, mapIndex, mode, onClose, runId, taskId, xcom
   const isEditMode = mode === "edit";
 
   // Fetch existing XCom data when in edit mode
-  const { data, isLoading } = useXcomServiceGetXcomEntry<XComResponseNative>(
+  const { data, isLoading } = useXcomServiceGetXcomEntry(
     {
       dagId,
       dagRunId: runId,

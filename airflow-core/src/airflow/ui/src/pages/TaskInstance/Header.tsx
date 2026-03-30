@@ -61,7 +61,7 @@ export const Header = ({ taskInstance }: { readonly taskInstance: TaskInstanceRe
     },
   ];
 
-  const [note, setNote] = useState<string | null>(taskInstance.note);
+  const [note, setNote] = useState(taskInstance.note);
 
   const dagId = taskInstance.dag_id;
   const dagRunId = taskInstance.dag_run_id;

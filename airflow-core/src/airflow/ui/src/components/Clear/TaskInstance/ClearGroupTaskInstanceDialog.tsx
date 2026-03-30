@@ -48,7 +48,7 @@ export const ClearGroupTaskInstanceDialog = ({ onClose, open, taskInstance }: Pr
     onSuccessConfirm: onClose,
   });
 
-  const [selectedOptions, setSelectedOptions] = useState<Array<string>>(["downstream"]);
+  const [selectedOptions, setSelectedOptions] = useState(["downstream"]);
 
   const onlyFailed = selectedOptions.includes("onlyFailed");
   const past = selectedOptions.includes("past");
@@ -57,7 +57,7 @@ export const ClearGroupTaskInstanceDialog = ({ onClose, open, taskInstance }: Pr
   const downstream = selectedOptions.includes("downstream");
   const [runOnLatestVersion, setRunOnLatestVersion] = useState(false);
 
-  const [note, setNote] = useState<string>("");
+  const [note, setNote] = useState("");
 
   const { data: dagDetails } = useDagServiceGetDagDetails({
     dagId,

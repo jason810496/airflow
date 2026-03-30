@@ -64,7 +64,7 @@ const renderTextWithLinks = (text: string) => {
 };
 
 export const XComEntry = ({ dagId, mapIndex, open = false, runId, taskId, xcomKey }: XComEntryProps) => {
-  const { data, isLoading } = useXcomServiceGetXcomEntry<XComResponseNative>({
+  const { data, isLoading } = useXcomServiceGetXcomEntry({
     dagId,
     dagRunId: runId,
     deserialize: true,

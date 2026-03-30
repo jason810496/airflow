@@ -42,8 +42,8 @@ const ClearRunDialog = ({ dagRun, onClose, open }: Props) => {
   const dagRunId = dagRun.dag_run_id;
   const { t: translate } = useTranslation();
 
-  const [note, setNote] = useState<string | null>(dagRun.note);
-  const [selectedOptions, setSelectedOptions] = useState<Array<string>>(["existingTasks"]);
+  const [note, setNote] = useState(dagRun.note);
+  const [selectedOptions, setSelectedOptions] = useState(["existingTasks"]);
   const onlyFailed = selectedOptions.includes("onlyFailed");
   const [runOnLatestVersion, setRunOnLatestVersion] = useState(false);
 

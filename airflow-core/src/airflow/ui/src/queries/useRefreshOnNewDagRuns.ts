@@ -34,7 +34,7 @@ import { useConfig } from "./useConfig";
 
 export const useRefreshOnNewDagRuns = (dagId: string, hasPendingRuns: boolean | undefined) => {
   const queryClient = useQueryClient();
-  const previousDagRunIdRef = useRef<string>("");
+  const previousDagRunIdRef = useRef("");
   const autoRefreshInterval = useConfig("auto_refresh_interval") as number;
 
   const { data: latestDagRun } = useDagServiceGetLatestRunInfo({ dagId }, undefined, {

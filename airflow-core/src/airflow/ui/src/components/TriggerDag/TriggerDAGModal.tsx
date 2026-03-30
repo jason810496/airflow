@@ -56,7 +56,7 @@ const TriggerDAGModal: React.FC<TriggerDAGModalProps> = ({
   prefillConfig,
 }) => {
   const { t: translate } = useTranslation("components");
-  const [runMode, setRunMode] = useState<RunMode>(RunMode.SINGLE);
+  const [runMode, setRunMode] = useState(RunMode.SINGLE);
   const {
     data: dag,
     isError,
