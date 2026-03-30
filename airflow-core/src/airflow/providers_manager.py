@@ -1451,6 +1451,22 @@ class ProvidersManager(LoggingMixin):
         self.initialize_providers_configuration()
         return sorted(self._provider_configs.items(), key=lambda x: x[0])
 
+    @property
+    def already_initialized_provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
+        """
+        Return provider configs that have already been initialized.
+
+        .. deprecated:: 3.2.0
+            Use ``provider_configs`` instead.  This property is kept for backwards
+            compatibility and will be removed in a future version.
+        """
+        warnings.warn(
+            "already_initialized_provider_configs is deprecated. Use `provider_configs` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return sorted(self._provider_configs.items(), key=lambda x: x[0])
+
     def _cleanup(self):
         self._initialized_cache.clear()
         self._provider_dict.clear()
