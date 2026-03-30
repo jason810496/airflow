@@ -118,8 +118,6 @@ const getWidthBasedConfig = (width: number, enableResponsiveOptions: boolean) =>
 
 const deps = ["all", "immediate", "tasks"];
 
-type Dependency = (typeof deps)[number];
-
 export const PanelButtons = ({
   dagRunStateFilter,
   dagView,
@@ -145,7 +143,7 @@ export const PanelButtons = ({
   const { dagId = "", runId } = useParams();
   const { fitView } = useReactFlow();
   const shouldShowToggleButtons = Boolean(runId);
-  const [dependencies, setDependencies, removeDependencies] = useLocalStorage<Dependency>(
+  const [dependencies, setDependencies, removeDependencies] = useLocalStorage(
     dependenciesKey(dagId),
     "tasks",
   );

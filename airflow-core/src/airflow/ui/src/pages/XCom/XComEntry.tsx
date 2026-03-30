@@ -19,7 +19,6 @@
 import { Skeleton, HStack, Text, Link } from "@chakra-ui/react";
 
 import { useXcomServiceGetXcomEntry } from "openapi/queries";
-import type { XComResponseNative } from "openapi/requests/types.gen";
 import RenderedJsonField from "src/components/RenderedJsonField";
 import { ClipboardIconButton, ClipboardRoot } from "src/components/ui";
 import { urlRegex } from "src/constants/urlRegex";

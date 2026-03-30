@@ -28,7 +28,6 @@ import {
   useXcomServiceGetXcomEntryKey,
   useXcomServiceUpdateXcomEntry,
 } from "openapi/queries";
-import type { XComResponseNative } from "openapi/requests/types.gen";
 import { JsonEditor } from "src/components/JsonEditor";
 import { Dialog, ProgressBar, toaster } from "src/components/ui";
 

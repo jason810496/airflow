@@ -60,7 +60,7 @@ export const Overview = () => {
     state: ["failed"],
   });
 
-  const [limit] = useLocalStorage<number>(dagRunsLimitKey(dagId ?? ""), 10);
+  const [limit] = useLocalStorage(dagRunsLimitKey(dagId ?? ""), 10);
   const { data: failedRuns, isLoading: isLoadingFailedRuns } = useDagRunServiceGetDagRuns({
     dagId: dagId ?? "",
     limit,

@@ -70,7 +70,7 @@ export const FlexibleForm = ({
 }: FlexibleFormProps) => {
   const { paramsDict: params, setDisabled, setInitialParamDict, setParamsDict } = useParamStore(namespace);
   const processedSections = new Map();
-  const [sectionError, setSectionError] = useState(new Map());
+  const [sectionError, setSectionError] = useState(new Map<string, boolean>());
 
   useEffect(() => {
     // Initialize paramsDict and initialParamDict when modal opens

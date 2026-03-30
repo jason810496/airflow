@@ -32,7 +32,7 @@ export type GetColumnsParams = {
 };
 
 export const useRowSelection = <T>({ data = [], getKey }: UseRowSelectionProps<T>) => {
-  const [selectedRows, setSelectedRows] = useState(new Map());
+  const [selectedRows, setSelectedRows] = useState(new Map<string, boolean>());
 
   const handleRowSelect = (key: string, isChecked: boolean) => {
     setSelectedRows((prev) => {

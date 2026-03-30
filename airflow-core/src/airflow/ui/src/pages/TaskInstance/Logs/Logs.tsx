@@ -76,9 +76,9 @@ export const Logs = () => {
 
   const defaultWrap = Boolean(useConfig("default_wrap"));
 
-  const [wrap, setWrap] = useLocalStorage<boolean>(LOG_WRAP_KEY, defaultWrap);
-  const [showTimestamp, setShowTimestamp] = useLocalStorage<boolean>(LOG_SHOW_TIMESTAMP_KEY, true);
-  const [showSource, setShowSource] = useLocalStorage<boolean>(LOG_SHOW_SOURCE_KEY, false);
+  const [wrap, setWrap] = useLocalStorage(LOG_WRAP_KEY, defaultWrap);
+  const [showTimestamp, setShowTimestamp] = useLocalStorage(LOG_SHOW_TIMESTAMP_KEY, true);
+  const [showSource, setShowSource] = useLocalStorage(LOG_SHOW_SOURCE_KEY, false);
   const [fullscreen, setFullscreen] = useState(false);
   const [expanded, setExpanded] = useState(false);
 

@@ -22,7 +22,6 @@ import {
   getExpandedRowModel,
   getPaginationRowModel,
   useReactTable,
-  type VisibilityState,
   type OnChangeFn,
   type TableState as ReactTableState,
   type Row,
@@ -110,7 +109,7 @@ export const DataTable = <TData,>({
     [onStateChange],
   );
 
-  const [columnVisibility, setColumnVisibility] = useLocalStorage<VisibilityState>(
+  const [columnVisibility, setColumnVisibility] = useLocalStorage(
     `dataTable:${modelName}:columnVisibility`,
     initialState?.columnVisibility ?? {},
   );
