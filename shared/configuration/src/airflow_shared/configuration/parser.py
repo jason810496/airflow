@@ -374,7 +374,7 @@ class AirflowConfigParser(ConfigParser):
     ) -> str | ValueNotFound:
         """Get config option from provider fallback defaults."""
         value = self.get_from_provider_cfg_config_fallback_defaults(section, key, **kwargs)
-        if value is not None:
+        if value is not VALUE_NOT_FOUND_SENTINEL:
             return value
         return VALUE_NOT_FOUND_SENTINEL
 
@@ -399,7 +399,7 @@ class AirflowConfigParser(ConfigParser):
         raw = kwargs.get("raw", False)
         vars_ = kwargs.get("vars")
         return self._provider_cfg_config_fallback_default_values.get(
-            section, key, fallback=None, raw=raw, vars=vars_
+            section, key, fallback=VALUE_NOT_FOUND_SENTINEL, raw=raw, vars=vars_
         )
 
     @functools.cached_property
