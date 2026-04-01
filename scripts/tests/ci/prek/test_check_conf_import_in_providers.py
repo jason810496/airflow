@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from check_conf_import_in_providers import find_forbidden_conf_imports, is_excluded
+from check_conf_import_in_providers import find_forbidden_conf_imports, is_excluded, is_executor_file
 
 
 class TestIsExcluded:
@@ -40,6 +40,31 @@ class TestIsExcluded:
     )
     def test_is_excluded(self, path: str, expected: bool):
         assert is_excluded(Path(path)) is expected
+
+
+class TestIsExecutorFile:
+    @pytest.mark.parametrize(
+        "path, expected",
+        [
+            pytest.param(
+                "providers/edge3/src/airflow/providers/edge3/executors/edge_executor.py",
+                True,
+                id="executor-file",
+            ),
+            pytest.param(
+                "providers/celery/src/airflow/providers/celery/executors/celery_executor.py",
+                True,
+                id="celery-executor-file",
+            ),
+            pytest.param(
+                "providers/amazon/src/airflow/providers/amazon/hooks/s3.py",
+                False,
+                id="regular-provider-file",
+            ),
+        ],
+    )
+    def test_is_executor_file(self, path: str, expected: bool):
+        assert is_executor_file(Path(path)) is expected
 
 
 class TestFindForbiddenConfImports:
@@ -96,3 +121,17 @@ class TestFindForbiddenConfImports:
         f = tmp_path / "example.py"
         f.write_text(code)
         assert find_forbidden_conf_imports(f) == []
+
+    def test_executor_allows_airflow_configuration_conf(self, tmp_path: Path):
+        executor_dir = tmp_path / "executors"
+        executor_dir.mkdir()
+        f = executor_dir / "my_executor.py"
+        f.write_text("from airflow.configuration import conf\n")
+        assert find_forbidden_conf_imports(f) == []
+
+    def test_executor_still_forbids_sdk_configuration_conf(self, tmp_path: Path):
+        executor_dir = tmp_path / "executors"
+        executor_dir.mkdir()
+        f = executor_dir / "my_executor.py"
+        f.write_text("from airflow.sdk.configuration import conf\n")
+        assert find_forbidden_conf_imports(f) == ["airflow.sdk.configuration.conf"]

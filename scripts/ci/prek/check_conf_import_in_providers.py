@@ -44,6 +44,12 @@ FORBIDDEN_CONF_IMPORTS = {
     "airflow.sdk.configuration.conf",
 }
 
+# Executor files run inside Airflow-Core, so they may use airflow.configuration directly.
+# Only airflow.sdk.configuration remains forbidden for them.
+EXECUTOR_ALLOWED_CONF_IMPORTS = {
+    "airflow.configuration.conf",
+}
+
 ALLOWED_IMPORT = "from airflow.providers.common.compat.sdk import conf"
 
 
@@ -52,10 +58,18 @@ def is_excluded(path: Path) -> bool:
     return path.as_posix().endswith("airflow/providers/common/compat/sdk.py")
 
 
+def is_executor_file(path: Path) -> bool:
+    """Check if a file is an executor module (lives under an ``executors/`` directory)."""
+    return "executors" in path.parts
+
+
 def find_forbidden_conf_imports(path: Path) -> list[str]:
     """Return forbidden conf imports found in *path*."""
     imports = get_imports_from_file(path, only_top_level=False)
-    return [imp for imp in imports if imp in FORBIDDEN_CONF_IMPORTS]
+    forbidden = FORBIDDEN_CONF_IMPORTS
+    if is_executor_file(path):
+        forbidden = forbidden - EXECUTOR_ALLOWED_CONF_IMPORTS
+    return [imp for imp in imports if imp in forbidden]
 
 
 def parse_args():
