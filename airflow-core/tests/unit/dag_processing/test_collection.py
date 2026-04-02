@@ -53,6 +53,7 @@ from airflow.models.dag import DagTag
 from airflow.models.dagbundle import DagBundleModel
 from airflow.models.errors import ParseImportError
 from airflow.models.serialized_dag import SerializedDagModel
+from airflow.models.trigger import Trigger
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.triggers.file import FileDeleteTrigger
 from airflow.sdk import DAG, Asset, AssetAlias, AssetWatcher
@@ -242,6 +243,35 @@ class TestAssetModelOperation:
         orm_assets = asset_op.sync_assets(session=session)
         assert len(orm_assets) == 1
         assert next(iter(orm_assets.values())).extra == {"foo": "new"}
+
+    @pytest.mark.usefixtures("testing_dag_bundle")
+    def test_asset_trigger_kwargs_are_not_double_serialized(self, dag_maker, session):
+        from airflow.providers.apache.kafka.triggers.await_message import AwaitMessageTrigger
+
+        trigger = AwaitMessageTrigger(topics=())
+        asset = Asset(
+            "test_asset_trigger_kwargs_are_not_double_serialized",
+            watchers=[AssetWatcher(name="test", trigger=trigger)],
+        )
+
+        with dag_maker(dag_id="test_asset_trigger_kwargs_are_not_double_serialized_dag", schedule=[asset]) as dag:
+            EmptyOperator(task_id="mytask")
+
+        dags = {dag.dag_id: LazyDeserializedDAG.from_dag(dag)}
+        orm_dags = DagModelOperation(dags, "testing", None).add_dags(session=session)
+        orm_dags[dag.dag_id].is_stale = False
+        orm_dags[dag.dag_id].is_paused = False
+
+        asset_op = AssetModelOperation.collect(dags)
+        orm_assets = asset_op.sync_assets(session=session)
+        session.flush()
+        asset_op.add_dag_asset_references(orm_dags, orm_assets, session=session)
+        asset_op.activate_assets_if_possible(orm_assets.values(), session=session)
+        asset_op.add_asset_trigger_references(orm_assets, session=session)
+        session.flush()
+
+        trigger_model = session.scalars(select(Trigger)).one()
+        assert trigger_model.kwargs["topics"] == ()
 
     def test_change_asset_alias_property_sync_group(self, dag_maker, session):
         alias = AssetAlias("myalias", group="old_group")
