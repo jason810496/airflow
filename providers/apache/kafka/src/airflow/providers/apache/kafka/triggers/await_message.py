@@ -108,6 +108,7 @@ class AwaitMessageTrigger(BaseEventTrigger):
 
         async_get_consumer = sync_to_async(consumer_hook.get_consumer)
         consumer = await async_get_consumer()
+        self._consumer = consumer  # store for cleanup
 
         async_poll = sync_to_async(consumer.poll)
         async_commit = sync_to_async(consumer.commit)
@@ -141,3 +142,7 @@ class AwaitMessageTrigger(BaseEventTrigger):
                     if self.commit_offset:
                         await async_commit(message=message, asynchronous=False)
                     await asyncio.sleep(self.poll_interval)
+
+    async def cleanup(self) -> None:
+        if consumer := getattr(self, "_consumer", None):
+            consumer.close()
