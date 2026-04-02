@@ -37,6 +37,7 @@ from airflow.sdk._shared.serialization import (
     OLD_DATA,
     OLD_DICT,
     OLD_TYPE,
+    OLD_TYPE_TO_QUALNAME,
     SCHEMA_ID,
     VERSION,
 )
@@ -307,7 +308,8 @@ def _convert(old: dict) -> dict:
         # Return old style dicts directly as they do not need wrapping
         if old[OLD_TYPE] == OLD_DICT:
             return old[OLD_DATA]
-        return {CLASSNAME: old[OLD_TYPE], VERSION: DEFAULT_VERSION, DATA: old[OLD_DATA]}
+        type_name = OLD_TYPE_TO_QUALNAME.get(old[OLD_TYPE], old[OLD_TYPE])
+        return {CLASSNAME: type_name, VERSION: DEFAULT_VERSION, DATA: old[OLD_DATA]}
 
     return old
 
