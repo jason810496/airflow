@@ -206,6 +206,17 @@ repos:
         files: ^.*/provider\.yaml$|^.*/docs/.*/connections.*\.rst$|^.*/docs/connections\.rst$
         require_serial: true
         pass_filenames: false
+      - id: check-kafka-trigger-docstring-params-sync
+        name: Check Kafka trigger docstring params in sync
+        entry: ../scripts/ci/prek/check_kafka_trigger_docstring_params_sync.py
+          --files
+          apache/kafka/src/airflow/providers/apache/kafka/triggers/await_message.py
+          apache/kafka/src/airflow/providers/apache/kafka/triggers/msg_queue.py
+        language: python
+        pass_filenames: false
+        files: >-
+          ^apache/kafka/src/airflow/providers/apache/kafka/triggers/await_message\.py$|
+          ^apache/kafka/src/airflow/providers/apache/kafka/triggers/msg_queue\.py$
       - id: mypy-providers
         stages: ['pre-push']
         name: Run mypy for providers
