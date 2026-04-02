@@ -42,7 +42,7 @@ FORBIDDEN_XCOM_KEYS = frozenset(
     }
 )
 
-OLD_TYPE_TO_QUALNAME: dict[str, str] = {
+OLD_TYPE_TO_FULL_QUALNAME: dict[str, str] = {
     "tuple": "builtins.tuple",
     "set": "builtins.set",
     "frozenset": "builtins.frozenset",
