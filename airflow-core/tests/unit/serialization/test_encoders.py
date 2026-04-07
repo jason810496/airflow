@@ -25,8 +25,30 @@ from airflow.serialization.encoders import encode_trigger
 from airflow.serialization.enums import DagAttributeTypes as DAT, Encoding
 from airflow.triggers.base import BaseEventTrigger
 
-pytest.importorskip("airflow.providers.apache.kafka")
-from airflow.providers.apache.kafka.triggers.await_message import AwaitMessageTrigger
+try:
+    from airflow.providers.apache.kafka.triggers.await_message import AwaitMessageTrigger
+
+    _kafka_params = [
+        pytest.param(AwaitMessageTrigger(topics=()), id="empty_tuple"),
+        pytest.param(
+            AwaitMessageTrigger(topics=("fizz_buzz",), poll_timeout=1.0, commit_offset=True),
+            id="single_topic_tuple",
+        ),
+        pytest.param(
+            AwaitMessageTrigger(
+                topics=["t1", "t2"],
+                apply_function="my.module.func",
+                apply_function_args=["a", "b"],
+                apply_function_kwargs={"key": "value"},
+                kafka_config_id="my_kafka",
+                poll_interval=2,
+                poll_timeout=3,
+            ),
+            id="all_non_primitive_kwargs",
+        ),
+    ]
+except ImportError:
+    _kafka_params = []
 
 # Trigger fixtures covering primitive-only kwargs (FileDeleteTrigger) and
 # non-primitive kwargs like tuple/dict (AwaitMessageTrigger).
@@ -35,23 +57,7 @@ _TRIGGER_PARAMS = [
         FileDeleteTrigger(filepath="/tmp/test.txt", poke_interval=5.0),
         id="primitive_kwargs_only",
     ),
-    pytest.param(AwaitMessageTrigger(topics=()), id="empty_tuple"),
-    pytest.param(
-        AwaitMessageTrigger(topics=("fizz_buzz",), poll_timeout=1.0, commit_offset=True),
-        id="single_topic_tuple",
-    ),
-    pytest.param(
-        AwaitMessageTrigger(
-            topics=["t1", "t2"],
-            apply_function="my.module.func",
-            apply_function_args=["a", "b"],
-            apply_function_kwargs={"key": "value"},
-            kafka_config_id="my_kafka",
-            poll_interval=2,
-            poll_timeout=3,
-        ),
-        id="all_non_primitive_kwargs",
-    ),
+    *_kafka_params,
 ]
 
 
@@ -65,9 +71,10 @@ class TestEncodeTrigger:
     before re-serialization to prevent double-wrapping.
     """
 
+    @pytest.mark.skipif(not _kafka_params, reason="apache-kafka provider not installed")
     def test_encode_from_trigger_object(self):
         """Non-primitive kwargs are properly serialized from a trigger object."""
-        trigger = AwaitMessageTrigger(topics=())
+        trigger = AwaitMessageTrigger(topics=())  # type: ignore[possibly-undefined]
         result = encode_trigger(trigger)
 
         assert (
