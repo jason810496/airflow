@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import call
 
 import pytest
 
@@ -165,10 +166,10 @@ class TestTrigger:
         await trigger.cleanup()
         await generator.aclose()
 
-        close_mock.assert_called_once_with()
+        assert close_mock.mock_calls == [call()]
 
     @pytest.mark.asyncio
-    async def test_cleanup_without_consumer_is_noop(self):
+    async def test_cleanup_does_not_raise_without_consumer(self):
         trigger = AwaitMessageTrigger(
             kafka_config_id="kafka_d",
             apply_function="unit.apache.kafka.triggers.test_await_message.apply_function_true",
