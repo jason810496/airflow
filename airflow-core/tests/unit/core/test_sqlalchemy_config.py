@@ -74,6 +74,43 @@ class TestSqlAlchemySettings:
     @patch("airflow.settings.scoped_session")
     @patch("airflow.settings.sessionmaker")
     @patch("airflow.settings.create_engine")
+    def test_configure_orm_sqlite_file_based_gets_pool_settings(
+        self,
+        mock_create_engine,
+        mock_sessionmaker,
+        mock_scoped_session,
+        mock_setup_event_handlers,
+        monkeypatch,
+    ):
+        """SQLAlchemy 2.0+ uses QueuePool for file-based SQLite, so pool settings should be applied."""
+        monkeypatch.setattr(settings, "SQL_ALCHEMY_CONN", "sqlite:////tmp/airflow.db")
+        settings.configure_orm()
+        expected_kwargs = dict(
+            connect_args={"check_same_thread": False},
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+            pool_size=5,
+            future=True,
+        )
+        mock_create_engine.assert_called_once_with(
+            "sqlite:////tmp/airflow.db",
+            **expected_kwargs,
+        )
+
+    @pytest.mark.parametrize("conn_str", ["sqlite://", "sqlite:///:memory:"])
+    def test_prepare_engine_args_sqlite_in_memory_skips_pool_settings(self, conn_str, monkeypatch):
+        """In-memory SQLite uses SingletonThreadPool which doesn't support pool_size/max_overflow."""
+        monkeypatch.setattr(settings, "SQL_ALCHEMY_CONN", conn_str)
+        engine_args = settings.prepare_engine_args()
+        assert "pool_size" not in engine_args
+        assert "max_overflow" not in engine_args
+        assert "pool_recycle" not in engine_args
+
+    @patch("airflow.settings.setup_event_handlers")
+    @patch("airflow.settings.scoped_session")
+    @patch("airflow.settings.sessionmaker")
+    @patch("airflow.settings.create_engine")
     def test_sql_alchemy_connect_args(
         self, mock_create_engine, mock_sessionmaker, mock_scoped_session, mock_setup_event_handlers
     ):
