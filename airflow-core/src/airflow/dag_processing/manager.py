@@ -65,7 +65,7 @@ from airflow.observability.metrics import stats_utils
 from airflow.sdk import SecretCache
 from airflow.sdk.log import init_log_file, logging_processors
 from airflow.typing_compat import assert_never
-from airflow.utils.file import list_py_file_paths, might_contain_dag
+from airflow.utils.file import might_contain_dag
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.net import get_hostname
 from airflow.utils.process_utils import (
@@ -752,9 +752,14 @@ class DagFileProcessorManager(LoggingMixin):
 
     def _find_files_in_bundle(self, bundle: BaseDagBundle) -> list[Path]:
         """Get relative paths for dag files from bundle dir."""
-        # Build up a list of Python files that could contain DAGs
+        from airflow.dag_processing.importers import get_importer_registry
+
+        # TODO: We can decide whether to leverage AIP-85 `DagImporterRegistry` at this stage
+        # Since having provider-registered DagFileProcessor is sufficient for our use case now
+
         self.log.info("Searching for files in %s at %s", bundle.name, bundle.path)
-        rel_paths = [Path(x).relative_to(bundle.path) for x in list_py_file_paths(bundle.path)]
+        registry = get_importer_registry()
+        rel_paths = [Path(x).relative_to(bundle.path) for x in registry.list_dag_files(bundle.path)]
         self.log.info("Found %s files for bundle %s", len(rel_paths), bundle.name)
 
         return rel_paths

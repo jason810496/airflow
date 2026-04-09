@@ -449,6 +449,7 @@ class ProvidersManager(LoggingMixin):
         # Set of plugins contained in providers
         self._plugins_set: set[PluginInfo] = set()
         self._dag_file_processors: list[str] = []
+        self._dag_importers: list[str] = []
         self._init_airflow_core_hooks()
 
         self._runtime_manager = None
@@ -631,6 +632,12 @@ class ProvidersManager(LoggingMixin):
         """Lazy initialization of providers dag file processors."""
         self.initialize_providers_list()
         self._discover_dag_file_processors()
+
+    @provider_info_cache("dag_importers")
+    def initialize_providers_dag_importers(self):
+        """Lazy initialization of providers dag importers."""
+        self.initialize_providers_list()
+        self._discover_dag_importers()
 
     @provider_info_cache("plugins")
     def initialize_providers_plugins(self):
@@ -1295,6 +1302,14 @@ class ProvidersManager(LoggingMixin):
                     self._dag_file_processors.append(dag_file_processor_class_path)
         self._dag_file_processors = sorted(set(self._dag_file_processors))
 
+    def _discover_dag_importers(self) -> None:
+        """Retrieve all dag importers defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            for dag_importer_class_path in provider.data.get("dag-importers", []):
+                if _correctness_check(provider_package, dag_importer_class_path, provider):
+                    self._dag_importers.append(dag_importer_class_path)
+        self._dag_importers = sorted(set(self._dag_importers))
+
     def _discover_plugins(self) -> None:
         """Retrieve all plugins defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
@@ -1499,6 +1514,12 @@ class ProvidersManager(LoggingMixin):
         return self._dag_file_processors
 
     @property
+    def dag_importers(self) -> list[str]:
+        """Returns dag importer class paths available in providers."""
+        self.initialize_providers_dag_importers()
+        return self._dag_importers
+
+    @property
     def filesystem_module_names(self) -> list[str]:
         self.initialize_providers_filesystems()
         return sorted(self._fs_set)
@@ -1570,6 +1591,7 @@ class ProvidersManager(LoggingMixin):
         self._notification_info_set.clear()
         self._plugins_set.clear()
         self._dag_file_processors.clear()
+        self._dag_importers.clear()
         self._cli_command_functions_set.clear()
         self._cli_command_provider_name_set.clear()
 

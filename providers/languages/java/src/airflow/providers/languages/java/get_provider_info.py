@@ -35,4 +35,5 @@ def get_provider_info():
         ],
         "task-coordinators": ["airflow.providers.languages.java.task_coordinators.JavaTaskCoordinator"],
         "dag-file-processors": ["airflow.providers.languages.java.dag_file_processors.JavaDagFileProcessor"],
+        "dag-importers": ["airflow.providers.languages.java.dag_importers.JavaDagImporter"],
     }

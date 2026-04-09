@@ -43,3 +43,6 @@ task-coordinators:
 
 dag-file-processors:
   - airflow.providers.languages.java.dag_file_processors.JavaDagFileProcessor
+
+dag-importers:
+  - airflow.providers.languages.java.dag_importers.JavaDagImporter

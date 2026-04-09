@@ -638,6 +638,13 @@
                 "type": "string"
             }
         },
+        "dag-importers": {
+            "type": "array",
+            "description": "Dag Importer class names",
+            "items": {
+                "type": "string"
+            }
+        },
         "source-date-epoch": {
             "type": "integer",
             "description": "Source date epoch - seconds since epoch (gmtime) when the release documentation was prepared. Used to generate reproducible package builds with flint.",

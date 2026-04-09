@@ -460,6 +460,13 @@
             "items": {
                 "type": "string"
             }
+        },
+        "dag-importers": {
+            "type": "array",
+            "description": "Dag Importer class names",
+            "items": {
+                "type": "string"
+            }
         }
     },
     "definitions": {

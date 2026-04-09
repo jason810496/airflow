@@ -186,6 +186,20 @@ class DagImporterRegistry:
         from airflow.dag_processing.importers.python_importer import PythonDagImporter
 
         self.register(PythonDagImporter())
+        self._register_provider_importers()
+
+    def _register_provider_importers(self) -> None:
+        """Discover and register DAG importers contributed by providers."""
+        from airflow._shared.module_loading import import_string
+        from airflow.providers_manager import ProvidersManager
+
+        for importer_class_path in ProvidersManager().dag_importers:
+            try:
+                log.debug("Registering DAG importer from provider: %s", importer_class_path)
+                importer_cls: AbstractDagImporter = import_string(importer_class_path)
+                self.register(importer_cls())
+            except Exception:
+                log.warning("Failed to load dag importer %s", importer_class_path, exc_info=True)
 
     def register(self, importer: AbstractDagImporter) -> None:
         """
