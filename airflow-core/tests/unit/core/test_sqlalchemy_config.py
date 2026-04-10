@@ -98,7 +98,16 @@ class TestSqlAlchemySettings:
             **expected_kwargs,
         )
 
-    @pytest.mark.parametrize("conn_str", ["sqlite://", "sqlite:///:memory:"])
+    @pytest.mark.parametrize(
+        "conn_str",
+        [
+            "sqlite://",
+            "sqlite:///:memory:",
+            "sqlite+pysqlite:///:memory:",
+            "sqlite:///:memory:?cache=shared",
+            "sqlite:///file::memory:?cache=shared",
+        ],
+    )
     def test_prepare_engine_args_sqlite_in_memory_skips_pool_settings(self, conn_str, monkeypatch):
         """In-memory SQLite uses SingletonThreadPool which doesn't support pool_size/max_overflow."""
         monkeypatch.setattr(settings, "SQL_ALCHEMY_CONN", conn_str)
@@ -106,6 +115,7 @@ class TestSqlAlchemySettings:
         assert "pool_size" not in engine_args
         assert "max_overflow" not in engine_args
         assert "pool_recycle" not in engine_args
+        assert "pool_pre_ping" not in engine_args
 
     @patch("airflow.settings.setup_event_handlers")
     @patch("airflow.settings.scoped_session")

@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pluggy
 from packaging.version import Version
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession as SAAsyncSession,
@@ -481,6 +481,20 @@ def configure_orm(disable_connection_pool=False, pool_class=None):
         register_at_fork(after_in_child=clean_in_fork)
 
 
+def _is_sqlite_in_memory(url: str) -> bool:
+    """
+    Check if a SQLAlchemy connection URL points to an in-memory SQLite database.
+
+    Handles driver prefixes (e.g. ``sqlite+pysqlite://``), query parameters, and
+    various in-memory forms like ``:memory:`` and ``file::memory:``.
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite":
+        return False
+    db = parsed.database
+    return not db or db == ":memory:" or ":memory:" in db
+
+
 def prepare_engine_args(disable_connection_pool=False, pool_class=None):
     """Prepare SQLAlchemy engine args."""
     DEFAULT_ENGINE_ARGS: dict[str, dict[str, Any]] = {
@@ -510,7 +524,7 @@ def prepare_engine_args(disable_connection_pool=False, pool_class=None):
     elif disable_connection_pool or not conf.getboolean("database", "SQL_ALCHEMY_POOL_ENABLED"):
         engine_args["poolclass"] = NullPool
         log.debug("settings.prepare_engine_args(): Using NullPool")
-    elif SQL_ALCHEMY_CONN in ("sqlite://", "sqlite:///:memory:"):
+    elif _is_sqlite_in_memory(SQL_ALCHEMY_CONN):
         # In-memory SQLite uses SingletonThreadPool which doesn't support pool_size/max_overflow.
         log.debug("settings.prepare_engine_args(): Skipping pool settings for in-memory SQLite")
     else:
