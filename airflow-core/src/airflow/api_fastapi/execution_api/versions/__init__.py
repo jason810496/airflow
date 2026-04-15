@@ -39,9 +39,15 @@ from airflow.api_fastapi.execution_api.versions.v2026_04_06 import (
     MovePreviousRunEndpoint,
     RemoveUpstreamMapIndexesField,
 )
+from airflow.api_fastapi.execution_api.versions.v2026_07_01 import AddLanguageField
 
 bundle = VersionBundle(
     HeadVersion(),
+    # TODO: Find the Correct cut-date for 3.3 release, this is just a placeholder for now.
+    Version(
+        "2026-07-01",
+        AddLanguageField,
+    ),
     Version(
         "2026-04-06",
         AddPartitionKeyField,
