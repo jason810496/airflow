@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pluggy
 from packaging.version import Version
-from sqlalchemy import create_engine, make_url
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession as SAAsyncSession,
