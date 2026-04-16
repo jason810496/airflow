@@ -107,12 +107,8 @@ class DagRunAssetReference(BaseModel):
     start_date: Annotated[AwareDatetime, Field(title="Start Date")]
     end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
     state: Annotated[str, Field(title="State")]
-    data_interval_start: Annotated[
-        AwareDatetime | None, Field(title="Data Interval Start")
-    ] = None
-    data_interval_end: Annotated[
-        AwareDatetime | None, Field(title="Data Interval End")
-    ] = None
+    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
+    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
     partition_key: Annotated[str | None, Field(title="Partition Key")] = None
 
 
@@ -166,9 +162,7 @@ class InactiveAssetsResponse(BaseModel):
     Response for inactive assets.
     """
 
-    inactive_assets: Annotated[
-        list[AssetProfile] | None, Field(title="Inactive Assets")
-    ] = None
+    inactive_assets: Annotated[list[AssetProfile] | None, Field(title="Inactive Assets")] = None
 
 
 class IntermediateTIState(str, Enum):
@@ -189,12 +183,8 @@ class PrevSuccessfulDagRunResponse(BaseModel):
     Schema for response with previous successful DagRun information for Task Template Context.
     """
 
-    data_interval_start: Annotated[
-        AwareDatetime | None, Field(title="Data Interval Start")
-    ] = None
-    data_interval_end: Annotated[
-        AwareDatetime | None, Field(title="Data Interval End")
-    ] = None
+    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
+    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
     start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
     end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
 
@@ -226,15 +216,11 @@ class TIDeferredStatePayload(BaseModel):
     )
     state: Annotated[Literal["deferred"] | None, Field(title="State")] = "deferred"
     classpath: Annotated[str, Field(title="Classpath")]
-    trigger_kwargs: Annotated[
-        dict[str, JsonValue] | str | None, Field(title="Trigger Kwargs")
-    ] = None
+    trigger_kwargs: Annotated[dict[str, JsonValue] | str | None, Field(title="Trigger Kwargs")] = None
     trigger_timeout: Annotated[timedelta | None, Field(title="Trigger Timeout")] = None
     queue: Annotated[str | None, Field(title="Queue")] = None
     next_method: Annotated[str, Field(title="Next Method")]
-    next_kwargs: Annotated[dict[str, JsonValue] | None, Field(title="Next Kwargs")] = (
-        None
-    )
+    next_kwargs: Annotated[dict[str, JsonValue] | None, Field(title="Next Kwargs")] = None
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
 
 
@@ -273,9 +259,7 @@ class TIRescheduleStatePayload(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    state: Annotated[Literal["up_for_reschedule"] | None, Field(title="State")] = (
-        "up_for_reschedule"
-    )
+    state: Annotated[Literal["up_for_reschedule"] | None, Field(title="State")] = "up_for_reschedule"
     reschedule_date: Annotated[AwareDatetime, Field(title="Reschedule Date")]
     end_date: Annotated[AwareDatetime, Field(title="End Date")]
 
@@ -288,9 +272,7 @@ class TIRetryStatePayload(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    state: Annotated[Literal["up_for_retry"] | None, Field(title="State")] = (
-        "up_for_retry"
-    )
+    state: Annotated[Literal["up_for_retry"] | None, Field(title="State")] = "up_for_retry"
     end_date: Annotated[AwareDatetime, Field(title="End Date")]
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
 
@@ -316,12 +298,8 @@ class TISuccessStatePayload(BaseModel):
     )
     state: Annotated[Literal["success"] | None, Field(title="State")] = "success"
     end_date: Annotated[AwareDatetime, Field(title="End Date")]
-    task_outlets: Annotated[list[AssetProfile] | None, Field(title="Task Outlets")] = (
-        None
-    )
-    outlet_events: Annotated[
-        list[dict[str, Any]] | None, Field(title="Outlet Events")
-    ] = None
+    task_outlets: Annotated[list[AssetProfile] | None, Field(title="Task Outlets")] = None
+    outlet_events: Annotated[list[dict[str, Any]] | None, Field(title="Outlet Events")] = None
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
 
 
@@ -487,9 +465,7 @@ class TaskInstance(BaseModel):
     dag_version_id: Annotated[UUID, Field(title="Dag Version Id")]
     map_index: Annotated[int | None, Field(title="Map Index")] = -1
     hostname: Annotated[str | None, Field(title="Hostname")] = None
-    context_carrier: Annotated[
-        dict[str, Any] | None, Field(title="Context Carrier")
-    ] = None
+    context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
     language: Annotated[str | None, Field(title="Language")] = None
 
 
@@ -573,9 +549,7 @@ class HITLDetailRequest(BaseModel):
     defaults: Annotated[list[str] | None, Field(title="Defaults")] = None
     multiple: Annotated[bool | None, Field(title="Multiple")] = False
     params: Annotated[dict[str, Any] | None, Field(title="Params")] = None
-    assigned_users: Annotated[list[HITLUser] | None, Field(title="Assigned Users")] = (
-        None
-    )
+    assigned_users: Annotated[list[HITLUser] | None, Field(title="Assigned Users")] = None
 
 
 class HITLDetailResponse(BaseModel):
@@ -621,9 +595,7 @@ class AssetEventDagRunReference(BaseModel):
     source_dag_id: Annotated[str | None, Field(title="Source Dag Id")] = None
     source_run_id: Annotated[str | None, Field(title="Source Run Id")] = None
     source_map_index: Annotated[int | None, Field(title="Source Map Index")] = None
-    source_aliases: Annotated[
-        list[AssetAliasReferenceAssetEventDagRun], Field(title="Source Aliases")
-    ]
+    source_aliases: Annotated[list[AssetAliasReferenceAssetEventDagRun], Field(title="Source Aliases")]
     timestamp: Annotated[AwareDatetime, Field(title="Timestamp")]
 
 
@@ -636,9 +608,7 @@ class AssetEventResponse(BaseModel):
     timestamp: Annotated[AwareDatetime, Field(title="Timestamp")]
     extra: Annotated[dict[str, JsonValue] | None, Field(title="Extra")] = None
     asset: AssetResponse
-    created_dagruns: Annotated[
-        list[DagRunAssetReference], Field(title="Created Dagruns")
-    ]
+    created_dagruns: Annotated[list[DagRunAssetReference], Field(title="Created Dagruns")]
     source_task_id: Annotated[str | None, Field(title="Source Task Id")] = None
     source_dag_id: Annotated[str | None, Field(title="Source Dag Id")] = None
     source_run_id: Annotated[str | None, Field(title="Source Run Id")] = None
@@ -665,12 +635,8 @@ class DagRun(BaseModel):
     dag_id: Annotated[str, Field(title="Dag Id")]
     run_id: Annotated[str, Field(title="Run Id")]
     logical_date: Annotated[AwareDatetime | None, Field(title="Logical Date")] = None
-    data_interval_start: Annotated[
-        AwareDatetime | None, Field(title="Data Interval Start")
-    ] = None
-    data_interval_end: Annotated[
-        AwareDatetime | None, Field(title="Data Interval End")
-    ] = None
+    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
+    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
     run_after: Annotated[AwareDatetime, Field(title="Run After")]
     start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
     end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
@@ -678,12 +644,8 @@ class DagRun(BaseModel):
     run_type: DagRunType
     state: DagRunState
     conf: Annotated[dict[str, Any] | None, Field(title="Conf")] = None
-    triggering_user_name: Annotated[str | None, Field(title="Triggering User Name")] = (
-        None
-    )
-    consumed_asset_events: Annotated[
-        list[AssetEventDagRunReference], Field(title="Consumed Asset Events")
-    ]
+    triggering_user_name: Annotated[str | None, Field(title="Triggering User Name")] = None
+    consumed_asset_events: Annotated[list[AssetEventDagRunReference], Field(title="Consumed Asset Events")]
     partition_key: Annotated[str | None, Field(title="Partition Key")] = None
     note: Annotated[str | None, Field(title="Note")] = None
 
@@ -694,20 +656,12 @@ class TIRunContext(BaseModel):
     """
 
     dag_run: DagRun
-    task_reschedule_count: Annotated[
-        int | None, Field(title="Task Reschedule Count")
-    ] = 0
+    task_reschedule_count: Annotated[int | None, Field(title="Task Reschedule Count")] = 0
     max_tries: Annotated[int, Field(title="Max Tries")]
     variables: Annotated[list[VariableResponse] | None, Field(title="Variables")] = None
-    connections: Annotated[
-        list[ConnectionResponse] | None, Field(title="Connections")
-    ] = None
+    connections: Annotated[list[ConnectionResponse] | None, Field(title="Connections")] = None
     next_method: Annotated[str | None, Field(title="Next Method")] = None
-    next_kwargs: Annotated[dict[str, Any] | str | None, Field(title="Next Kwargs")] = (
-        None
-    )
-    xcom_keys_to_clear: Annotated[
-        list[str] | None, Field(title="Xcom Keys To Clear")
-    ] = None
+    next_kwargs: Annotated[dict[str, Any] | str | None, Field(title="Next Kwargs")] = None
+    xcom_keys_to_clear: Annotated[list[str] | None, Field(title="Xcom Keys To Clear")] = None
     should_retry: Annotated[bool | None, Field(title="Should Retry")] = False
     start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
