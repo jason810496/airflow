@@ -17,7 +17,7 @@
 # under the License.
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 from sqlalchemy.pool import NullPool
@@ -93,10 +93,14 @@ class TestSqlAlchemySettings:
             pool_size=5,
             future=True,
         )
-        mock_create_engine.assert_called_once_with(
-            "sqlite:////tmp/airflow.db",
-            **expected_kwargs,
-        )
+        assert mock_create_engine.mock_calls == [
+            call(
+                "sqlite:////tmp/airflow.db",
+                **expected_kwargs,
+            ),
+            call().url.password.__bool__(),
+            call().url.password.__iter__(),
+        ]
 
     @pytest.mark.parametrize(
         "conn_str",
