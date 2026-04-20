@@ -301,31 +301,40 @@ class DagBundlesManager(LoggingMixin):
     @provide_session
     def reassign_dags_with_unconfigured_bundles(self, *, session: Session = NEW_SESSION) -> int:
         """
-        Reassign Dags that reference unconfigured bundles (None or incorrect) to the first configured bundle as a fallback.
+        Reassign Dags with unconfigured bundles to the first configured bundle.
 
-        This addresses Dags that reference bundles incorrectly (i.e. the Dag's `bundle_name` matches a value in the database, but that database value does not correspond to a user-configured bundle) as a side effect of the
-        `0082_3_1_0_make_bundle_name_not_nullable.py` migration (see: https://github.com/apache/airflow/issues/63323).
+        This addresses Dags that reference bundles incorrectly (i.e. the Dag's
+        ``bundle_name`` matches a value in the database, but that database value
+        does not correspond to a user-configured bundle) as a side effect of the
+        ``0082_3_1_0_make_bundle_name_not_nullable.py`` migration
+        (see: https://github.com/apache/airflow/issues/63323).
 
-        Instead of attempting to infer the correct bundle for each Dag during the migration, we reassign all Dags with unconfigured bundles to the first configured bundle at DagFileProcessorManager startup. This relaxes the
-        "Requested bundle '{name}' is not configured."
-        error that would otherwise occur when triggering a DagRun immediately after the migration.
+        Instead of attempting to infer the correct bundle for each Dag during the
+        migration, we reassign all Dags with unconfigured bundles to the first
+        configured bundle at DagFileProcessorManager startup. This relaxes the
+        "Requested bundle '{name}' is not configured." error that would otherwise
+        occur when triggering a DagRun immediately after the migration.
 
-        This fallback is not always semantically correct in environments using multiple bundles, but it is a safe, temporary measure that allows users to successfully trigger DagRuns right after the migration.
+        This fallback is not always semantically correct in environments using
+        multiple bundles, but it is a safe, temporary measure that allows users to
+        successfully trigger DagRuns right after the migration.
 
-        The correct Dag-to-bundle assignments will be restored by the Dag processor on the next parsing cycle.
+        The correct Dag-to-bundle assignments will be restored by the Dag processor
+        on the next parsing cycle.
 
         :param session: ORM Session
         :return: Number of Dags reassigned.
         """
+        # Import here to avoid circular import
+        # (manager -> dag -> dagrun -> taskinstance -> dag_version -> manager)
         from airflow.models.dag import DagModel
-        # lazy import to avoid circular import issues
 
         configured_names = self.bundle_names
         if not configured_names:
-            # This should not happen because we already have validation at parse_config in constructor.
-            raise AirflowConfigException(
-                "No Dag bundles are currently configured. Cannot reassign Dags with unconfigured bundles to a valid bundle. Please add at least one bundle configuration to your config."
+            self.log.info(
+                "No Dag bundles are configured; skipping reassignment of Dags with unconfigured bundles."
             )
+            return 0
         default_bundle = configured_names[0]
 
         count = cast(
@@ -339,6 +348,7 @@ class DagBundlesManager(LoggingMixin):
                     )
                 )
                 .values(bundle_name=default_bundle)
+                .execution_options(synchronize_session="fetch")
             ),
         ).rowcount
 

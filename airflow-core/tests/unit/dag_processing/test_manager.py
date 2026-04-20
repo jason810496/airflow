@@ -1739,7 +1739,10 @@ class TestDagFileProcessorManager:
 
     @mock.patch("airflow.dag_processing.manager.DagBundlesManager")
     def test_reassign_called_once_at_startup_not_on_refresh(self, mock_bundle_manager):
-        """reassign_dags_with_unconfigured_bundles is called exactly once by sync_bundles, not by _refresh_dag_bundles."""
+        """
+        reassign_dags_with_unconfigured_bundles is called exactly once by
+        sync_bundles, not by _refresh_dag_bundles.
+        """
         manager = DagFileProcessorManager(max_runs=1)
         manager._dag_bundles = []
 

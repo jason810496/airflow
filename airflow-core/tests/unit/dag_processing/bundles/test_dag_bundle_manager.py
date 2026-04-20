@@ -510,16 +510,17 @@ class TestReassignDagsWithUnconfiguredBundles:
             manager = DagBundlesManager()
         # Override bundle_names so the method uses the names we want without
         # requiring a full bundle config for each name variant.
+        # Using a one-off subclass keeps the override scoped to this instance
+        # and avoids leaking patches to other tests.
         manager.__class__ = type(
             "PatchedManager", (DagBundlesManager,), {"bundle_names": property(lambda self: names)}
         )
         return manager
 
-    def test_no_configured_bundles_raises(self, clear_dags_and_bundles, session):
-        """Raise AirflowConfigException when no bundles are configured."""
+    def test_no_configured_bundles_is_noop(self, clear_dags_and_bundles, session):
+        """Return 0 without raising when no bundles are configured."""
         manager = self._manager_with_bundle_names([])
-        with pytest.raises(AirflowConfigException, match="No Dag bundles are currently configured"):
-            manager.reassign_dags_with_unconfigured_bundles(session=session)
+        assert manager.reassign_dags_with_unconfigured_bundles(session=session) == 0
 
     @pytest.mark.parametrize(
         ("configured_names", "dag_setups", "expected_count", "expected_bundle"),
