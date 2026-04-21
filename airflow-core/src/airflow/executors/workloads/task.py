@@ -18,12 +18,12 @@
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from airflow._shared.workloads import TaskInstanceDTO as _BaseTaskInstanceDTO
 from airflow.executors.workloads.base import BaseDagBundleWorkload, BundleInfo
 from airflow.utils.state import TaskInstanceState
 
@@ -33,26 +33,13 @@ if TYPE_CHECKING:
     from airflow.models.taskinstancekey import TaskInstanceKey
 
 
-class TaskInstanceDTO(BaseModel):
-    """Schema for TaskInstance with minimal required fields needed for Executors and Task SDK."""
+class TaskInstanceDTO(_BaseTaskInstanceDTO):
+    """
+    TaskInstanceDTO with executor-specific ``key`` property.
 
-    id: uuid.UUID
-    dag_version_id: uuid.UUID
-    task_id: str
-    dag_id: str
-    run_id: str
-    try_number: int
-    map_index: int = -1
-
-    pool_slots: int
-    queue: str
-    priority_weight: int
-    executor_config: dict | None = Field(default=None, exclude=True)
-
-    language: str | None = None
-
-    parent_context_carrier: dict | None = None
-    context_carrier: dict | None = None
+    Extends the shared :class:`~airflow._shared.workloads.TaskInstanceDTO`
+    to add the :attr:`key` property used by executors for workload tracking.
+    """
 
     # TODO: Task-SDK: Can we replace TaskInstanceKey with just the uuid across the codebase?
     @property
