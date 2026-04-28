@@ -571,8 +571,12 @@ class TestReassignDagsWithUnconfiguredBundles:
         :param expected_count: Number of DAGs expected to be reassigned.
         :param expected_bundle: Bundle name all DAGs should have after reassignment.
         """
-        all_bundle_names = {bundle_name for _, bundle_name in dag_setups} | set(configured_names)
-        session.add_all(DagBundleModel(name=name) for name in all_bundle_names)
+        configured_set = set(configured_names)
+        all_bundle_names = {bundle_name for _, bundle_name in dag_setups} | configured_set
+        for name in all_bundle_names:
+            bundle = DagBundleModel(name=name)
+            bundle.active = name in configured_set
+            session.add(bundle)
         session.flush()
 
         for dag_id, bundle_name in dag_setups:

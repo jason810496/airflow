@@ -607,6 +607,11 @@ class DagModel(Base):
             select(cls)
             .where(
                 cls.bundle_name == bundle_name,
+                # Skip legacy rows (e.g. from 2.x upgrades) whose relative_fileloc
+                # has not been populated yet.  These DAGs have never been parsed under
+                # the new bundle system, so they cannot be considered "deleted".  The
+                # parser will set relative_fileloc on the next successful parse cycle.
+                cls.relative_fileloc.isnot(None),
             )
             .options(
                 load_only(

@@ -1227,6 +1227,25 @@ class TestDagFileProcessorManager:
         assert session.get(DagModel, "test_dag1").is_stale is expected_dag1_stale
         assert session.get(DagModel, "test_dag2").is_stale is expected_dag2_stale
 
+    def test_deactivate_deleted_dags_skips_null_relative_fileloc(self, dag_maker, session):
+        """DAGs with NULL relative_fileloc (e.g. from 2.x upgrades) are not marked stale."""
+        with dag_maker("parsed_dag") as dag1:
+            dag1.relative_fileloc = "parsed_dag.py"
+        with dag_maker("legacy_dag") as dag2:
+            dag2.relative_fileloc = None
+        dag_maker.sync_dagbag_to_db()
+
+        any_deactivated = DagModel.deactivate_deleted_dags(
+            bundle_name="dag_maker",
+            rel_filelocs=set(),
+            session=session,
+        )
+
+        assert any_deactivated is True
+        assert session.get(DagModel, "parsed_dag").is_stale is True
+        # Legacy DAG with NULL relative_fileloc is left untouched.
+        assert session.get(DagModel, "legacy_dag").is_stale is False
+
     @pytest.mark.parametrize(
         ("active_files", "should_call_cleanup"),
         [

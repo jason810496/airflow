@@ -329,13 +329,22 @@ class DagBundlesManager(LoggingMixin):
         # (manager -> dag -> dagrun -> taskinstance -> dag_version -> manager)
         from airflow.models.dag import DagModel
 
-        configured_names = self.bundle_names
-        if not configured_names:
+        # Use bundles that were actually persisted and active after sync_bundles_to_db,
+        # not self.bundle_names from config. A configured bundle whose construction
+        # failed is skipped by sync_bundles_to_db and must not be used as a target
+        # (its name may not exist in the dag_bundle table, causing an FK violation).
+        active_db_names = set(
+            session.scalars(select(DagBundleModel.name).where(DagBundleModel.active.is_(True)))
+        )
+        # Preserve config ordering so the first configured-and-active bundle is the default.
+        active_names = [name for name in self.bundle_names if name in active_db_names]
+        if not active_names:
             self.log.info(
-                "No Dag bundles are configured; skipping reassignment of Dags with unconfigured bundles."
+                "No active Dag bundles in the database; skipping reassignment of Dags "
+                "with unconfigured bundles."
             )
             return 0
-        default_bundle = configured_names[0]
+        default_bundle = active_names[0]
 
         count = cast(
             "CursorResult",
@@ -343,12 +352,12 @@ class DagBundlesManager(LoggingMixin):
                 update(DagModel)
                 .where(
                     or_(
-                        DagModel.bundle_name.notin_(configured_names),
+                        DagModel.bundle_name.notin_(active_names),
                         DagModel.bundle_name.is_(None),
                     )
                 )
                 .values(bundle_name=default_bundle)
-                .execution_options(synchronize_session="fetch")
+                .execution_options(synchronize_session=False)
             ),
         ).rowcount
 
