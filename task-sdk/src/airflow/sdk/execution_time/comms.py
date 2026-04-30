@@ -64,7 +64,6 @@ import msgspec
 import structlog
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
-from airflow.sdk._shared.workloads import TaskInstanceDTO  # noqa: TC001 -- Pydantic needs this at runtime
 from airflow.sdk.api.datamodels._generated import (
     AssetEventDagRunReference,
     AssetEventResponse,
@@ -98,6 +97,9 @@ from airflow.sdk.api.datamodels._generated import (
     XComSequenceSliceResponse,
 )
 from airflow.sdk.exceptions import ErrorType
+from airflow.sdk.execution_time.workloads.task import (
+    TaskInstanceDTO,  # noqa: TC001 -- Pydantic needs this at runtime
+)
 
 try:
     from socket import recv_fds
