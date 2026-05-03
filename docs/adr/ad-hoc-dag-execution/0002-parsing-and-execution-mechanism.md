@@ -1,0 +1,340 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+ -->
+
+**Table of contents**
+
+- [2. Parsing and execution mechanism for ad-hoc DAGs](#2-parsing-and-execution-mechanism-for-ad-hoc-dags)
+  - [Status](#status)
+  - [Context](#context)
+  - [Decision](#decision)
+    - [Scope of this ADR](#scope-of-this-adr)
+    - [Core decision 1: DAG provenance and per-owner namespacing](#core-decision-1-dag-provenance-and-per-owner-namespacing)
+    - [Core decision 2: Workers persist parsed DAGs via the Execution API](#core-decision-2-workers-persist-parsed-dags-via-the-execution-api)
+    - [Core decision 3: Submission flow is itself an Airflow DAG](#core-decision-3-submission-flow-is-itself-an-airflow-dag)
+    - [End-to-end flow](#end-to-end-flow)
+    - [User-facing CLI shape](#user-facing-cli-shape)
+  - [Alternatives considered](#alternatives-considered)
+  - [Consequences](#consequences)
+  - [Open questions](#open-questions)
+
+# 2. Parsing and execution mechanism for ad-hoc DAGs
+
+Date: 2026-05-03
+
+## Status
+
+Proposed. Builds on
+[1. Ad-hoc DAG execution](./0001-ad-hoc-dag-execution.md).
+
+## Context
+
+ADR 0001 establishes that we want a `spark-submit`-style ad-hoc DAG
+execution path and sketches a submission lifecycle, a `Submission` data
+model, an REST surface, and `DagRunType.AD_HOC`. That ADR is
+deliberately broad: it spans data model, lifecycle, RBAC, retention,
+UI, and staging.
+
+This ADR narrows in on the **architectural core**: how an ad-hoc DAG
+is registered into the metadata DB without overriding bundle-parsed
+DAGs, how the worker writes that registration without violating the
+Airflow 3 DB-access boundary, and how the download/parse/trigger
+sequence is orchestrated. Schema details, retention, RBAC, and UI
+surface remain in the broader feature ADR (0001) and follow-ups; this
+ADR commits only to the three architectural decisions and the flow
+they imply.
+
+Reusable primitives the design leans on:
+
+- **Execution API**
+  (`airflow-core/src/airflow/api_fastapi/execution_api/`) is the
+  worker-to-API-server boundary. Workers do not touch the metadata DB;
+  they call this API. Any new "worker writes parsed DAG state" action
+  must go through this surface, not direct ORM use.
+- **`get_fs()`** in the Task SDK
+  (`task-sdk/src/airflow/sdk/io/fs.py:74`) is an fsspec-backed,
+  provider-pluggable abstraction over object storage. The archive can
+  ride over any scheme the deployment already has a connection for
+  (`s3`, `gs`, `azure`, `file`).
+- **`TriggerDagRunOperator`** already encapsulates "create a DagRun
+  for another dag_id and (optionally) wait for it". We do not need new
+  dispatcher logic to fire the user's DAG once it is registered.
+
+## Decision
+
+### Scope of this ADR
+
+This ADR commits to three architectural decisions and the end-to-end
+flow that they imply. It does **not** finalise the metadata schema,
+RBAC model, archive retention, UI surface, or per-team quotas. Those
+remain with ADR 0001 and its follow-ups.
+
+### Core decision 1: DAG provenance and per-owner namespacing
+
+`DagModel` rows produced by the ad-hoc path must be distinguishable
+from rows produced by the regular DAG file processor, and the ad-hoc
+path must not be able to shadow a regular DAG.
+
+Concretely:
+
+- `DagModel` carries a **provenance** marker. Two values for now:
+  `BUNDLE` (the default; what the DAG file processor produces) and
+  `ADHOC` (what the new path produces). The exact column name and
+  whether it lives on `DagModel` directly or on a sibling table is
+  deferred, but the marker is mandatory.
+- An ad-hoc registration **must reject** any `dag_id` that already has
+  a `BUNDLE` row, regardless of owner. Bundle DAGs are the source of
+  truth and an ad-hoc submission can never silently override one.
+- Ad-hoc DAGs are **scoped per owner** (the submitter's identity, e.g.
+  username or team-scoped principal). Two engineers on the same team
+  who both author a DAG named `my_pipeline` can submit concurrently
+  without colliding.
+- The recommended implementation is to namespace ad-hoc dag_ids at
+  registration time, e.g. an effective dag_id of
+  `adhoc/<owner>/<authored_dag_id>`, with a reserved prefix so it
+  cannot collide with a bundle dag_id. The CLI and UI display the
+  authored name. (The alternative — storing the authored name verbatim
+  with a composite uniqueness key — is rejected for v1 because it
+  forces every `dag_id`-keyed query in the codebase to learn about the
+  new dimension. Namespacing keeps `dag_id` the single key.)
+- Within a single owner's namespace, an attempted re-registration of
+  the same effective dag_id while a previous run is still in-flight is
+  a hard error. A `--force` flag on the CLI overrides: it cancels or
+  supersedes the previous registration and replaces it. `--force`
+  never crosses owners and never overrides a `BUNDLE` row.
+
+This gives us the property we need: clear provenance, no accidental
+shadowing, no inter-user collisions, and an explicit opt-in for
+self-overrides.
+
+### Core decision 2: Workers persist parsed DAGs via the Execution API
+
+When a worker parses an ad-hoc archive, it must not write the result
+to the metadata DB directly. The Execution API
+(`airflow-core/src/airflow/api_fastapi/execution_api/`) gains a new
+endpoint that accepts a serialised parse result and persists it under
+the rules from Core decision 1.
+
+Properties of this endpoint:
+
+- It accepts the serialised DAG payload (the same shape that
+  `SerializedDagModel` already stores), plus the submitter identity
+  and the ad-hoc submission ID.
+- It enforces the provenance rules: rejects collisions with `BUNDLE`
+  rows, applies per-owner namespacing, honours the `--force`
+  semantics.
+- It is the **only** way an ad-hoc DAG enters the metadata DB. The
+  worker does not import any DB-bound model.
+- Authentication piggybacks on the existing per-task-instance JWT.
+  Permission to register an ad-hoc DAG is granted by the system DAG's
+  task context (see Core decision 3), not by a new credential.
+
+This is consistent with Airflow 3's documented architecture: workers
+talk to the API server; the API server is the only writer to the
+metadata DB. The DAG file processor's direct DB access for `BUNDLE`
+DAGs is the documented "known limitation" we are explicitly choosing
+not to extend to the ad-hoc path.
+
+### Core decision 3: Submission flow is itself an Airflow DAG
+
+The download → parse → register → trigger sequence is implemented as a
+**built-in Airflow DAG** that ships with Airflow (a "system DAG"). The
+CLI does not invoke a bespoke dispatcher; it triggers this system DAG
+with the submission as its parameters.
+
+The system DAG has roughly three tasks:
+
+1. **Download archive** from the object-storage URI handed to it as a
+   parameter. Uses `get_fs()` so the scheme is whatever the deployment
+   supports.
+2. **Parse and register**: import the entry file in the worker
+   process, serialise the resulting DAG, and POST it to the Execution
+   API endpoint from Core decision 2. On success, the user's DAG now
+   exists as an `ADHOC`-provenance row owned by the submitter.
+3. **Trigger user DAG**: a `TriggerDagRunOperator` against the just-
+   registered effective dag_id, with the user's parameters.
+
+The system DAG run completes once the trigger fires. The user's DAG
+runs independently as its own DagRun, observable through the normal
+DagRun and TaskInstance surfaces.
+
+This decision has a few important consequences:
+
+- **No new dispatcher logic.** The "ad-hoc execution" feature is, at
+  the orchestration layer, just another DAG that happens to ship with
+  Airflow. Logs, retries, monitoring, and the UI all work for free.
+- **Two DagRuns per submission.** The system DAG's run (the
+  orchestrator) and the user DAG's run (the actual workload) are
+  separate. The CLI distinguishes between them.
+- **Failure isolation is natural.** A parse error fails the system
+  DAG's parse task with a normal stack trace, viewable through the
+  standard task-log endpoints. The user DAG never gets created and
+  there is no orphaned state.
+- **The system DAG is parsed and stored like any other DAG.** It can
+  be versioned and updated through normal Airflow upgrade channels.
+
+The CLI side is light:
+
+- **Local dependency discovery.** Use Python's native introspection
+  (e.g. `ast` to walk imports of the entry file, plus
+  `importlib.util.find_spec` to resolve which of those are local
+  modules versus installed packages) to determine the set of files to
+  pack. Installed packages are assumed to be available on the worker;
+  local modules are bundled.
+- **Pack and upload.** Zip the entry file plus discovered local
+  modules, request an upload target from the API server, push the
+  archive to object storage.
+- **Trigger and watch.** Trigger the system DAG with the archive URI
+  and submission parameters, then poll the Execution API / public API
+  for the user DagRun's state and stream its task logs.
+
+### End-to-end flow
+
+```
+[client CLI]              [api server]            [object store]      [worker (system DAG)]      [worker (user DAG)]
+     |                          |                         |                       |                         |
+     | resolve local imports    |                         |                       |                         |
+     | (ast + find_spec)        |                         |                       |                         |
+     | pack zip                 |                         |                       |                         |
+     |                          |                         |                       |                         |
+     | request upload target    |                         |                       |                         |
+     |------------------------->|                         |                       |                         |
+     |<-- upload uri/creds -----|                         |                       |                         |
+     |                                                                                                       |
+     | PUT archive ----------------------------------------->                     |                         |
+     |                          |                         |                       |                         |
+     | trigger system DAG       |                         |                       |                         |
+     | (archive_uri, owner,     |                         |                       |                         |
+     |  authored_dag_id, params)|                         |                       |                         |
+     |------------------------->|                         |                       |                         |
+     |                          | dispatch system DAG run |                       |                         |
+     |                          |--------------------------------------------- ->|                         |
+     |                          |                         |                       | task1: download archive |
+     |                          |                         |<----------------------|                         |
+     |                          |                         |                       | task2: parse +          |
+     |                          |                         |                       |        POST serialised  |
+     |                          |                         |                       |        DAG to           |
+     |                          |                         |                       |        Execution API    |
+     |                          |<------------------------|-----------------------|                         |
+     |                          | provenance + collision  |                       |                         |
+     |                          | check; insert ADHOC row |                       |                         |
+     |                          |                         |                       | task3: TriggerDagRun    |
+     |                          |<------------------------|-----------------------|                         |
+     |                          | dispatch user DAG run --|-----------------------|------------------------>|
+     |                          |                         |                       |                         | run user tasks
+     | poll user DagRun state   |                         |                       |                         |
+     | + stream task logs       |                         |                       |                         |
+     |<------------------------>|                                                                            |
+```
+
+### User-facing CLI shape
+
+A minimal first cut, deliberately leaving polish for a follow-up:
+
+```
+airflow submit <entry_file>
+    [--owner <name>]            # default: authenticated user
+    [--param key=value ...]     # forwarded to the user DAG run
+    [--force]                   # overwrite same-owner ADHOC dag_id
+    [--watch / --no-watch]      # stream logs (default on)
+```
+
+The same operations are exposed in airflow-ctl as REST clients, since
+the submission, registration, and DagRun-watching are all REST calls.
+
+## Alternatives considered
+
+- **Bespoke dispatcher in the API server.** Have the API server
+  download the archive, parse it server-side, and create the run
+  directly. Rejected: parsing user code on the API server breaks the
+  scheduler-side "no user code" boundary, and reimplements
+  orchestration logic that `TriggerDagRunOperator` already provides.
+- **Direct DB write from the worker.** The simplest way for the worker
+  to register a parsed DAG is to call `SerializedDagModel.write_dag()`
+  directly. Rejected: this violates the Airflow 3 boundary that says
+  workers talk to the API server only. We do not want to add to the
+  list of "known limitations" where components bypass the Execution
+  API.
+- **Composite uniqueness key on `(dag_id, owner)` instead of
+  namespacing.** Rejected for v1: it forces every `dag_id`-keyed
+  query in the codebase to learn about the new dimension. Namespacing
+  keeps `dag_id` the single key everywhere.
+- **A standalone background worker (not a system DAG) for orchestration.**
+  Rejected: it would duplicate retry, log, and observability code that
+  Airflow already has for DAG runs. Reusing the DAG abstraction is
+  cheaper and more consistent.
+
+## Consequences
+
+Positive:
+
+- Workers stay on the right side of the DB boundary: all writes go
+  through the Execution API, including DAG registration.
+- Provenance and per-owner namespacing make the feature safe to enable
+  next to production bundle-backed DAGs. There is no path by which an
+  ad-hoc submission can shadow a real DAG.
+- The orchestration is just another DAG. We get retries, logs, the
+  task-log endpoint, the UI, and the standard failure path for free.
+- Reuses existing primitives end-to-end: `get_fs`, the Task SDK
+  runtime, the Execution API, `TriggerDagRunOperator`. No new
+  dispatcher.
+
+Negative / costs:
+
+- Three architectural changes (provenance marker, new Execution API
+  endpoint, system DAG) need to land together to be useful end-to-end.
+  This ADR is the bottleneck that gates ADR 0001's lifecycle work.
+- Two DagRuns per submission (system DAG + user DAG) is more
+  observable surface to explain to users and document in the UI.
+- Local dependency discovery via `ast` + `find_spec` is best-effort.
+  It will miss runtime-only imports (e.g. `__import__(name)`,
+  `importlib` by string). The CLI must let users explicitly add files
+  to the archive.
+
+Risks to watch:
+
+- **Drift between the system DAG and core.** The system DAG runs user
+  code paths it does not own (parse + serialise). It must be versioned
+  with Airflow and tested against changes to `SerializedDAG` and the
+  Execution API.
+- **Effective dag_id leaks into user-visible URLs.** If we choose
+  prefix namespacing, the prefix appears in API paths and log paths.
+  We need to decide whether the UI rewrites it for display.
+- **Worker startup cost** for large archives. Document a size cap and
+  recommend dependency layers stay in the worker image.
+
+## Open questions
+
+These need answers before the schema/lifecycle ADR that follows:
+
+1. **Effective dag_id format.** Exact prefix and separator for the
+   namespaced dag_id (e.g. `adhoc/<owner>/<name>` vs.
+   `__adhoc__.<owner>.<name>`). Whichever we pick must round-trip
+   through URLs, log paths, and the Execution API without escaping
+   surprises.
+2. **Owner identity source.** Is the owner the authenticated
+   username, the team principal, or a CLI-supplied label that
+   defaults to the username? This shapes the per-owner namespace.
+3. **Where the system DAG lives.** Shipped in `airflow-core` as a
+   built-in DAG, in a new "system bundle", or installed by the
+   deployment. This affects upgrade and customisation paths.
+4. **Execution API endpoint shape.** A single
+   `POST /execution/dags/parsed` that accepts the serialised DAG, or
+   a small set of finer-grained endpoints (register, attach
+   artifacts, mark ready). The shape determines how testable and
+   reusable the registration path is.
