@@ -24,7 +24,7 @@
   - [Context](#context)
   - [Decision](#decision)
     - [Scope of this ADR](#scope-of-this-adr)
-    - [Core decision 1: DAG provenance and per-owner namespacing](#core-decision-1-dag-provenance-and-per-owner-namespacing)
+    - [Core decision 1: DAG provenance](#core-decision-1-dag-provenance)
     - [Core decision 2: Workers persist parsed DAGs via the Execution API](#core-decision-2-workers-persist-parsed-dags-via-the-execution-api)
     - [Core decision 3: Submission flow is itself an Airflow DAG](#core-decision-3-submission-flow-is-itself-an-airflow-dag)
     - [End-to-end flow](#end-to-end-flow)
@@ -32,6 +32,7 @@
   - [Alternatives considered](#alternatives-considered)
   - [Consequences](#consequences)
   - [Open questions](#open-questions)
+  - [Note on dag_id collisions between users](#note-on-dag_id-collisions-between-users)
 
 # 2. Parsing and execution mechanism for ad-hoc DAGs
 
@@ -45,10 +46,9 @@ Proposed. Builds on
 ## Context
 
 ADR 0001 establishes that we want a `spark-submit`-style ad-hoc DAG
-execution path and sketches a submission lifecycle, a `Submission` data
-model, an REST surface, and `DagRunType.AD_HOC`. That ADR is
-deliberately broad: it spans data model, lifecycle, RBAC, retention,
-UI, and staging.
+execution path and sketches a submission lifecycle, a `Submission`
+data model, and a REST surface. That ADR is deliberately broad: it
+spans data model, lifecycle, RBAC, retention, UI, and staging.
 
 This ADR narrows in on the **architectural core**: how an ad-hoc DAG
 is registered into the metadata DB without overriding bundle-parsed
@@ -84,7 +84,7 @@ flow that they imply. It does **not** finalise the metadata schema,
 RBAC model, archive retention, UI surface, or per-team quotas. Those
 remain with ADR 0001 and its follow-ups.
 
-### Core decision 1: DAG provenance and per-owner namespacing
+### Core decision 1: DAG provenance
 
 `DagModel` rows produced by the ad-hoc path must be distinguishable
 from rows produced by the regular DAG file processor, and the ad-hoc
@@ -98,29 +98,16 @@ Concretely:
   whether it lives on `DagModel` directly or on a sibling table is
   deferred, but the marker is mandatory.
 - An ad-hoc registration **must reject** any `dag_id` that already has
-  a `BUNDLE` row, regardless of owner. Bundle DAGs are the source of
-  truth and an ad-hoc submission can never silently override one.
-- Ad-hoc DAGs are **scoped per owner** (the submitter's identity, e.g.
-  username or team-scoped principal). Two engineers on the same team
-  who both author a DAG named `my_pipeline` can submit concurrently
-  without colliding.
-- The recommended implementation is to namespace ad-hoc dag_ids at
-  registration time, e.g. an effective dag_id of
-  `adhoc/<owner>/<authored_dag_id>`, with a reserved prefix so it
-  cannot collide with a bundle dag_id. The CLI and UI display the
-  authored name. (The alternative — storing the authored name verbatim
-  with a composite uniqueness key — is rejected for v1 because it
-  forces every `dag_id`-keyed query in the codebase to learn about the
-  new dimension. Namespacing keeps `dag_id` the single key.)
-- Within a single owner's namespace, an attempted re-registration of
-  the same effective dag_id while a previous run is still in-flight is
-  a hard error. A `--force` flag on the CLI overrides: it cancels or
-  supersedes the previous registration and replaces it. `--force`
-  never crosses owners and never overrides a `BUNDLE` row.
+  a `BUNDLE` row. Bundle DAGs are the source of truth and an ad-hoc
+  submission can never silently override one.
 
-This gives us the property we need: clear provenance, no accidental
-shadowing, no inter-user collisions, and an explicit opt-in for
-self-overrides.
+This gives us the property we need: clear provenance and no accidental
+shadowing of bundle-parsed DAGs. Collisions between ad-hoc submissions
+themselves (two users authoring a DAG with the same `dag_id`) are a
+separate concern that this ADR does **not** technically guard
+against; see
+[Note on dag_id collisions between users](#note-on-dag_id-collisions-between-users)
+at the end.
 
 ### Core decision 2: Workers persist parsed DAGs via the Execution API
 
@@ -136,8 +123,8 @@ Properties of this endpoint:
   `SerializedDagModel` already stores), plus the submitter identity
   and the ad-hoc submission ID.
 - It enforces the provenance rules: rejects collisions with `BUNDLE`
-  rows, applies per-owner namespacing, honours the `--force`
-  semantics.
+  rows, surfaces collisions with existing `ADHOC` rows clearly in its
+  response so deployment-side policy can react.
 - It is the **only** way an ad-hoc DAG enters the metadata DB. The
   worker does not import any DB-bound model.
 - Authentication piggybacks on the existing per-task-instance JWT.
@@ -165,9 +152,9 @@ The system DAG has roughly three tasks:
 2. **Parse and register**: import the entry file in the worker
    process, serialise the resulting DAG, and POST it to the Execution
    API endpoint from Core decision 2. On success, the user's DAG now
-   exists as an `ADHOC`-provenance row owned by the submitter.
+   exists as an `ADHOC`-provenance row.
 3. **Trigger user DAG**: a `TriggerDagRunOperator` against the just-
-   registered effective dag_id, with the user's parameters.
+   registered dag_id, with the user's parameters.
 
 The system DAG run completes once the trigger fires. The user's DAG
 runs independently as its own DagRun, observable through the normal
@@ -219,7 +206,7 @@ The CLI side is light:
      | PUT archive ----------------------------------------->                     |                         |
      |                          |                         |                       |                         |
      | trigger system DAG       |                         |                       |                         |
-     | (archive_uri, owner,     |                         |                       |                         |
+     | (archive_uri,            |                         |                       |                         |
      |  authored_dag_id, params)|                         |                       |                         |
      |------------------------->|                         |                       |                         |
      |                          | dispatch system DAG run |                       |                         |
@@ -231,8 +218,8 @@ The CLI side is light:
      |                          |                         |                       |        DAG to           |
      |                          |                         |                       |        Execution API    |
      |                          |<------------------------|-----------------------|                         |
-     |                          | provenance + collision  |                       |                         |
-     |                          | check; insert ADHOC row |                       |                         |
+     |                          | provenance check;       |                       |                         |
+     |                          | insert ADHOC row        |                       |                         |
      |                          |                         |                       | task3: TriggerDagRun    |
      |                          |<------------------------|-----------------------|                         |
      |                          | dispatch user DAG run --|-----------------------|------------------------>|
@@ -248,9 +235,7 @@ A minimal first cut, deliberately leaving polish for a follow-up:
 
 ```
 airflow submit <entry_file>
-    [--owner <name>]            # default: authenticated user
     [--param key=value ...]     # forwarded to the user DAG run
-    [--force]                   # overwrite same-owner ADHOC dag_id
     [--watch / --no-watch]      # stream logs (default on)
 ```
 
@@ -270,10 +255,6 @@ the submission, registration, and DagRun-watching are all REST calls.
   workers talk to the API server only. We do not want to add to the
   list of "known limitations" where components bypass the Execution
   API.
-- **Composite uniqueness key on `(dag_id, owner)` instead of
-  namespacing.** Rejected for v1: it forces every `dag_id`-keyed
-  query in the codebase to learn about the new dimension. Namespacing
-  keeps `dag_id` the single key everywhere.
 - **A standalone background worker (not a system DAG) for orchestration.**
   Rejected: it would duplicate retry, log, and observability code that
   Airflow already has for DAG runs. Reusing the DAG abstraction is
@@ -285,9 +266,9 @@ Positive:
 
 - Workers stay on the right side of the DB boundary: all writes go
   through the Execution API, including DAG registration.
-- Provenance and per-owner namespacing make the feature safe to enable
-  next to production bundle-backed DAGs. There is no path by which an
-  ad-hoc submission can shadow a real DAG.
+- Provenance makes the feature safe to enable next to production
+  bundle-backed DAGs. There is no path by which an ad-hoc submission
+  can shadow a real DAG.
 - The orchestration is just another DAG. We get retries, logs, the
   task-log endpoint, the UI, and the standard failure path for free.
 - Reuses existing primitives end-to-end: `get_fs`, the Task SDK
@@ -305,6 +286,9 @@ Negative / costs:
   It will miss runtime-only imports (e.g. `__import__(name)`,
   `importlib` by string). The CLI must let users explicitly add files
   to the archive.
+- Inter-user `dag_id` collisions among ad-hoc submissions are not
+  technically guarded; deployments must put a governance model in
+  place (see closing note).
 
 Risks to watch:
 
@@ -312,9 +296,6 @@ Risks to watch:
   code paths it does not own (parse + serialise). It must be versioned
   with Airflow and tested against changes to `SerializedDAG` and the
   Execution API.
-- **Effective dag_id leaks into user-visible URLs.** If we choose
-  prefix namespacing, the prefix appears in API paths and log paths.
-  We need to decide whether the UI rewrites it for display.
 - **Worker startup cost** for large archives. Document a size cap and
   recommend dependency layers stay in the worker image.
 
@@ -322,19 +303,44 @@ Risks to watch:
 
 These need answers before the schema/lifecycle ADR that follows:
 
-1. **Effective dag_id format.** Exact prefix and separator for the
-   namespaced dag_id (e.g. `adhoc/<owner>/<name>` vs.
-   `__adhoc__.<owner>.<name>`). Whichever we pick must round-trip
-   through URLs, log paths, and the Execution API without escaping
-   surprises.
-2. **Owner identity source.** Is the owner the authenticated
-   username, the team principal, or a CLI-supplied label that
-   defaults to the username? This shapes the per-owner namespace.
-3. **Where the system DAG lives.** Shipped in `airflow-core` as a
+1. **Where the system DAG lives.** Shipped in `airflow-core` as a
    built-in DAG, in a new "system bundle", or installed by the
    deployment. This affects upgrade and customisation paths.
-4. **Execution API endpoint shape.** A single
+2. **Execution API endpoint shape.** A single
    `POST /execution/dags/parsed` that accepts the serialised DAG, or
    a small set of finer-grained endpoints (register, attach
    artifacts, mark ready). The shape determines how testable and
    reusable the registration path is.
+
+## Note on dag_id collisions between users
+
+This ADR intentionally does **not** prescribe a technical guard
+against two users on the same deployment authoring an ad-hoc DAG with
+the same `dag_id` and submitting at the same time. The first
+registration wins; a concurrent or later registration of the same
+`dag_id` will collide on the existing `ADHOC` row, and the Execution
+API endpoint surfaces that collision in its response.
+
+We do not bake in a per-owner namespace, a `--force` overwrite flag,
+or a composite uniqueness key here because naming hygiene for ad-hoc
+DAGs is a governance question, not an architecture one. Different
+deployments will want different policies: a single ML team may be
+fine with a free-for-all and last-write-wins; a regulated environment
+may want strict per-user prefixes; a multi-team platform may want
+team-scoped names enforced in CI. Any choice we hard-code in core
+will be wrong for half of them.
+
+Deployment Managers and platform teams adopting this feature should:
+
+- Agree on a naming convention up-front (e.g. "prefix your ad-hoc
+  `dag_id` with your username" or "prefix with your project tag").
+- Enforce the convention through code review, lint, or a deployment-
+  side policy hook rather than through Airflow core.
+- Treat the Execution API's collision response as the signal that
+  the convention has been violated, and react accordingly (reject,
+  warn, page, etc.).
+
+The Execution API endpoint from Core decision 2 must, at minimum,
+return a clear, structured collision indicator so that whatever
+governance the deployment applies can detect violations
+deterministically.
