@@ -36,6 +36,7 @@
   - [Alternatives considered](#alternatives-considered)
   - [Consequences](#consequences)
   - [Open questions](#open-questions)
+  - [Note on dag_id collisions between users](#note-on-dag_id-collisions-between-users)
 
 # 1. Ad-hoc DAG execution
 
@@ -106,11 +107,12 @@ keep the development loop local. -->
   archive over any scheme the deployment already has a connection for
   (`s3`, `gs`, `azure`, `file`) without baking provider choice into
   core.
-- **`DagRunType`** (`airflow-core/src/airflow/utils/types.py:25`)
-  already enumerates run provenance (`MANUAL`, `SCHEDULED`,
-  `BACKFILL_JOB`, `OPERATOR_TRIGGERED`, `ASSET_TRIGGERED`,
-  `ASSET_MATERIALIZATION`). Ad-hoc submissions naturally extend this
-  set rather than overloading `MANUAL`.
+- **`DagRunType.OPERATOR_TRIGGERED`**
+  (`airflow-core/src/airflow/utils/types.py:25`) already exists for
+  runs created by `TriggerDagRunOperator`. The ad-hoc path naturally
+  inherits this run type via the system DAG defined in ADR 0002, so
+  no new `DagRunType` value is needed; provenance on `DagModel` is
+  what distinguishes ad-hoc DAGs from bundle DAGs.
 - **airflow-ctl** is by design REST-only
   (`airflow-ctl/src/airflowctl/api/client.py`), which means a new
   REST endpoint is automatically usable from the management CLI
@@ -196,8 +198,7 @@ Three surfaces, layered:
    |                                | (cheap: read manifest,     |                |               |
    |                                |  not user code)            |                |               |
    |                                | INSERT dag_run             |                |               |
-   |                                |   run_type=AD_HOC          |                |               |
-   |                                |   submission_id=<id>       |                |               |
+   |                                |   (linked to submission)   |                |               |
    |                                | enqueue task instances     |                |               |
    |                                |--------------------------->| dispatch       |               |
    |                                |                            |                |-------------->|
@@ -233,34 +234,31 @@ exactly once.
    following the same shape as `connections.py`. Schemas live next to
    existing ones in `core_api/datamodels/`.
 
-3. **New `DagRunType.AD_HOC`** value in
-   `airflow-core/src/airflow/utils/types.py`. The scheduler ignores
-   `AD_HOC` runs for catchup, backfill, and dependency calculations.
-   The UI labels them as ad-hoc.
-
-4. **New `AdHocDagBundle`** subclass of `BaseDagBundle` (or a sibling
+3. **New `AdHocDagBundle`** subclass of `BaseDagBundle` (or a sibling
    abstraction; see Open Questions). It is constructed per-submission
    from the archive URI, exposes the unpacked archive at a worker-local
    path, and is **not** registered with `DagBundlesManager`. The Task
    SDK's existing parser is invoked against the unpacked entry file
    inside the worker process, before the operator's `execute()` runs.
 
-5. **Object storage integration** uses `get_fs()` so the archive can
+4. **Object storage integration** uses `get_fs()` so the archive can
    land on whatever scheme the deployment supports. Presigned URLs are
    minted via the same `fs` for schemes that support them; for schemes
    that do not (e.g., local filesystem in single-node deployments), the
    API server proxies the upload.
 
-6. **Worker-side runtime hook** in
+5. **Worker-side runtime hook** in
    `task-sdk/src/airflow/sdk/execution_time/task_runner.py`'s task
    bootstrap: if the run carries an `ad_hoc_submission_id`, fetch the
    submission record via the Execution API, download the archive,
    unpack into a scratch directory, parse the entry file, and proceed
    with execution against the resulting DAG object.
 
-7. **No scheduler change** beyond ignoring `AD_HOC` runs in scheduling
-   loops. The dispatch path is identical to a manual trigger because
-   the run row already exists with task instances.
+6. **No scheduler change.** The user DAG run is created by
+   `TriggerDagRunOperator` from the system DAG (ADR 0002), so it is
+   indistinguishable to the scheduler from any other operator-triggered
+   run. The provenance marker on `DagModel` lets components that care
+   filter ad-hoc DAGs out of default views.
 
 ### Data model
 
@@ -313,8 +311,8 @@ serve logs after the fact.
    data model. The PoC depends on `apache-airflow` and registers a CLI
    plugin and a small REST extension.
 2. **Promote the data model into core** once the lifecycle is stable:
-   `Submission` table, `DagRunType.AD_HOC`, public REST endpoints,
-   airflow-ctl commands.
+   `Submission` table, `DagModel` provenance marker, public REST
+   endpoints, airflow-ctl commands.
 3. **Polish**: UI surface (a "Submissions" tab parallel to "DAGs"),
    structured logs link, retention policy for archives.
 
@@ -336,10 +334,14 @@ serve logs after the fact.
   the CLI by design, and inverting that to "ship the file and run on
   a worker" is the same feature, just hidden behind an existing
   command. Better to give it its own name and verb.
-- **Reuse `MANUAL` run type with a marker.** Rejected because tools,
-  metrics, and UI filters that select on `run_type` would silently
-  treat ad-hoc runs as manual ones. Adding `AD_HOC` to the enum is
-  cheap and explicit.
+- **Introduce a new `DagRunType.AD_HOC`.** Rejected because the
+  provenance marker on `DagModel` already distinguishes ad-hoc DAGs
+  from bundle DAGs, and the user DAG run is created by
+  `TriggerDagRunOperator` from the system DAG (ADR 0002), which
+  produces `DagRunType.OPERATOR_TRIGGERED`. A new run type would be
+  redundant with the provenance column and would force every existing
+  `run_type` consumer (UI filters, metrics, scheduler logic) to learn
+  about it.
 - **Submit as a Python callable, not a file.** A `client.submit(fn,
   *args)` API that pickles a callable. Rejected for v1: it is a
   different (smaller) feature, and pickling user closures across
@@ -412,3 +414,28 @@ Risks to watch:
    explicitly requests. Default proposal: same as bundle-backed DAGs
    (full set, gated by the user's RBAC), and revisit if abuse is
    observed.
+
+## Note on dag_id collisions between users
+
+This ADR (and ADR 0002) intentionally does **not** prescribe a
+technical guard against two users authoring an ad-hoc DAG with the
+same `dag_id` and submitting at the same time. The first registration
+wins; a concurrent or later registration of the same `dag_id` will
+collide on the existing ad-hoc row, and the Execution API endpoint
+defined in ADR 0002 surfaces that collision in its response.
+
+We do not bake in a per-owner namespace, a `--force` overwrite flag,
+or a composite uniqueness key because naming hygiene for ad-hoc DAGs
+is a governance question, not an architecture one. Different
+deployments will want different policies: a single ML team may be
+fine with a free-for-all and last-write-wins; a regulated environment
+may want strict per-user prefixes; a multi-team platform may want
+team-scoped names enforced in CI. Any choice we hard-code in core
+will be wrong for half of them.
+
+Deployment Managers and platform teams adopting this feature should
+agree on a naming convention up-front and enforce it through code
+review, lint, or a deployment-side policy hook rather than through
+Airflow core. The Execution API's structured collision indicator is
+the signal whatever governance the deployment applies should react
+to.
