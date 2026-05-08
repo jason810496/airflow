@@ -34,10 +34,11 @@ from uuid6 import uuid7
 from airflow.sdk import timezone
 from airflow.sdk.api.client import Client, RemoteValidationError, ServerResponseError
 from airflow.sdk.api.datamodels._generated import (
+    AirflowSdkApiDatamodelsGeneratedConnectionResponse as ConnectionResponse,
+    AirflowSdkApiDatamodelsGeneratedVariableResponse as VariableResponse,
     AssetEventsResponse,
     AssetResponse,
     AssetStateResponse,
-    ConnectionResponse,
     DagResponse,
     DagRunState,
     DagRunStateResponse,
@@ -46,7 +47,6 @@ from airflow.sdk.api.datamodels._generated import (
     HITLUser,
     TaskStateResponse,
     TerminalTIState,
-    VariableResponse,
     XComResponse,
 )
 from airflow.sdk.exceptions import ErrorType, TaskAlreadyRunningError

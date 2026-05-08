@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from airflow.models.taskinstance import TaskInstance as SchedulerTaskInstance
     from airflow.sdk._shared.logging.types import Logger as Logger
     from airflow.sdk.api.datamodels._generated import (
-        AssetEventDagRunReference,
+        AirflowSdkApiDatamodelsGeneratedAssetEventDagRunReference as AssetEventDagRunReference,
         DagRunState,
         DagRunType,
         PreviousTIResponse,

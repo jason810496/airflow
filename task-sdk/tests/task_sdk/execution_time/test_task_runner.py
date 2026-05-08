@@ -56,14 +56,14 @@ from airflow.sdk import (
 )
 from airflow.sdk._shared.observability.metrics.base_stats_logger import StatsLogger
 from airflow.sdk.api.datamodels._generated import (
+    AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
+    AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
     AssetProfile,
     AssetResponse,
-    DagRun,
     DagRunState,
     PreviousTIResponse,
     TaskInstance,
     TaskInstanceState,
-    TIRunContext,
 )
 from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.definitions._internal.types import NOTSET, SET_DURING_EXECUTION, is_arg_set

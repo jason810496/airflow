@@ -24,7 +24,11 @@ from uuid import UUID
 import pytest
 
 from airflow.sdk import BaseOperator, get_current_context, timezone
-from airflow.sdk.api.datamodels._generated import AssetEventResponse, AssetResponse, DagRun
+from airflow.sdk.api.datamodels._generated import (
+    AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
+    AssetEventResponse,
+    AssetResponse,
+)
 from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.definitions.asset import (
     Asset,

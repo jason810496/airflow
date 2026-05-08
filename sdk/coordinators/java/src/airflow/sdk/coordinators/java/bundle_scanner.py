@@ -36,6 +36,7 @@ import yaml
 MANIFEST_PATH = "META-INF/MANIFEST.MF"
 METADATA_MANIFEST_KEY = "Airflow-Java-SDK-Metadata"
 SDK_VERSION_MANIFEST_KEY = "Airflow-Java-SDK-Version"
+SCHEMA_VERSION_MANIFEST_KEY = "Airflow-SDK-Schema-Version"
 DAG_CODE_MANIFEST_KEY = "Airflow-Java-SDK-Dag-Code"
 MAIN_CLASS_MANIFEST_KEY = "Main-Class"
 
@@ -45,6 +46,8 @@ class ResolvedJarBundle(NamedTuple):
 
     main_class: str
     classpath: str
+    schema_version: str | None
+    """``Airflow-SDK-Schema-Version`` from the bundle's manifest, or ``None`` when absent."""
 
 
 class BundleScanner:
@@ -78,10 +81,14 @@ class BundleScanner:
                 result = _read_bundle_jar(jar_path)
                 if result is None:
                     continue
-                main_class, dag_ids = result
+                main_class, dag_ids, schema_version = result
                 if dag_id in dag_ids:
                     classpath = os.pathsep.join(str(j.resolve()) for j in jars)
-                    return ResolvedJarBundle(main_class=main_class, classpath=classpath)
+                    return ResolvedJarBundle(
+                        main_class=main_class,
+                        classpath=classpath,
+                        schema_version=schema_version,
+                    )
 
         raise FileNotFoundError(f"No JAR bundle containing dag_id={dag_id!r} found in {self._bundles_dir}")
 
@@ -141,14 +148,15 @@ def _normalize_bundle_home(path: Path) -> Path:
     return normalized
 
 
-def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str]] | None:
+def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str], str | None] | None:
     """
-    Read ``Main-Class`` and dag IDs from a JAR's manifest and embedded metadata.
+    Read ``Main-Class``, dag IDs, and schema version from a JAR's manifest.
 
-    Returns ``(main_class, dag_ids)`` when the JAR carries valid
-    ``Airflow-Java-SDK-Metadata`` and ``Main-Class`` manifest attributes
+    Returns ``(main_class, dag_ids, schema_version)`` when the JAR carries
+    valid ``Airflow-Java-SDK-Metadata`` and ``Main-Class`` manifest attributes
     and the referenced metadata YAML contains at least one dag ID.
-    Returns ``None`` otherwise.
+    ``schema_version`` is the ``Airflow-SDK-Schema-Version`` manifest
+    attribute or ``None`` when absent. Returns ``None`` otherwise.
     """
     try:
         with zipfile.ZipFile(jar_path) as zf:
@@ -166,6 +174,8 @@ def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str]] | None:
             if not main_class:
                 return None
 
+            schema_version = manifest.get(SCHEMA_VERSION_MANIFEST_KEY)
+
             try:
                 with zf.open(metadata_file) as f:
                     content = f.read().decode()
@@ -178,7 +188,27 @@ def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str]] | None:
     if not dag_ids:
         return None
 
-    return main_class, dag_ids
+    return main_class, dag_ids, schema_version
+
+
+def read_schema_version(jar_path: Path) -> str | None:
+    """
+    Read the ``Airflow-SDK-Schema-Version`` manifest attribute from a JAR.
+
+    Returns the version string when present, otherwise ``None``. Used by
+    the coordinator to decide which Cadwyn version to migrate IPC payloads
+    to before forwarding them to the foreign-language runtime.
+    """
+    try:
+        with zipfile.ZipFile(jar_path) as zf:
+            try:
+                with zf.open(MANIFEST_PATH) as f:
+                    manifest = email.message_from_binary_file(f)
+            except KeyError:
+                return None
+            return manifest.get(SCHEMA_VERSION_MANIFEST_KEY)
+    except zipfile.BadZipFile:
+        return None
 
 
 def read_dag_code(jar_path: Path) -> str | None:

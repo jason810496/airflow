@@ -1204,7 +1204,9 @@ class TriggerRunner:
         cls, task_instance: TaskInstanceDTO, encoded_dag: dict, dag_run_data: dict
     ) -> RuntimeTaskInstance:
         from airflow.api_fastapi.execution_api.datamodels.taskinstance import DagRun as DRDataModel
-        from airflow.sdk.api.datamodels._generated import TIRunContext
+        from airflow.sdk.api.datamodels._generated import (
+            AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
+        )
 
         task = DagSerialization.from_dict(encoded_dag).get_task(task_instance.task_id)
 

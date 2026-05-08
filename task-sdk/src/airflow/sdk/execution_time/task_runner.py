@@ -46,13 +46,13 @@ from airflow.sdk._shared.observability.metrics import stats
 from airflow.sdk._shared.template_rendering import truncate_rendered_value
 from airflow.sdk.api.client import get_hostname, getuser
 from airflow.sdk.api.datamodels._generated import (
+    AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
+    AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
     AssetProfile,
     BundleInfo,
-    DagRun,
     PreviousTIResponse,
     TaskInstance,
     TaskInstanceState,
-    TIRunContext,
 )
 from airflow.sdk.bases.operator import BaseOperator, ExecutorSafeguard
 from airflow.sdk.bases.xcom import BaseXCom

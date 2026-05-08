@@ -29,6 +29,7 @@ from airflow.sdk.coordinators.java.bundle_scanner import (
     MAIN_CLASS_MANIFEST_KEY,
     MANIFEST_PATH,
     METADATA_MANIFEST_KEY,
+    SCHEMA_VERSION_MANIFEST_KEY,
     SDK_VERSION_MANIFEST_KEY,
     BundleScanner,
     ResolvedJarBundle,
@@ -37,6 +38,7 @@ from airflow.sdk.coordinators.java.bundle_scanner import (
     _parse_dag_ids_from_metadata,
     _read_bundle_jar,
     read_dag_code,
+    read_schema_version,
 )
 
 METADATA_YAML_PATH = "META-INF/airflow-metadata.yaml"
@@ -50,6 +52,7 @@ def _make_manifest(
     main_class: str | None = TEST_MAIN_CLASS,
     metadata_path: str | None = METADATA_YAML_PATH,
     sdk_version: str | None = TEST_SDK_VERSION,
+    schema_version: str | None = None,
     dag_code_path: str | None = None,
 ) -> str:
     lines = ["Manifest-Version: 1.0"]
@@ -59,6 +62,8 @@ def _make_manifest(
         lines.append(f"{METADATA_MANIFEST_KEY}: {metadata_path}")
     if sdk_version:
         lines.append(f"{SDK_VERSION_MANIFEST_KEY}: {sdk_version}")
+    if schema_version:
+        lines.append(f"{SCHEMA_VERSION_MANIFEST_KEY}: {schema_version}")
     if dag_code_path:
         lines.append(f"{DAG_CODE_MANIFEST_KEY}: {dag_code_path}")
     return "\n".join(lines) + "\n"
@@ -76,6 +81,7 @@ def _create_bundle_jar(
     include_metadata: bool = True,
     include_manifest: bool = True,
     dag_code: str | None = None,
+    schema_version: str | None = None,
 ) -> Path:
     """Create a minimal JAR (zip) file with Airflow Java SDK manifest attributes."""
     with zipfile.ZipFile(jar_path, "w") as zf:
@@ -84,6 +90,7 @@ def _create_bundle_jar(
             manifest = _make_manifest(
                 main_class=main_class,
                 metadata_path=METADATA_YAML_PATH if include_metadata else None,
+                schema_version=schema_version,
                 dag_code_path=dag_code_path,
             )
             zf.writestr(MANIFEST_PATH, manifest)
@@ -159,9 +166,10 @@ class TestReadBundleJar:
         jar = _create_bundle_jar(tmp_path / "valid.jar", dag_ids=["my_dag"])
         result = _read_bundle_jar(jar)
         assert result is not None
-        main_class, dag_ids = result
+        main_class, dag_ids, schema_version = result
         assert main_class == TEST_MAIN_CLASS
         assert dag_ids == {"my_dag"}
+        assert schema_version is None
 
     def test_returns_none_for_missing_manifest(self, tmp_path: Path):
         jar = _create_bundle_jar(tmp_path / "no_manifest.jar", include_manifest=False)
@@ -196,8 +204,34 @@ class TestReadBundleJar:
         jar = _create_bundle_jar(tmp_path / "multi.jar", dag_ids=["dag_1", "dag_2", "dag_3"])
         result = _read_bundle_jar(jar)
         assert result is not None
-        _, dag_ids = result
+        _, dag_ids, _ = result
         assert dag_ids == {"dag_1", "dag_2", "dag_3"}
+
+    def test_returns_schema_version_when_present(self, tmp_path: Path):
+        jar = _create_bundle_jar(tmp_path / "with_schema.jar", dag_ids=["d"], schema_version="2026-04-06")
+        result = _read_bundle_jar(jar)
+        assert result is not None
+        _, _, schema_version = result
+        assert schema_version == "2026-04-06"
+
+
+class TestReadSchemaVersion:
+    def test_returns_version_when_present(self, tmp_path: Path):
+        jar = _create_bundle_jar(tmp_path / "with_schema.jar", dag_ids=["d"], schema_version="2026-04-06")
+        assert read_schema_version(jar) == "2026-04-06"
+
+    def test_returns_none_when_absent(self, tmp_path: Path):
+        jar = _create_bundle_jar(tmp_path / "no_schema.jar", dag_ids=["d"])
+        assert read_schema_version(jar) is None
+
+    def test_returns_none_for_missing_manifest(self, tmp_path: Path):
+        jar = _create_bundle_jar(tmp_path / "no_manifest.jar", include_manifest=False)
+        assert read_schema_version(jar) is None
+
+    def test_returns_none_for_bad_zip(self, tmp_path: Path):
+        bad = tmp_path / "bad.jar"
+        bad.write_text("not a zip")
+        assert read_schema_version(bad) is None
 
 
 class TestReadDagCode:
@@ -330,3 +364,21 @@ class TestBundleScannerResolve:
         scanner = BundleScanner(tmp_path)
         with pytest.raises(FileNotFoundError):
             scanner.resolve("any_dag")
+
+    def test_propagates_schema_version(self, tmp_path: Path):
+        bundle_dir = tmp_path / "my_bundle"
+        bundle_dir.mkdir()
+        _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["versioned_dag"], schema_version="2026-04-06")
+
+        scanner = BundleScanner(tmp_path)
+        result = scanner.resolve("versioned_dag")
+        assert result.schema_version == "2026-04-06"
+
+    def test_schema_version_none_when_absent(self, tmp_path: Path):
+        bundle_dir = tmp_path / "my_bundle"
+        bundle_dir.mkdir()
+        _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["plain_dag"])
+
+        scanner = BundleScanner(tmp_path)
+        result = scanner.resolve("plain_dag")
+        assert result.schema_version is None

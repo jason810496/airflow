@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from cadwyn import VersionChange, schema
+from cadwyn import VersionChange, endpoint, schema
 
 from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRetryStatePayload
 
@@ -30,4 +30,15 @@ class AddRetryPolicyFields(VersionChange):
     instructions_to_migrate_to_previous_version = (
         schema(TIRetryStatePayload).field("retry_delay_seconds").didnt_exist,
         schema(TIRetryStatePayload).field("retry_reason").didnt_exist,
+    )
+
+
+class IntroduceCompatEndpoints(VersionChange):
+    """Introduce compat echo endpoints for IPC schemas StartupDetails and DagFileParseRequest."""
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (
+        endpoint("/compat/startup-details", ["POST"]).didnt_exist,
+        endpoint("/compat/dag-file-parse-request", ["POST"]).didnt_exist,
     )

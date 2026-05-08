@@ -45,11 +45,14 @@ from airflow.api_fastapi.execution_api.versions.v2026_04_17 import (
     AddStateEndpoints,
     AddTeamNameField,
 )
-from airflow.api_fastapi.execution_api.versions.v2026_06_16 import AddRetryPolicyFields
+from airflow.api_fastapi.execution_api.versions.v2026_06_16 import (
+    AddRetryPolicyFields,
+    IntroduceCompatEndpoints,
+)
 
 bundle = VersionBundle(
     HeadVersion(),
-    Version("2026-06-16", AddRetryPolicyFields),
+    Version("2026-06-16", AddRetryPolicyFields, IntroduceCompatEndpoints),
     Version(
         "2026-04-17",
         AddTeamNameField,
