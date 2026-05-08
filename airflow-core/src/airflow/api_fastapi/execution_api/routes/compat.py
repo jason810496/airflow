@@ -33,7 +33,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from airflow.api_fastapi.execution_api.datamodels.compat import DagFileParseRequest, StartupDetails
+from airflow.api_fastapi.execution_api.datamodels.compat import (
+    DagFileParseRequestCompat,
+    StartupDetails,
+)
 
 router = APIRouter()
 
@@ -45,6 +48,12 @@ def echo_startup_details(body: StartupDetails) -> StartupDetails:
 
 
 @router.post("/dag-file-parse-request")
-def echo_dag_file_parse_request(body: DagFileParseRequest) -> DagFileParseRequest:
-    """Echo a ``DagFileParseRequest`` payload, migrated by Cadwyn to the requested API version."""
+def echo_dag_file_parse_request(body: DagFileParseRequestCompat) -> DagFileParseRequestCompat:
+    """
+    Echo a ``DagFileParseRequest`` payload, migrated by Cadwyn to the requested API version.
+
+    Uses the slim ``DagFileParseRequestCompat`` shape rather than the full
+    ``DagFileParseRequest`` to keep ``callback_requests`` (Python-runtime-only)
+    out of the OpenAPI surface.
+    """
     return body

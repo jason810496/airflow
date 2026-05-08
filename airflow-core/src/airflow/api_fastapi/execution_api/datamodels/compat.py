@@ -15,22 +15,49 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Datamodel re-exports for the compat echo endpoints.
+Datamodels for the compat echo endpoints.
 
-The two IPC schemas covered by the compat protocol
-(``StartupDetails`` and ``DagFileParseRequest``) are defined in their
-semantic homes -- ``task-sdk`` for the supervisor-to-runtime startup
-message, and ``airflow-core`` for the parser-supervisor request. Re-
-exporting them here makes them visible from the
-``execution_api/datamodels/`` directory the existing
-``check-execution-api-versions`` prek hook already watches, so any
-schema change inevitably touches this module and must be accompanied
-by a corresponding ``VersionChange`` under ``execution_api/versions/``.
+``StartupDetails`` is re-exported from its semantic home in ``task-sdk``
+so the existing ``check-execution-api-versions`` prek hook sees it.
+
+``DagFileParseRequestCompat`` is a slim wire schema dedicated to the
+compat route. The full ``DagFileParseRequest`` (in
+``airflow.dag_processing.processor``) carries a ``callback_requests``
+field whose discriminated union of callback types breaks the OpenAPI
+codegen pipeline (nullable ``Literal`` discriminators are not legal in
+Pydantic). Foreign-language SDK runtimes never execute Python
+callbacks anyway, so we expose only the fields they actually need to
+parse a Dag file. The original ``DagFileParseRequest`` is also re-
+exported here so the prek hook covers schema changes to it.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel
+
 from airflow.dag_processing.processor import DagFileParseRequest
 from airflow.sdk.execution_time.comms import StartupDetails
 
-__all__ = ["DagFileParseRequest", "StartupDetails"]
+
+class DagFileParseRequestCompat(BaseModel):
+    """
+    Slim compat-protocol shape for ``DagFileParseRequest``.
+
+    Mirrors the parser-supervisor's ``DagFileParseRequest`` minus the
+    ``callback_requests`` field (which is Python-runtime-specific and
+    causes the OpenAPI codegen to emit a malformed ``Literal | None``
+    discriminator). The discriminator literal value matches the original
+    so a foreign runtime that recognises ``"DagFileParseRequest"`` can
+    decode either shape interchangeably.
+    """
+
+    file: str
+    bundle_path: Path
+    bundle_name: str
+    type: Literal["DagFileParseRequest"] = "DagFileParseRequest"
+
+
+__all__ = ["DagFileParseRequest", "DagFileParseRequestCompat", "StartupDetails"]

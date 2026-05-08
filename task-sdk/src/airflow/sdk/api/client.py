@@ -1060,9 +1060,14 @@ class CompatOperations:
         self, body: DagFileParseRequest, target_version: str
     ) -> ClientCompatibleDagFileParseRequest:
         """Echo a ``DagFileParseRequest`` payload through the API to migrate it to ``target_version``."""
+        # The compat route accepts ``DagFileParseRequestCompat`` (slim shape
+        # without ``callback_requests``); drop that field before sending so the
+        # OpenAPI surface stays free of the Python-only callback discriminated
+        # union. Foreign runtimes don't execute Python callbacks.
+        slim = body.model_dump(mode="json", exclude={"callback_requests"})
         resp = self.client.post(
             "compat/dag-file-parse-request",
-            content=body.model_dump_json(),
+            json=slim,
             headers={"airflow-api-version": target_version},
         )
         return ClientCompatibleDagFileParseRequest(resp.json())

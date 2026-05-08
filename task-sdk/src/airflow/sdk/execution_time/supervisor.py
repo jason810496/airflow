@@ -37,7 +37,7 @@ from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from http import HTTPStatus
 from socket import socket, socketpair
-from typing import TYPE_CHECKING, BinaryIO, ClassVar, NoReturn, TextIO, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, NoReturn, TextIO, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -137,6 +137,7 @@ from airflow.sdk.execution_time.comms import (
     _RequestFrame,
     _ResponseFrame,
 )
+from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 from airflow.sdk.execution_time.request_handlers import (
     handle_get_connection,
     handle_get_variable,
@@ -159,6 +160,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from airflow.executors.workloads import BundleInfo
+    from airflow.sdk.api.client import ClientCompatibleStartupDetails
     from airflow.sdk.bases.secrets_backend import BaseSecretsBackend
     from airflow.sdk.definitions.connection import Connection
     from airflow.sdk.execution_time.selector_loop import SelectorCallback
@@ -737,7 +739,11 @@ class WatchedSubprocess:
             del self._open_sockets[sock]
 
     def send_msg(
-        self, msg: BaseModel | None, request_id: int, error: ErrorResponse | None = None, **dump_opts
+        self,
+        msg: BaseModel | dict[str, Any] | None,
+        request_id: int,
+        error: ErrorResponse | None = None,
+        **dump_opts,
     ):
         """
         Send the msg as a length-prefixed response frame.
@@ -745,8 +751,10 @@ class WatchedSubprocess:
         ``request_id`` is the ID that the client sent in it's request, and has no meaning to the server
 
         """
-        if msg:
+        if isinstance(msg, BaseModel):
             frame = _ResponseFrame(id=request_id, body=msg.model_dump(**dump_opts))
+        elif isinstance(msg, dict):
+            frame = _ResponseFrame(id=request_id, body=msg)
         else:
             err_resp = error.model_dump() if error else None
             frame = _ResponseFrame(id=request_id, error=err_resp)
@@ -1189,12 +1197,27 @@ class ActivitySubprocess(WatchedSubprocess):
             start_date=start_date,
             sentry_integration=sentry_integration,
         )
+        # If [sdk] queue_to_coordinator routes this task's queue to a foreign-language
+        # runtime (Java, etc.), convert the latest-schema StartupDetails into the
+        # wire shape that runtime expects via the compat echo endpoint. The coordinator
+        # subclass reads its bundle's pinned ``Airflow-SDK-Schema-Version`` and Cadwyn
+        # rewrites the response body to that version, so an older runtime gets a
+        # payload its parser understands. The Python task path keeps the raw model
+        # since the worker decodes it natively.
+        coordinator = get_coordinator_manager().for_queue(ti.queue)
+        body: StartupDetails | ClientCompatibleStartupDetails
+        if coordinator is not None:
+            body = coordinator.migrate_startup_details(
+                self.client, msg, coordinator.target_schema_version(msg)
+            )
+        else:
+            body = msg
 
         # Send the message to tell the process what it needs to execute
-        log.debug("Sending", msg=msg)
+        log.debug("Sending", msg=body)
 
         try:
-            self.send_msg(msg, request_id=0)
+            self.send_msg(body, request_id=0)
         except (BrokenPipeError, ConnectionResetError):
             # Debug is fine, the process will have shown _something_ in it's last_chance exception handler
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
@@ -1727,9 +1750,9 @@ class InProcessSupervisorComms:
 
     log: FilteringBoundLogger = attrs.field(repr=False, factory=structlog.get_logger)
     supervisor: InProcessTestSupervisor
-    messages: deque[BaseModel | None] = attrs.field(factory=deque)
+    messages: deque[BaseModel | dict[str, Any] | None] = attrs.field(factory=deque)
 
-    def _get_response(self) -> BaseModel | None:
+    def _get_response(self) -> BaseModel | dict[str, Any] | None:
         """Get a message from the supervisor. Blocks until a message is available."""
         return self.messages.popleft()
 
@@ -1896,7 +1919,11 @@ class InProcessTestSupervisor(ActivitySubprocess):
         return client
 
     def send_msg(
-        self, msg: BaseModel | None, request_id: int, error: ErrorResponse | None = None, **dump_opts
+        self,
+        msg: BaseModel | dict[str, Any] | None,
+        request_id: int,
+        error: ErrorResponse | None = None,
+        **dump_opts,
     ):
         """Override to use in-process comms."""
         self.comms.messages.append(msg)

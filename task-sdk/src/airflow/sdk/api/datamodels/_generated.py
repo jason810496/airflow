@@ -31,6 +31,33 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, Roo
 API_VERSION: Final[str] = "2026-06-16"
 
 
+class AirflowSdkApiDatamodelsGeneratedConnectionResponse(BaseModel):
+    """
+    Connection schema for responses with fields that are needed for Runtime.
+    """
+
+    conn_id: Annotated[str, Field(title="Conn Id")]
+    conn_type: Annotated[str, Field(title="Conn Type")]
+    host: Annotated[str | None, Field(title="Host")] = None
+    schema_: Annotated[str | None, Field(alias="schema", title="Schema")] = None
+    login: Annotated[str | None, Field(title="Login")] = None
+    password: Annotated[str | None, Field(title="Password")] = None
+    port: Annotated[int | None, Field(title="Port")] = None
+    extra: Annotated[str | None, Field(title="Extra")] = None
+
+
+class AirflowSdkApiDatamodelsGeneratedVariableResponse(BaseModel):
+    """
+    Variable schema for responses with fields that are needed for Runtime.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    key: Annotated[str, Field(title="Key")]
+    value: Annotated[str | None, Field(title="Value")] = None
+
+
 class AssetAliasReferenceAssetEventDagRun(BaseModel):
     """
     Schema for AssetAliasModel used in AssetEventDagRunReference.
@@ -93,6 +120,39 @@ class BundleInfo(BaseModel):
 
     name: Annotated[str, Field(title="Name")]
     version: Annotated[str | None, Field(title="Version")] = None
+
+
+class ConnectionResponse(BaseModel):
+    """
+    Connection schema for responses with fields that are needed for Runtime.
+    """
+
+    conn_id: Annotated[str, Field(title="Conn Id")]
+    conn_type: Annotated[str, Field(title="Conn Type")]
+    host: Annotated[str | None, Field(title="Host")] = None
+    schema_: Annotated[str | None, Field(alias="schema", title="Schema")] = None
+    login: Annotated[str | None, Field(title="Login")] = None
+    password: Annotated[str | None, Field(title="Password")] = None
+    port: Annotated[int | None, Field(title="Port")] = None
+    extra: Annotated[str | None, Field(title="Extra")] = None
+
+
+class DagFileParseRequestCompat(BaseModel):
+    """
+    Slim compat-protocol shape for ``DagFileParseRequest``.
+
+    Mirrors the parser-supervisor's ``DagFileParseRequest`` minus the
+    ``callback_requests`` field (which is Python-runtime-specific and
+    causes the OpenAPI codegen to emit a malformed ``Literal | None``
+    discriminator). The discriminator literal value matches the original
+    so a foreign runtime that recognises ``"DagFileParseRequest"`` can
+    decode either shape interchangeably.
+    """
+
+    file: Annotated[str, Field(title="File")]
+    bundle_path: Annotated[Path, Field(title="Bundle Path")]
+    bundle_name: Annotated[str, Field(title="Bundle Name")]
+    type: Annotated[Literal["DagFileParseRequest"] | None, Field(title="Type")] = "DagFileParseRequest"
 
 
 class DagResponse(BaseModel):
@@ -163,11 +223,6 @@ class DagRunType(str, Enum):
     OPERATOR_TRIGGERED = "operator_triggered"
     ASSET_TRIGGERED = "asset_triggered"
     ASSET_MATERIALIZATION = "asset_materialization"
-
-
-class EmailType(str, Enum):
-    FAILURE = "failure"
-    RETRY = "retry"
 
 
 class HITLUser(BaseModel):
@@ -346,22 +401,6 @@ class TaskBreadcrumbsResponse(BaseModel):
     breadcrumbs: Annotated[list[dict[str, Any]], Field(title="Breadcrumbs")]
 
 
-class TaskInstance(BaseModel):
-    """
-    Schema for TaskInstance model with minimal required fields needed for Runtime.
-    """
-
-    id: Annotated[UUID, Field(title="Id")]
-    task_id: Annotated[str, Field(title="Task Id")]
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    try_number: Annotated[int, Field(title="Try Number")]
-    dag_version_id: Annotated[UUID, Field(title="Dag Version Id")]
-    map_index: Annotated[int | None, Field(title="Map Index")] = -1
-    hostname: Annotated[str | None, Field(title="Hostname")] = None
-    context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
-
-
 class TaskInstanceDTOInput(BaseModel):
     """
     Task SDK TaskInstanceDTO.
@@ -509,6 +548,18 @@ class VariablePostBody(BaseModel):
     description: Annotated[str | None, Field(title="Description")] = None
 
 
+class VariableResponse(BaseModel):
+    """
+    Variable schema for responses with fields that are needed for Runtime.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    key: Annotated[str, Field(title="Key")]
+    value: Annotated[str | None, Field(title="Value")] = None
+
+
 class XComResponse(BaseModel):
     """
     XCom schema for responses with fields that are needed for Runtime.
@@ -542,58 +593,20 @@ class XComSequenceSliceResponse(RootModel[list[JsonValue]]):
     ]
 
 
-class AirflowApiFastapiExecutionApiDatamodelsConnectionConnectionResponse(BaseModel):
+class TaskInstance(BaseModel):
     """
-    Connection schema for responses with fields that are needed for Runtime.
-    """
-
-    conn_id: Annotated[str, Field(title="Conn Id")]
-    conn_type: Annotated[str, Field(title="Conn Type")]
-    host: Annotated[str | None, Field(title="Host")] = None
-    schema_: Annotated[str | None, Field(alias="schema", title="Schema")] = None
-    login: Annotated[str | None, Field(title="Login")] = None
-    password: Annotated[str | None, Field(title="Password")] = None
-    port: Annotated[int | None, Field(title="Port")] = None
-    extra: Annotated[str | None, Field(title="Extra")] = None
-
-
-class AirflowApiFastapiExecutionApiDatamodelsVariableVariableResponse(BaseModel):
-    """
-    Variable schema for responses with fields that are needed for Runtime.
+    Schema for TaskInstance model with minimal required fields needed for Runtime.
     """
 
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    key: Annotated[str, Field(title="Key")]
-    value: Annotated[str | None, Field(title="Value")] = None
-
-
-class AirflowSdkApiDatamodelsGeneratedConnectionResponse(BaseModel):
-    """
-    Connection schema for responses with fields that are needed for Runtime.
-    """
-
-    conn_id: Annotated[str, Field(title="Conn Id")]
-    conn_type: Annotated[str, Field(title="Conn Type")]
-    host: Annotated[str | None, Field(title="Host")] = None
-    schema_: Annotated[str | None, Field(alias="schema", title="Schema")] = None
-    login: Annotated[str | None, Field(title="Login")] = None
-    password: Annotated[str | None, Field(title="Password")] = None
-    port: Annotated[int | None, Field(title="Port")] = None
-    extra: Annotated[str | None, Field(title="Extra")] = None
-
-
-class AirflowSdkApiDatamodelsGeneratedVariableResponse(BaseModel):
-    """
-    Variable schema for responses with fields that are needed for Runtime.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    key: Annotated[str, Field(title="Key")]
-    value: Annotated[str | None, Field(title="Value")] = None
+    id: Annotated[UUID, Field(title="Id")]
+    task_id: Annotated[str, Field(title="Task Id")]
+    dag_id: Annotated[str, Field(title="Dag Id")]
+    run_id: Annotated[str, Field(title="Run Id")]
+    try_number: Annotated[int, Field(title="Try Number")]
+    dag_version_id: Annotated[UUID, Field(title="Dag Version Id")]
+    map_index: Annotated[int | None, Field(title="Map Index")] = -1
+    hostname: Annotated[str | None, Field(title="Hostname")] = None
+    context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
 
 
 class TerminalTIState(str, Enum):
@@ -699,76 +712,6 @@ class TITerminalStatePayload(BaseModel):
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
 
 
-class AirflowApiFastapiExecutionApiDatamodelsTaskinstanceAssetEventDagRunReference(BaseModel):
-    """
-    Schema for AssetEvent model used in DagRun.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    asset: AssetReferenceAssetEventDagRun
-    extra: Annotated[dict[str, JsonValue], Field(title="Extra")]
-    source_task_id: Annotated[str | None, Field(title="Source Task Id")] = None
-    source_dag_id: Annotated[str | None, Field(title="Source Dag Id")] = None
-    source_run_id: Annotated[str | None, Field(title="Source Run Id")] = None
-    source_map_index: Annotated[int | None, Field(title="Source Map Index")] = None
-    source_aliases: Annotated[list[AssetAliasReferenceAssetEventDagRun], Field(title="Source Aliases")]
-    timestamp: Annotated[AwareDatetime, Field(title="Timestamp")]
-
-
-class AirflowApiFastapiExecutionApiDatamodelsTaskinstanceDagRun(BaseModel):
-    """
-    Schema for DagRun model with minimal required fields needed for Runtime.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    logical_date: Annotated[AwareDatetime | None, Field(title="Logical Date")] = None
-    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
-    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
-    run_after: Annotated[AwareDatetime, Field(title="Run After")]
-    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
-    end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
-    clear_number: Annotated[int | None, Field(title="Clear Number")] = 0
-    run_type: DagRunType
-    state: DagRunState
-    conf: Annotated[dict[str, Any] | None, Field(title="Conf")] = None
-    triggering_user_name: Annotated[str | None, Field(title="Triggering User Name")] = None
-    consumed_asset_events: Annotated[
-        list[AirflowApiFastapiExecutionApiDatamodelsTaskinstanceAssetEventDagRunReference],
-        Field(title="Consumed Asset Events"),
-    ]
-    partition_key: Annotated[str | None, Field(title="Partition Key")] = None
-    note: Annotated[str | None, Field(title="Note")] = None
-    team_name: Annotated[str | None, Field(title="Team Name")] = None
-
-
-class AirflowApiFastapiExecutionApiDatamodelsTaskinstanceTIRunContext(BaseModel):
-    """
-    Response schema for TaskInstance run context.
-    """
-
-    dag_run: AirflowApiFastapiExecutionApiDatamodelsTaskinstanceDagRun
-    task_reschedule_count: Annotated[int | None, Field(title="Task Reschedule Count")] = 0
-    max_tries: Annotated[int, Field(title="Max Tries")]
-    variables: Annotated[
-        list[AirflowApiFastapiExecutionApiDatamodelsVariableVariableResponse] | None, Field(title="Variables")
-    ] = None
-    connections: Annotated[
-        list[AirflowApiFastapiExecutionApiDatamodelsConnectionConnectionResponse] | None,
-        Field(title="Connections"),
-    ] = None
-    next_method: Annotated[str | None, Field(title="Next Method")] = None
-    next_kwargs: Annotated[dict[str, Any] | str | None, Field(title="Next Kwargs")] = None
-    xcom_keys_to_clear: Annotated[list[str] | None, Field(title="Xcom Keys To Clear")] = None
-    should_retry: Annotated[bool | None, Field(title="Should Retry")] = False
-    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
-
-
 class AirflowSdkApiDatamodelsGeneratedAssetEventDagRunReference(BaseModel):
     """
     Schema for AssetEvent model used in DagRun.
@@ -837,6 +780,24 @@ class AirflowSdkApiDatamodelsGeneratedTIRunContext(BaseModel):
     start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
 
 
+class AssetEventDagRunReference(BaseModel):
+    """
+    Schema for AssetEvent model used in DagRun.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    asset: AssetReferenceAssetEventDagRun
+    extra: Annotated[dict[str, JsonValue], Field(title="Extra")]
+    source_task_id: Annotated[str | None, Field(title="Source Task Id")] = None
+    source_dag_id: Annotated[str | None, Field(title="Source Dag Id")] = None
+    source_run_id: Annotated[str | None, Field(title="Source Run Id")] = None
+    source_map_index: Annotated[int | None, Field(title="Source Map Index")] = None
+    source_aliases: Annotated[list[AssetAliasReferenceAssetEventDagRun], Field(title="Source Aliases")]
+    timestamp: Annotated[AwareDatetime, Field(title="Timestamp")]
+
+
 class AssetEventResponse(BaseModel):
     """
     Asset event schema with fields that are needed for Runtime.
@@ -862,28 +823,31 @@ class AssetEventsResponse(BaseModel):
     asset_events: Annotated[list[AssetEventResponse], Field(title="Asset Events")]
 
 
-class DagRunContext(BaseModel):
+class DagRun(BaseModel):
     """
-    Class to pass context info from the server to build a Execution context object.
-    """
-
-    dag_run: AirflowApiFastapiExecutionApiDatamodelsTaskinstanceDagRun | None = None
-    last_ti: TaskInstance | None = None
-
-
-class EmailRequest(BaseModel):
-    """
-    Email notification request for task failures/retries.
+    Schema for DagRun model with minimal required fields needed for Runtime.
     """
 
-    filepath: Annotated[str, Field(title="Filepath")]
-    bundle_name: Annotated[str, Field(title="Bundle Name")]
-    bundle_version: Annotated[str | None, Field(title="Bundle Version")] = None
-    msg: Annotated[str | None, Field(title="Msg")] = None
-    ti: TaskInstance
-    email_type: Annotated[EmailType | None, Field(title="Email Type")] = "failure"
-    context_from_server: AirflowApiFastapiExecutionApiDatamodelsTaskinstanceTIRunContext
-    type: Annotated[Literal["EmailRequest"] | None, Field(title="Type")] = "EmailRequest"
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    dag_id: Annotated[str, Field(title="Dag Id")]
+    run_id: Annotated[str, Field(title="Run Id")]
+    logical_date: Annotated[AwareDatetime | None, Field(title="Logical Date")] = None
+    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
+    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
+    run_after: Annotated[AwareDatetime, Field(title="Run After")]
+    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
+    end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
+    clear_number: Annotated[int | None, Field(title="Clear Number")] = 0
+    run_type: DagRunType
+    state: DagRunState
+    conf: Annotated[dict[str, Any] | None, Field(title="Conf")] = None
+    triggering_user_name: Annotated[str | None, Field(title="Triggering User Name")] = None
+    consumed_asset_events: Annotated[list[AssetEventDagRunReference], Field(title="Consumed Asset Events")]
+    partition_key: Annotated[str | None, Field(title="Partition Key")] = None
+    note: Annotated[str | None, Field(title="Note")] = None
+    team_name: Annotated[str | None, Field(title="Team Name")] = None
 
 
 class StartupDetailsInput(BaseModel):
@@ -906,54 +870,18 @@ class StartupDetailsOutput(BaseModel):
     type: Annotated[Literal["StartupDetails"] | None, Field(title="Type")] = "StartupDetails"
 
 
-class TaskCallbackRequest(BaseModel):
+class TIRunContext(BaseModel):
     """
-    Task callback status information.
-
-    A Class with information about the success/failure TI callback to be executed. Currently, only failure
-    callbacks when tasks are externally killed or experience heartbeat timeouts are run via DagFileProcessorProcess.
+    Response schema for TaskInstance run context.
     """
 
-    filepath: Annotated[str, Field(title="Filepath")]
-    bundle_name: Annotated[str, Field(title="Bundle Name")]
-    bundle_version: Annotated[str | None, Field(title="Bundle Version")] = None
-    msg: Annotated[str | None, Field(title="Msg")] = None
-    ti: TaskInstance
-    task_callback_type: TaskInstanceState | None = None
-    context_from_server: AirflowApiFastapiExecutionApiDatamodelsTaskinstanceTIRunContext | None = None
-    type: Annotated[Literal["TaskCallbackRequest"] | None, Field(title="Type")] = "TaskCallbackRequest"
-
-
-class DagCallbackRequest(BaseModel):
-    """
-    A Class with information about the success/failure DAG callback to be executed.
-    """
-
-    filepath: Annotated[str, Field(title="Filepath")]
-    bundle_name: Annotated[str, Field(title="Bundle Name")]
-    bundle_version: Annotated[str | None, Field(title="Bundle Version")] = None
-    msg: Annotated[str | None, Field(title="Msg")] = None
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    context_from_server: DagRunContext | None = None
-    is_failure_callback: Annotated[bool | None, Field(title="Is Failure Callback")] = True
-    type: Annotated[Literal["DagCallbackRequest"] | None, Field(title="Type")] = "DagCallbackRequest"
-
-
-class CallbackRequests(RootModel[DagCallbackRequest | TaskCallbackRequest | EmailRequest]):
-    root: Annotated[DagCallbackRequest | TaskCallbackRequest | EmailRequest, Field(discriminator="type")]
-
-
-class DagFileParseRequest(BaseModel):
-    """
-    Request for DAG File Parsing.
-
-    This is the request that the manager will send to the DAG parser with the dag file and
-    any other necessary metadata.
-    """
-
-    file: Annotated[str, Field(title="File")]
-    bundle_path: Annotated[Path, Field(title="Bundle Path")]
-    bundle_name: Annotated[str, Field(title="Bundle Name")]
-    callback_requests: Annotated[list[CallbackRequests] | None, Field(title="Callback Requests")] = None
-    type: Annotated[Literal["DagFileParseRequest"] | None, Field(title="Type")] = "DagFileParseRequest"
+    dag_run: DagRun
+    task_reschedule_count: Annotated[int | None, Field(title="Task Reschedule Count")] = 0
+    max_tries: Annotated[int, Field(title="Max Tries")]
+    variables: Annotated[list[VariableResponse] | None, Field(title="Variables")] = None
+    connections: Annotated[list[ConnectionResponse] | None, Field(title="Connections")] = None
+    next_method: Annotated[str | None, Field(title="Next Method")] = None
+    next_kwargs: Annotated[dict[str, Any] | str | None, Field(title="Next Kwargs")] = None
+    xcom_keys_to_clear: Annotated[list[str] | None, Field(title="Xcom Keys To Clear")] = None
+    should_retry: Annotated[bool | None, Field(title="Should Retry")] = False
+    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None

@@ -58,6 +58,12 @@ if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
     from typing_extensions import Self
 
+    from airflow.dag_processing.processor import DagFileParseRequest
+    from airflow.sdk.api.client import (
+        Client,
+        ClientCompatibleDagFileParseRequest,
+        ClientCompatibleStartupDetails,
+    )
     from airflow.sdk.api.datamodels._generated import BundleInfo
     from airflow.sdk.execution_time.comms import StartupDetails
     from airflow.sdk.execution_time.workloads.task import TaskInstanceDTO
@@ -72,23 +78,33 @@ def _start_server() -> socket.socket:
     return server
 
 
-def _send_startup_details(runtime_comm: socket.socket, startup_details: StartupDetails) -> None:
+def _send_startup_details(
+    runtime_comm: socket.socket,
+    body: ClientCompatibleStartupDetails,
+) -> None:
     """
-    Re-encode and send the ``StartupDetails`` frame to the runtime subprocess.
+    Send a ``ClientCompatibleStartupDetails`` frame to the runtime subprocess.
 
     In the task execution flow, ``task_runner.main()`` consumes the
     ``StartupDetails`` message from fd 0 (to determine routing) before
-    delegating to the runtime coordinator.  This function re-serializes
-    the message and writes it to the runtime subprocess's comm socket so
-    the subprocess receives it as if it came directly from the supervisor.
+    delegating to the runtime coordinator. The caller (typically
+    :meth:`BaseCoordinator._runtime_subprocess_entrypoint`) is responsible
+    for converting the latest-schema ``StartupDetails`` into a
+    ``ClientCompatibleStartupDetails`` -- either via
+    :meth:`BaseCoordinator.to_client_compatible_startup_details` (latest
+    schema, no migration) or via
+    :meth:`BaseCoordinator.migrate_startup_details` (migrated to a foreign
+    runtime's schema version) -- so that the runtime subprocess receives a
+    payload shaped for *its* schema rather than the latest one.
+
+    The body is encoded using ``mode="json"`` upstream so that datetime,
+    UUID, and other complex Python types are serialized as plain
+    strings/numbers in msgpack, avoiding extension types (e.g. Timestamp)
+    that non-Python decoders may not support.
     """
     from airflow.sdk.execution_time.comms import _ResponseFrame
 
-    # Use mode="json" so that datetime, UUID, and other complex Python
-    # types are serialized as plain strings/numbers in msgpack -- avoiding
-    # msgpack extension types (e.g. Timestamp) that non-Python decoders
-    # may not support.
-    frame = _ResponseFrame(id=0, body=startup_details.model_dump(mode="json"))
+    frame = _ResponseFrame(id=0, body=body)
     runtime_comm.sendall(frame.as_bytes())
 
 
@@ -208,6 +224,55 @@ class BaseCoordinator:
         bundle_info: BundleInfo
         startup_details: StartupDetails
         mode: str = "task-execution"
+
+    def target_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
+        """
+        Return the ``Airflow-SDK-Schema-Version`` the foreign runtime expects for *schema*.
+
+        Subclasses override this to read the version from their bundle
+        artifact (e.g. a JAR manifest entry). Returning ``None`` means the
+        runtime speaks the latest schema and no migration is needed --
+        :meth:`_runtime_subprocess_entrypoint` will skip the compat call
+        and fall through to the no-migration ``to_client_compatible_*``
+        conversion below.
+        """
+        return ""
+
+    def migrate_startup_details(
+        self,
+        client: Client,
+        schema: StartupDetails,
+        lang_sdk_target_version: str,
+    ) -> ClientCompatibleStartupDetails:
+        """
+        Migrate a ``StartupDetails`` payload to *lang_sdk_target_version* via the compat API.
+
+        Subclasses override this to call
+        :meth:`~airflow.sdk.api.client.CompatOperations.migrate_startup_details`
+        on *client* and return the migrated body shaped for the foreign
+        runtime's schema version. Returning ``None`` (the default) means
+        no migration was performed and the caller will fall back to
+        :meth:`to_client_compatible_startup_details`.
+        """
+        return client.compat.migrate_startup_details(schema, lang_sdk_target_version)
+
+    def migrate_dag_file_parse_request(
+        self,
+        client: Client,
+        schema: DagFileParseRequest,
+        lang_sdk_target_version: str,
+    ) -> ClientCompatibleDagFileParseRequest:
+        """
+        Migrate a ``DagFileParseRequest`` payload to *lang_sdk_target_version* via the compat API.
+
+        Subclasses override this to call
+        :meth:`~airflow.sdk.api.client.CompatOperations.migrate_dag_file_parse_request`
+        on *client* and return the migrated body shaped for the foreign
+        runtime's schema version. Returning ``None`` (the default) means
+        no migration was performed and the caller will fall back to
+        :meth:`to_client_compatible_dag_file_parse_request`.
+        """
+        return client.compat.migrate_dag_file_parse_request(schema, lang_sdk_target_version)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:
         """

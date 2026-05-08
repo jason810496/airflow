@@ -80,7 +80,7 @@ if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
     from airflow.api_fastapi.execution_api.app import InProcessExecutionAPI
-    from airflow.sdk.api.client import Client
+    from airflow.sdk.api.client import Client, ClientCompatibleDagFileParseRequest
     from airflow.sdk.bases.operator import BaseOperator
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.dag import DAG
@@ -611,13 +611,28 @@ class DagFileProcessorProcess(WatchedSubprocess):
         bundle_path: Path,
         bundle_name: str,
     ) -> None:
+        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
+
         msg = DagFileParseRequest(
             file=os.fspath(path),
             bundle_path=bundle_path,
             bundle_name=bundle_name,
             callback_requests=callbacks,
         )
-        self.send_msg(msg, request_id=0)
+        # When a runtime coordinator handles this file, the child is a foreign
+        # SDK runtime that cannot decode Python-only fields (notably
+        # ``callback_requests``). Convert through the coordinator's
+        # ``to_client_compatible_dag_file_parse_request`` so the child receives
+        # the slim wire shape; the Python parser path keeps the full message.
+        coordinator = get_coordinator_manager().for_dag_file(bundle_name, path)
+        body: DagFileParseRequest | ClientCompatibleDagFileParseRequest
+        if coordinator is not None:
+            body = coordinator.migrate_dag_file_parse_request(
+                self.client, msg, coordinator.target_schema_version(msg)
+            )
+        else:
+            body = msg
+        self.send_msg(body, request_id=0)
 
     def _get_target_loggers(self) -> tuple[FilteringBoundLogger, ...]:
         base = super()._get_target_loggers()

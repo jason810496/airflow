@@ -76,14 +76,13 @@ class TestStartServer:
 
 class TestSendStartupDetails:
     def test_sends_frame_bytes_to_socket(self):
-        mock_startup = MagicMock()
-        mock_startup.model_dump.return_value = {"type": "StartupDetails", "ti": {}}
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
 
+        body = ClientCompatibleStartupDetails({"type": "StartupDetails", "ti": {}})
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, mock_startup)
+        _send_startup_details(mock_socket, body)
 
-        mock_startup.model_dump.assert_called_once_with(mode="json")
         mock_socket.sendall.assert_called_once()
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
@@ -94,34 +93,36 @@ class TestSendStartupDetails:
     def test_frame_contains_response_id_zero(self):
         import msgpack
 
-        mock_startup = MagicMock()
-        mock_startup.model_dump.return_value = {"type": "StartupDetails"}
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
 
+        body = ClientCompatibleStartupDetails({"type": "StartupDetails"})
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, mock_startup)
+        _send_startup_details(mock_socket, body)
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
         assert frame[0] == 0
 
-    def test_frame_body_matches_model_dump(self):
+    def test_frame_body_matches_input(self):
         import msgpack
 
-        body = {"type": "StartupDetails", "ti": {"task_id": "t1"}, "dag_rel_path": "test.jar"}
-        mock_startup = MagicMock()
-        mock_startup.model_dump.return_value = body
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
 
+        payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}, "dag_rel_path": "test.jar"}
+        body = ClientCompatibleStartupDetails(payload)
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, mock_startup)
+        _send_startup_details(mock_socket, body)
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
-        assert frame[1] == body
+        assert frame[1] == payload
 
     def test_real_socket_roundtrip(self):
         import msgpack
+
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
 
         server = socket.socket()
         server.bind(("127.0.0.1", 0))
@@ -133,11 +134,10 @@ class TestSendStartupDetails:
         conn, _ = server.accept()
 
         try:
-            body = {"type": "StartupDetails", "value": 42}
-            mock_startup = MagicMock()
-            mock_startup.model_dump.return_value = body
+            payload = {"type": "StartupDetails", "value": 42}
+            body = ClientCompatibleStartupDetails(payload)
 
-            _send_startup_details(conn, mock_startup)
+            _send_startup_details(conn, body)
 
             length_bytes = client.recv(4)
             length = int.from_bytes(length_bytes, "big")
@@ -145,7 +145,7 @@ class TestSendStartupDetails:
             data = client.recv(length)
             frame = msgpack.unpackb(data)
             assert frame[0] == 0
-            assert frame[1] == body
+            assert frame[1] == payload
         finally:
             conn.close()
             client.close()
@@ -467,11 +467,15 @@ class TestRuntimeSubprocessEntrypoint:
         mock_lock_instance.__enter__ = MagicMock(return_value=mock_lock_instance)
         mock_lock_instance.__exit__ = MagicMock(return_value=False)
 
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+
+        startup_payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}}
         mock_ti = MagicMock()
         mock_bundle_info = MagicMock()
         mock_bundle_info.name = "test-bundle"
         mock_bundle_info.version = "v1"
         mock_startup = MagicMock()
+        mock_startup.model_dump.return_value = startup_payload
 
         coordinator = _StubCoordinator(exec_cmd=["test-runtime", "--execute"])
         info = BaseCoordinator.TaskExecutionInfo(
@@ -496,7 +500,11 @@ class TestRuntimeSubprocessEntrypoint:
         cmd = mock_popen.call_args[0][0]
         assert cmd == ["test-runtime", "--execute", "/resolved/bundles/test-bundle/dags/example.test"]
 
-        mock_send_startup.assert_called_once_with(runtime_comm, mock_startup)
+        mock_send_startup.assert_called_once()
+        send_args, _ = mock_send_startup.call_args
+        assert send_args[0] is runtime_comm
+        assert isinstance(send_args[1], ClientCompatibleStartupDetails)
+        assert dict(send_args[1]) == startup_payload
         mock_bridge.assert_called_once()
 
     @patch("airflow.sdk.execution_time.coordinator._bridge")
