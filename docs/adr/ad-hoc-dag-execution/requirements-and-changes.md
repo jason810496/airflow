@@ -57,7 +57,8 @@ issues, and tests can reference them directly.
   and is queryable via the public REST API.
 - **FR-7 — Cancellation.** A user can cancel their own submission;
   cancellation tears down the user DagRun (if running) and cleans up
-  the archive.
+  the archive. The cancellation flow itself is implemented as a system
+  DAG (see `FR-25`) so its execution carries logs and an audit trail.
 - **FR-8 — Forwarded parameters.** `--param key=value ...` flags are
   forwarded as the user DagRun's `conf`.
 - **FR-9 — Watch mode.** `--watch` (default on) streams the user
@@ -117,6 +118,22 @@ issues, and tests can reference them directly.
 - **FR-24 — REST surface is the source of truth.** The CLI and
   airflow-ctl commands are clients of the public REST API; no
   CLI-only behaviour exists.
+- **FR-25 — Cancellation as a system DAG.** Cancellation is performed
+  by a separate built-in DAG. Its tasks signal the user DagRun (if
+  running) to terminate, mark the submission `CANCELLED`, and clean
+  up the archive. The DagRun of the cancellation DAG is the audit
+  trail of who cancelled what and when, with task logs covering each
+  step.
+- **FR-26 — Auth-manager exposes submission actions.** The
+  auth-manager interface gains a `Submission` resource and the
+  actions needed to gate it (`create`, `view`, `cancel`). Every
+  public REST entry point that handles a submission consults the
+  auth-manager rather than checking ownership inline.
+- **FR-27 — Audit-log entries for submission actions.** Submission
+  create, upload completion, run trigger, cancel-requested, and
+  cancel-completed events are recorded in the existing audit `Log`
+  table. Records carry the submission ID, the actor, the event name,
+  and a small structured payload.
 
 ### Out of scope (explicitly not requirements for this AIP)
 
@@ -137,17 +154,83 @@ repository layout.
 
 ### Data model and migrations
 
-- New ORM model `Submission` in
-  `airflow-core/src/airflow/models/submission.py` with
-  fields: `id` (UUID), `created_by`, `created_at`, `state`,
-  `archive_uri`, `entry_file`, `manifest` (JSON), `dag_run_id` FK.
-  Indexes on `created_by`, `state`.
-- Provenance marker on `DagModel`
-  (`airflow-core/src/airflow/models/dag.py`) — column or sibling
-  table; values `BUNDLE` (default) and `ADHOC`. Default-query filter
-  applied at the query layer.
+#### `submission` table
+
+New ORM model in `airflow-core/src/airflow/models/submission.py`.
+
+| Column | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| `id` | `UUID` | NO | Primary key. Stable submission identifier surfaced by the public REST API and CLI. |
+| `created_by` | `str` (FK to auth user) | NO | Submitter identity. Drives `FR-19` (per-user visibility) and `FR-20` (queryable by submitter). |
+| `created_at` | `datetime` | NO | Submission creation timestamp. |
+| `state` | enum | NO | One of `PENDING_UPLOAD`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `CANCELLED` (`FR-6`). |
+| `archive_uri` | `str` | YES | Object-store URI where the uploaded archive lives. Null between create and upload completion. Resolved via `get_fs()` (`FR-4`). |
+| `entry_file` | `str` | NO | Relative path inside the archive identifying the user-authored DAG file the worker should import. The archive may contain many local modules (`FR-2`/`FR-3`); the worker must be told which one is the entry point. |
+| `dag_run_conf` | `JSON` | YES | The `conf` payload to be forwarded to the workload DagRun (`FR-8`). Mirrors `DagRun.conf`'s contract: opaque user-supplied JSON, accessible inside tasks via the templating context. The orchestrator system DAG's `TriggerDagRunOperator` task passes this dict through verbatim when it creates the workload DagRun. |
+| `parsed_dag_id` | `str` (FK to `dag.dag_id`) | YES | The `dag_id` produced by the parse step. Null until the orchestrator system DAG's register task succeeds. The FK is constrained against rows with `provenance = ADHOC` so it cannot be wired to a bundle DAG. |
+| `parsing_dag_run_id` | `UUID` (FK to `dag_run.id`) | YES | The orchestrator system DAG run that handled download → parse → register → trigger. Source of logs and the failure surface for the parsing phase (`FR-14`, `FR-21`). |
+| `workload_dag_run_id` | `UUID` (FK to `dag_run.id`) | YES | The user's workload DagRun, created by `TriggerDagRunOperator` from the orchestrator with `dag_run_conf` as its `conf` (`FR-15`, `FR-16`). Source of the workload's logs and final state. |
+| `cancellation_dag_run_id` | `UUID` (FK to `dag_run.id`) | YES | The cancellation system DAG run, if cancellation has been requested (`FR-7`, `FR-25`). Provides the audit trail and logs for the cancellation flow. |
+
+Indexes:
+
+- `(created_by, state)` — listing per user filtered by lifecycle state.
+- `(state)` — global queries (e.g. expire stale `PENDING_UPLOAD` rows).
+- `(parsed_dag_id)` — reverse lookup ("which submission produced this DAG").
+
+#### Why three DagRun columns?
+
+The submission has up to three DagRuns associated with it, each
+load-bearing for a different reason; they are not interchangeable.
+
+1. **Parsing DagRun** (`parsing_dag_run_id`) — the system DAG run
+   that downloads, parses, registers, and triggers.
+2. **Workload DagRun** (`workload_dag_run_id`) — the actual
+   workload, created by `TriggerDagRunOperator` from the parsing DAG
+   with `dag_run_conf` as its `conf`. Distinct from (1) because it
+   runs user code with user parameters against the user's DAG.
+3. **Cancellation DagRun** (`cancellation_dag_run_id`) — the system
+   DAG run that performs cancellation. Its DagRun is the audit
+   record: actor, time, steps taken, outcome.
+
+Each column is nullable because the corresponding DagRun may not
+exist yet (parse not started, trigger not fired) or may never exist
+at all (a successful submission has no cancellation DagRun).
+
+#### `DagModel` provenance marker
+
+- New marker on `DagModel`
+  (`airflow-core/src/airflow/models/dag.py`): column or sibling
+  table; values `BUNDLE` (default) and `ADHOC` (`FR-11`). The
+  default-query filter is applied at the query layer (`FR-13`).
+
+#### Note: no separate `manifest` column
+
+Earlier drafts proposed a `manifest` JSON column for client-side
+metadata (bundled file list, declared requirements, queue, client
+info). It is **not** included in the schema above. The roles a
+`manifest` would have played are covered by:
+
+- **Object-storage location** → `archive_uri`.
+- **User-supplied DagRun input** → `dag_run_conf`, mirroring
+  `DagRun.conf`.
+- **Audit of who/when/what** → `created_by`, `created_at`, plus the
+  `Log` rows from `FR-27`.
+- **Diagnostics for the bundled archive** → recoverable from the
+  archive itself while it exists, and from the parsing DagRun's task
+  logs after the archive is gone.
+
+If a future need (e.g. cheap pre-flight validation without unpacking
+the archive) requires a structured client-side metadata blob, it can
+be re-introduced as a dedicated column with a defined schema rather
+than an open-ended JSON dump.
+
+#### Migration
+
 - Alembic migration in `airflow-core/src/airflow/migrations/versions/`
-  for the new table, the provenance marker, and the FK.
+  for the new `submission` table, its FKs (one to `dag.dag_id`, three
+  to `dag_run.id`), the `DagModel` provenance marker, and the indexes
+  above.
 
 ### Public REST API (api_fastapi/core_api)
 
@@ -176,6 +259,22 @@ repository layout.
   Execution API endpoint, `TriggerDagRunOperator` against the
   registered `dag_id`. Location TBD (open question in ADR 0002).
 
+### System DAG (canceller)
+
+- New built-in DAG shipped with Airflow that performs cancellation
+  steps as tasks (`FR-7`, `FR-25`):
+  1. Signal the user DagRun to terminate (no-op if not running).
+  2. Mark the submission row `CANCELLED`.
+  3. Delete the archive from object storage (subject to the retention
+     policy from `FR-23`).
+  4. Write the cancellation audit-log entry (`FR-27`).
+- Triggered by the public REST `cancel` endpoint, which records the
+  resulting DagRun's id on the submission's `cancellation_dag_run_id`.
+- The DagRun of this DAG is the audit record of the cancellation;
+  task logs cover each step. Failures (e.g. archive delete fails) are
+  visible through the standard task-log endpoint, not silently
+  swallowed.
+
 ### Task SDK and worker runtime
 
 - Hook in
@@ -199,6 +298,40 @@ repository layout.
 
 - New subcommand group (e.g. `airflowctl submissions ...`) that
   consumes the new public REST endpoints. No bespoke transport.
+
+### Auth-manager interface
+
+- Extend the auth-manager interface
+  (`airflow-core/src/airflow/api_fastapi/auth/managers/`) with a new
+  `Submission` resource and the actions needed to gate it: at minimum
+  `create`, `view`, and `cancel` (`FR-26`).
+- Wire every public REST entry point under `/submissions` to consult
+  the auth-manager. The default policy (a user can act on their own
+  submissions only) is implemented inside the default auth-manager,
+  not inline in the route handlers; deployments that use a custom
+  auth-manager get the same hook surface as for existing resources.
+- Expose the new resource and actions in the auth-manager's
+  permissions enumeration so RBAC roles can grant cross-user view or
+  cancel rights to platform-team identities.
+
+### Audit log
+
+- Emit `Log` entries
+  (`airflow-core/src/airflow/models/log.py`) for the submission
+  lifecycle (`FR-27`), at minimum:
+  - `submission.create` — new row, archive uri minted.
+  - `submission.upload_complete` — client confirmed upload.
+  - `submission.run_triggered` — orchestrator system DAG dispatched.
+  - `submission.cancel_requested` — canceller system DAG dispatched.
+  - `submission.cancel_completed` — canceller finished (success or
+    failure).
+- Each entry carries `submission_id`, the actor (`owner`), and a
+  small structured `extra` payload (e.g. `parsed_dag_id`,
+  `parsing_dag_run_id`, archive size, failure reason).
+- The orchestrator and canceller system DAGs emit their own audit
+  entries from their tasks via the Execution API rather than writing
+  `Log` rows directly, preserving the worker→API-server boundary
+  (`FR-10`).
 
 ### UI (minimal)
 
@@ -236,6 +369,18 @@ repository layout.
   mode exit codes.
 - Static-analysis test asserting no DB-bound model imports from
   worker paths added by this AIP (FR-10).
+- Cancellation tests: cancel-while-pending (no user DagRun yet),
+  cancel-while-running (user DagRun is active), cancel-after-success
+  (idempotent no-op for the workload, archive cleanup still runs),
+  and a test that asserts `cancellation_dag_run_id` is populated and
+  the cancellation DagRun's logs include each step (`FR-7`,
+  `FR-25`).
+- Auth-manager tests: a non-owner user is rejected on view and
+  cancel by default; a custom auth-manager that grants cross-user
+  rights sees the same hooks fired (`FR-26`).
+- Audit-log tests: each lifecycle event in `FR-27` produces exactly
+  one `Log` row with the expected actor, event name, and payload
+  shape.
 
 ### Newsfragment
 
