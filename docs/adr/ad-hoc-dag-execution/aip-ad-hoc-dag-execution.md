@@ -101,9 +101,11 @@ Special considerations and known difficulties:
   `ast` plus `importlib.util.find_spec` to walk imports of the entry
   file. Runtime-only imports (`__import__(name)`, `importlib` by
   string) will be missed; users must be able to add files explicitly.
-- **Object-store access is a hard dependency** for ad-hoc execution in
-  any non-trivial deployment. Single-node setups need a fallback
-  (proxy upload through the API server, archive on local FS).
+- **Object-store access is a hard dependency** for ad-hoc execution.
+  Object storage is the only supported archive backend; there is no
+  local-filesystem fallback and the API server does not proxy archive
+  bytes. Deployments without a configured object store cannot use
+  the feature.
 - **Inter-user `dag_id` collisions** among ad-hoc submissions are
   intentionally **not** technically guarded. Naming hygiene is treated
   as a governance question; the Execution API surfaces collisions
@@ -273,10 +275,11 @@ to change.
   per-user submission quotas, default expiration of `PENDING_UPLOAD`
   rows that never receive an upload. Will be addressed in a follow-up
   ADR or design doc.
-- **Single-node and offline deployments.** When no object store is
-  configured, the API server must be able to proxy the upload to a
-  local-FS path the worker can read. Otherwise the feature is unusable
-  for `breeze` and the simplest local setups.
+- **Single-node and offline deployments.** Not supported. Object
+  storage is the only archive backend; deployments without one
+  cannot use ad-hoc submission. `breeze` and other local setups must
+  point at a configured object-store URI (e.g. a local MinIO) to
+  exercise the feature.
 - **Logs and reproducibility.** If the archive is deleted but logs are
   kept, reproducing a failure later requires the user to keep the
   source. Documented; offer an optional "keep archive on success /

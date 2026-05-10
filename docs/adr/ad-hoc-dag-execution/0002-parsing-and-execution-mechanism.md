@@ -160,6 +160,33 @@ The system DAG run completes once the trigger fires. The user's DAG
 runs independently as its own DagRun, observable through the normal
 DagRun and TaskInstance surfaces.
 
+**Trigger contract: how the parsing DagRun knows which submission it
+belongs to.** When the API server triggers the orchestrator DAG, it
+does two writes that must happen atomically:
+
+1. Trigger the orchestrator DagRun with
+   `dag_run.conf = {"submission_id": "<uuid>"}`.
+2. Record the resulting `dag_run_id` on `submission.parsing_dag_run_id`.
+
+`submission_id` is the only field the orchestrator carries in its
+`conf`. Everything else (`archive_uri`, `entry_file`, `dag_run_conf`
+to forward, `parsed_dag_id` once produced) lives on the `Submission`
+row and is fetched by parsing tasks via Execution API calls — keeping
+the row as the single source of truth and avoiding drift between conf
+and row.
+
+The atomicity matters because every Execution API endpoint that takes
+a `submission_id` authorizes by checking
+`submission.parsing_dag_run_id == caller's dag_run_id` (see ADR 0003
+for the archive-download token; the same pattern applies to the
+parsed-DAG registration endpoint and to "fetch submission" reads). If
+the trigger succeeds but the row write fails, the parsing DagRun
+exists but every authorization check refuses it, so it cannot
+escalate using a tampered `conf`. The required behaviour is therefore
+**fail-closed**: do both writes in one transaction, or perform the
+trigger via the same path that already records DagRun-create state so
+the row write is part of the trigger flow.
+
 This decision has a few important consequences:
 
 - **No new dispatcher logic.** The "ad-hoc execution" feature is, at

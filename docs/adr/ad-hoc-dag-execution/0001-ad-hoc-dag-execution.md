@@ -241,11 +241,13 @@ exactly once.
    SDK's existing parser is invoked against the unpacked entry file
    inside the worker process, before the operator's `execute()` runs.
 
-4. **Object storage integration** uses `get_fs()` so the archive can
-   land on whatever scheme the deployment supports. Presigned URLs are
-   minted via the same `fs` for schemes that support them; for schemes
-   that do not (e.g., local filesystem in single-node deployments), the
-   API server proxies the upload.
+4. **Object storage integration** uses `get_fs()` against an
+   object-store-backed `archive_uri` (`s3`, `gs`, `azure`, or any
+   fsspec scheme that supports presigned URLs). Object storage is
+   the **only** supported archive backend; the API server does not
+   proxy archive bytes and there is no local-filesystem fallback.
+   Deployments that do not have an object store configured cannot
+   use ad-hoc submission.
 
 5. **Worker-side runtime hook** in
    `task-sdk/src/airflow/sdk/execution_time/task_runner.py`'s task
@@ -367,10 +369,12 @@ Negative / costs:
   parse, execute". Failure modes (corrupt archive, missing entry file,
   import errors at parse time) need to surface as a failed run with a
   useful error, not a stuck task.
-- Object-store access becomes a hard dependency for ad-hoc execution
-  in any non-trivial deployment. Single-node setups need a working
-  fallback (proxy upload through the API server, archive stored on
-  the local filesystem accessible to the worker).
+- Object-store access is a hard dependency for ad-hoc execution. We
+  intentionally do not provide a local-filesystem fallback or proxy
+  the upload through the API server: deployments without a
+  configured object store cannot use the feature. This keeps the
+  data path uniform across all deployments and avoids two parallel
+  storage code paths.
 - Submissions are a new vector for users to run code on workers. The
   trust model is unchanged versus bundle-backed DAGs, but the
   *attack surface for credential exfiltration via "submit a malicious

@@ -49,9 +49,13 @@ issues, and tests can reference them directly.
 - **FR-4 — Pluggable archive transport.** Upload uses `get_fs()`, so
   any scheme the deployment has a configured connection for (`s3`,
   `gs`, `azure`, `file`) works without bespoke transport.
-- **FR-5 — Single-node fallback.** When no object-store is configured,
-  the API server proxies the upload to a path the worker can read, so
-  the feature is usable in `breeze` and minimal local setups.
+- **FR-5 — Object-store backend is required.** Object storage is the
+  only supported archive backend (`s3`, `gs`, `azure`, or any fsspec
+  scheme that supports presigned URLs via `get_fs()`). The API
+  server does not proxy archive bytes and there is no local-
+  filesystem fallback. Deployments without a configured object
+  store, including `breeze` defaults, cannot use ad-hoc submission
+  until they point at one (e.g. a local MinIO).
 - **FR-6 — Submission state is observable.** A submission row tracks
   `PENDING_UPLOAD → READY → RUNNING → SUCCESS / FAILED / CANCELLED`
   and is queryable via the public REST API.
@@ -134,6 +138,42 @@ issues, and tests can reference them directly.
   cancel-completed events are recorded in the existing audit `Log`
   table. Records carry the submission ID, the actor, the event name,
   and a small structured payload.
+- **FR-28 — Archive-download capability is minted on demand.** The
+  parsing system DAG's download task obtains its archive-download
+  credential by calling a new Execution API endpoint
+  (`POST /execution/submissions/{submission_id}/archive_download_token`).
+  The credential is never persisted on the `Submission` row or in
+  `DagRun.conf`. See [ADR 0003](./0003-ephemeral-archive-download-token.md).
+- **FR-29 — Token is scoped and time-bounded.** The minted credential
+  binds to one `submission_id` and one `archive_uri`, with a TTL
+  driven by `[api_auth] submission_archive_download_jwt_expiration_time`.
+  Defaults are short (suggested 60–300 s) because the consumer is a
+  task that is already running when it asks.
+- **FR-30 — Workload DagRun cannot mint or use the archive-download
+  token.** The Execution API endpoint authorizes the caller by
+  checking `submission.parsing_dag_run_id == caller's dag_run_id`;
+  workload DagRun task instances are refused with `403`. Cross-
+  submission attempts (parsing DagRun for submission A asking for
+  submission B's token) are similarly refused.
+- **FR-31 — Archive bytes are served by the object store, not by
+  Airflow.** The Execution API endpoint returns a presigned URL
+  minted via `get_fs()` against the object-store-backed `archive_uri`
+  (`FR-5`). Airflow does not host an archive bytes endpoint and does
+  not proxy archive bytes for any deployment shape; the Execution
+  API's `parsing_dag_run_id` check is the only Airflow-side access
+  gate.
+- **FR-32 — Atomic linkage of submission and parsing DagRun.** When
+  the API server triggers the orchestrator system DAG, it must
+  trigger the DagRun with `dag_run.conf = {"submission_id": "<uuid>"}`
+  **and** record the resulting `dag_run_id` on
+  `submission.parsing_dag_run_id` in the same transaction. This is
+  what every submission-scoped Execution API authorization check
+  binds to (`FR-30`, ADR 0003); failing the row write must fail the
+  trigger so a parsing DagRun never exists without its row pointer
+  set. `submission_id` is the only field the orchestrator carries in
+  its `conf`; the parsing tasks fetch everything else (`archive_uri`,
+  `entry_file`, `dag_run_conf` to forward) from the row via Execution
+  API calls.
 
 ### Out of scope (explicitly not requirements for this AIP)
 
@@ -248,9 +288,15 @@ than an open-ended JSON dump.
   `airflow-core/src/airflow/api_fastapi/execution_api/` accepting a
   serialised parsed DAG plus submitter identity and submission ID.
   Enforces provenance rules from FR-11/FR-12.
+- New endpoint
+  `POST /execution/submissions/{submission_id}/archive_download_token`
+  that mints a per-submission, short-lived presigned archive-download
+  URL for the parsing system DAG (`FR-28`/`FR-29`/`FR-30`/`FR-31`,
+  ADR 0003). Uses `get_fs()` against the object-store-backed
+  `archive_uri`; no local-filesystem mode (`FR-5`).
 - Per-task-instance JWT scoping extended (where needed) so a system
-  DAG task can call the registration endpoint with its own TI token
-  (FR-18).
+  DAG task can call the registration and token endpoints with its
+  own TI token (FR-18).
 
 ### System DAG (orchestrator)
 
@@ -344,6 +390,19 @@ than an open-ended JSON dump.
 - New config keys (under a new `[ad_hoc]` section or equivalent):
   default object-store URI for archives, retention policy, default
   `PENDING_UPLOAD` expiry, optional per-user quota knobs.
+- New config keys under `[api_auth]` for the archive-download
+  capability (ADR 0003):
+  - `submission_archive_download_jwt_secret` — signing secret for
+    archive-download tokens. Defaults to an auto-generated value at
+    server startup, matching the existing `jwt_secret` behaviour.
+    Documented as separately rotatable from `jwt_secret`.
+  - `submission_archive_download_jwt_expiration_time` — TTL in
+    seconds for the URL returned by the archive-download endpoint.
+    Default low (suggested 60–300 s) since the consumer is a task
+    that is already running when it asks.
+  - The signing algorithm reuses the existing `[api_auth]
+    jwt_algorithm` setting, the same one used by every other JWT
+    Airflow signs.
 
 ### Documentation
 
@@ -381,6 +440,34 @@ than an open-ended JSON dump.
 - Audit-log tests: each lifecycle event in `FR-27` produces exactly
   one `Log` row with the expected actor, event name, and payload
   shape.
+- Archive-download token tests (`FR-28`/`FR-29`/`FR-30`/`FR-31`,
+  ADR 0003):
+  - Parsing DagRun task: token mint succeeds, returned token works
+    against the archive endpoint, and `exp` matches the configured
+    TTL.
+  - Workload DagRun task: token mint endpoint returns `403`.
+  - Cross-submission: a parsing DagRun task for submission A is
+    refused when asking for submission B's token.
+  - Expired token: download with an expired token is refused; a
+    fresh mint succeeds.
+  - Object-store path: with an `s3://` (or equivalent) `archive_uri`,
+    the endpoint returns a presigned URL minted via `get_fs()` and
+    the worker fetches directly from the object store.
+  - Non-object-store rejection: a `Submission` whose `archive_uri`
+    scheme is not object-store-backed (`file://`, etc.) is rejected
+    at submission-create time with a clear error pointing at `FR-5`.
+  - Log redaction: the parsing DagRun's task logs do not contain the
+    returned presigned URL.
+- Atomic-trigger tests (`FR-32`):
+  - Happy path: triggering the orchestrator DAG leaves the
+    `submission` row with `parsing_dag_run_id` populated and equal to
+    the new DagRun's id, and the orchestrator DagRun's
+    `conf["submission_id"]` matches the row.
+  - Row-write failure rolls back the trigger (no orphaned DagRun
+    whose authorization checks would refuse it).
+  - A parsing-DAG task with a tampered `conf["submission_id"]`
+    pointing at a different submission is refused by every
+    submission-scoped Execution API endpoint.
 
 ### Newsfragment
 
