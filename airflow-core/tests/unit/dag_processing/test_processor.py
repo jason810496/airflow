@@ -2161,7 +2161,7 @@ class TestDagFileParseRequestCoordinatorMigration:
     which routes ``DagFileParseRequest`` through the coordinator's
     compat layer when a coordinator says it can handle the file. These
     tests pin that contract: when a coordinator matches, the child must
-    receive a ``ClientCompatibleDagFileParseRequest`` (migrated, slim
+    receive a ``MigratedDagFileParseRequest`` (migrated, slim
     body without ``callback_requests``); when no coordinator matches,
     the Python parser receives the raw ``DagFileParseRequest`` model.
     """
@@ -2190,12 +2190,14 @@ class TestDagFileParseRequestCoordinatorMigration:
         return instance
 
     def test_routes_through_coordinator_when_can_handle_dag_file(self, proc):
-        from airflow.sdk.api.client import ClientCompatibleDagFileParseRequest
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
+        from airflow.sdk.execution_time.coordinator import (
+            BaseCoordinator,
+            CoordinatorManager,
+            MigratedDagFileParseRequest,
+        )
 
         coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_schema_version.return_value = "2026-04-17"
-        migrated = ClientCompatibleDagFileParseRequest(
+        migrated = MigratedDagFileParseRequest(
             {
                 "type": "DagFileParseRequest",
                 "file": "/bundles/mybundle/dags/example.jar",
@@ -2225,32 +2227,31 @@ class TestDagFileParseRequestCoordinatorMigration:
                 bundle_name="mybundle",
             )
 
-        # The coordinator was asked for the schema version of the real
-        # DagFileParseRequest (not a dict).
-        coordinator.target_schema_version.assert_called_once()
-        real_msg = coordinator.target_schema_version.call_args[0][0]
+        # The migration call sees the real DagFileParseRequest. The
+        # processor passes no version of its own -- the coordinator's
+        # migrate hook is expected to read the target version from its
+        # own ``target_schema_version`` and run the in-process
+        # SchemaVersionMigrator (no HTTP round-trip).
+        coordinator.migrate_dag_file_parse_request.assert_called_once()
+        real_msg = coordinator.migrate_dag_file_parse_request.call_args[0][0]
         assert isinstance(real_msg, DagFileParseRequest)
-        # The body forwarded to the foreign parser must be the migrated
-        # ClientCompatible dict (no ``callback_requests`` field), not the
-        # latest-schema Pydantic model.
-        coordinator.migrate_dag_file_parse_request.assert_called_once_with(
-            proc.client, real_msg, "2026-04-17"
-        )
+        # The processor must not pre-resolve the version: the coordinator
+        # owns that decision.
+        coordinator.target_schema_version.assert_not_called()
         _, args, kwargs = mock_send.mock_calls[0]
         sent_body = args[1]
         assert sent_body is migrated
-        assert isinstance(sent_body, ClientCompatibleDagFileParseRequest)
+        assert isinstance(sent_body, MigratedDagFileParseRequest)
         assert "callback_requests" not in sent_body
         assert kwargs == {"request_id": 0}
 
     def test_sends_raw_request_when_no_coordinator_matches(self, proc):
-        from airflow.sdk.api.client import ClientCompatibleDagFileParseRequest
-        from airflow.sdk.execution_time.coordinator import CoordinatorManager
+        from airflow.sdk.execution_time.coordinator import CoordinatorManager, MigratedDagFileParseRequest
 
         # ``for_dag_file`` returns None: the Python parser is on the
         # other end, so we hand it the latest-schema model verbatim
-        # (callbacks included). Migrating Python paths through the
-        # compat endpoint would add a network round-trip per parse.
+        # (callbacks included). Running the in-process interceptor for
+        # the Python parser would be a pointless dump/reload cycle.
         manager = CoordinatorManager({}, {})
 
         callbacks = [
@@ -2280,6 +2281,6 @@ class TestDagFileParseRequestCoordinatorMigration:
 
         sent_body = mock_send.mock_calls[0].args[1]
         assert isinstance(sent_body, DagFileParseRequest)
-        assert not isinstance(sent_body, ClientCompatibleDagFileParseRequest)
+        assert not isinstance(sent_body, MigratedDagFileParseRequest)
         # Python parser path keeps callback_requests intact.
         assert sent_body.callback_requests == callbacks

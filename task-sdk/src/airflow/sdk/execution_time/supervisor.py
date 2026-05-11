@@ -137,7 +137,6 @@ from airflow.sdk.execution_time.comms import (
     _RequestFrame,
     _ResponseFrame,
 )
-from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 from airflow.sdk.execution_time.request_handlers import (
     handle_get_connection,
     handle_get_variable,
@@ -160,7 +159,6 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from airflow.executors.workloads import BundleInfo
-    from airflow.sdk.api.client import ClientCompatibleStartupDetails
     from airflow.sdk.bases.secrets_backend import BaseSecretsBackend
     from airflow.sdk.definitions.connection import Connection
     from airflow.sdk.execution_time.selector_loop import SelectorCallback
@@ -1197,27 +1195,18 @@ class ActivitySubprocess(WatchedSubprocess):
             start_date=start_date,
             sentry_integration=sentry_integration,
         )
-        # If [sdk] queue_to_coordinator routes this task's queue to a foreign-language
-        # runtime (Java, etc.), convert the latest-schema StartupDetails into the
-        # wire shape that runtime expects via the compat echo endpoint. The coordinator
-        # subclass reads its bundle's pinned ``Airflow-SDK-Schema-Version`` and Cadwyn
-        # rewrites the response body to that version, so an older runtime gets a
-        # payload its parser understands. The Python task path keeps the raw model
-        # since the worker decodes it natively.
-        coordinator = get_coordinator_manager().for_queue(ti.queue)
-        body: StartupDetails | ClientCompatibleStartupDetails
-        if coordinator is not None:
-            body = coordinator.migrate_startup_details(
-                self.client, msg, coordinator.target_schema_version(msg)
-            )
-        else:
-            body = msg
+        # The supervisor -> task_runner channel is always Python; the head-shape
+        # StartupDetails decodes natively on the other side. When the queue is
+        # mapped to a foreign-language coordinator, the migration to that
+        # runtime's wire shape happens later in task_runner._resolve_runtime_entrypoint,
+        # right before the coordinator forwards the body over the IPC socket to
+        # the runtime subprocess.
 
         # Send the message to tell the process what it needs to execute
-        log.debug("Sending", msg=body)
+        log.debug("Sending", msg=msg)
 
         try:
-            self.send_msg(body, request_id=0)
+            self.send_msg(msg, request_id=0)
         except (BrokenPipeError, ConnectionResetError):
             # Debug is fine, the process will have shown _something_ in it's last_chance exception handler
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)

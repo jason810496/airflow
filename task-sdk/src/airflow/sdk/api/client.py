@@ -102,8 +102,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import ParamSpec
 
-    from airflow.dag_processing.processor import DagFileParseRequest
-    from airflow.sdk.execution_time.comms import RescheduleTask, StartupDetails
+    from airflow.sdk.execution_time.comms import RescheduleTask
 
     P = ParamSpec("P")
     T = TypeVar("T")
@@ -1009,70 +1008,6 @@ class HITLOperations:
         return HITLDetailResponse.model_validate_json(resp.read())
 
 
-class ClientCompatibleStartupDetails(dict[str, Any]):
-    """
-    A migrated ``StartupDetails`` payload, shaped for an older client schema.
-
-    Subclass of ``dict`` so the JSON body returned by Cadwyn can be wrapped
-    without copying. Carrying its own type (rather than annotating the
-    method as ``StartupDetails`` or ``dict[str, Any]``) makes call sites
-    self-document the fact that the value is **not** a latest-schema
-    Pydantic model and must be forwarded verbatim into the IPC frame.
-    """
-
-
-class ClientCompatibleDagFileParseRequest(dict[str, Any]):
-    """
-    A migrated ``DagFileParseRequest`` payload, shaped for an older client schema.
-
-    See :class:`ClientCompatibleStartupDetails` for why this is its own type.
-    """
-
-
-class CompatOperations:
-    """
-    Operations against the compat echo endpoints.
-
-    Used by the coordinator interception sites to migrate IPC payloads
-    (``StartupDetails``, ``DagFileParseRequest``) from the latest schema
-    down to the schema version a foreign-language SDK runtime was built
-    against. Cadwyn performs the response migration based on the
-    ``airflow-api-version`` header.
-    """
-
-    __slots__ = ("client",)
-
-    def __init__(self, client: Client):
-        self.client = client
-
-    def migrate_startup_details(
-        self, body: StartupDetails, target_version: str
-    ) -> ClientCompatibleStartupDetails:
-        """Echo a ``StartupDetails`` payload through the API to migrate it to ``target_version``."""
-        resp = self.client.post(
-            "compat/startup-details",
-            content=body.model_dump_json(),
-            headers={"airflow-api-version": target_version},
-        )
-        return ClientCompatibleStartupDetails(resp.json())
-
-    def migrate_dag_file_parse_request(
-        self, body: DagFileParseRequest, target_version: str
-    ) -> ClientCompatibleDagFileParseRequest:
-        """Echo a ``DagFileParseRequest`` payload through the API to migrate it to ``target_version``."""
-        # The compat route accepts ``DagFileParseRequestCompat`` (slim shape
-        # without ``callback_requests``); drop that field before sending so the
-        # OpenAPI surface stays free of the Python-only callback discriminated
-        # union. Foreign runtimes don't execute Python callbacks.
-        slim = body.model_dump(mode="json", exclude={"callback_requests"})
-        resp = self.client.post(
-            "compat/dag-file-parse-request",
-            json=slim,
-            headers={"airflow-api-version": target_version},
-        )
-        return ClientCompatibleDagFileParseRequest(resp.json())
-
-
 class BearerAuth(httpx.Auth):
     def __init__(self, token: str):
         self.token: str = token
@@ -1267,12 +1202,6 @@ class Client(httpx.Client):
     def dags(self) -> DagsOperations:
         """Operations related to DAGs."""
         return DagsOperations(self)
-
-    @lru_cache()  # type: ignore[misc]
-    @property
-    def compat(self) -> CompatOperations:
-        """Operations against the compat echo endpoints (IPC schema migration)."""
-        return CompatOperations(self)
 
 
 # This is only used for parsing. ServerResponseError is raised instead

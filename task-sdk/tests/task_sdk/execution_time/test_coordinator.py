@@ -76,9 +76,9 @@ class TestStartServer:
 
 class TestSendStartupDetails:
     def test_sends_frame_bytes_to_socket(self):
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
-        body = ClientCompatibleStartupDetails({"type": "StartupDetails", "ti": {}})
+        body = MigratedStartupDetails({"type": "StartupDetails", "ti": {}})
         mock_socket = MagicMock(spec=socket.socket)
 
         _send_startup_details(mock_socket, body)
@@ -93,9 +93,9 @@ class TestSendStartupDetails:
     def test_frame_contains_response_id_zero(self):
         import msgpack
 
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
-        body = ClientCompatibleStartupDetails({"type": "StartupDetails"})
+        body = MigratedStartupDetails({"type": "StartupDetails"})
         mock_socket = MagicMock(spec=socket.socket)
 
         _send_startup_details(mock_socket, body)
@@ -107,10 +107,10 @@ class TestSendStartupDetails:
     def test_frame_body_matches_input(self):
         import msgpack
 
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
         payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}, "dag_rel_path": "test.jar"}
-        body = ClientCompatibleStartupDetails(payload)
+        body = MigratedStartupDetails(payload)
         mock_socket = MagicMock(spec=socket.socket)
 
         _send_startup_details(mock_socket, body)
@@ -122,7 +122,7 @@ class TestSendStartupDetails:
     def test_real_socket_roundtrip(self):
         import msgpack
 
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
         server = socket.socket()
         server.bind(("127.0.0.1", 0))
@@ -135,7 +135,7 @@ class TestSendStartupDetails:
 
         try:
             payload = {"type": "StartupDetails", "value": 42}
-            body = ClientCompatibleStartupDetails(payload)
+            body = MigratedStartupDetails(payload)
 
             _send_startup_details(conn, body)
 
@@ -160,37 +160,78 @@ class TestBaseCoordinatorDefaults:
         with pytest.raises(NotImplementedError):
             BaseCoordinator().get_code_from_file("/path/to/dag.jar")
 
-    def test_target_schema_version_defaults_to_empty_string(self):
-        # The empty-string sentinel means "no migration needed, latest
-        # schema is fine". Concrete coordinators (JavaCoordinator, etc.)
-        # override this to read their bundle artifact's pinned schema
-        # version.  Any other default would silently migrate every
-        # foreign-runtime payload through the compat endpoint and add a
-        # network hop the user never asked for.
-        assert BaseCoordinator().target_schema_version(MagicMock()) == ""
+    def test_target_schema_version_is_abstract(self):
+        # The base class refuses to guess: concrete coordinators
+        # (JavaCoordinator, etc.) must read their bundle artifact's
+        # pinned schema version. Any default would silently migrate
+        # every foreign-runtime payload to the wrong version.
+        with pytest.raises(NotImplementedError):
+            BaseCoordinator().target_schema_version(MagicMock())
 
-    def test_migrate_startup_details_delegates_to_client_compat(self):
+    def test_migrate_startup_details_delegates_to_in_process_migrator(self):
         # The base implementation is the contract the supervisor relies
-        # on: it must forward the call straight to
-        # ``client.compat.migrate_startup_details`` so the foreign
-        # runtime receives the migrated body Cadwyn returns. Coordinator
-        # subclasses are free to override (e.g. to short-circuit when
-        # the runtime speaks the latest schema), but the default must
-        # not silently drop the migration.
-        mock_client = MagicMock()
+        # on: it must forward the call to the in-process
+        # ``SchemaVersionMigrator`` (no HTTP) so the foreign runtime
+        # receives a body shaped for its pinned schema version. The
+        # target version comes from ``self.target_schema_version``;
+        # the supervisor passes no version of its own.
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
+
+        class _Coordinator(BaseCoordinator):
+            def target_schema_version(self, schema):
+                return "2026-04-17"
+
         schema = MagicMock()
-        result = BaseCoordinator().migrate_startup_details(mock_client, schema, "2026-04-17")
+        with patch("airflow.sdk.execution_time.schema_migrator.get_schema_version_migrator") as mock_get:
+            mock_get.return_value.migrate.return_value = {"type": "StartupDetails", "ti": {}}
+            result = _Coordinator().migrate_startup_details(schema)
 
-        mock_client.compat.migrate_startup_details.assert_called_once_with(schema, "2026-04-17")
-        assert result is mock_client.compat.migrate_startup_details.return_value
+        mock_get.return_value.migrate.assert_called_once_with(schema, "2026-04-17")
+        # Result is wrapped in the dedicated dict-subclass so the call
+        # site cannot mistake it for a latest-schema Pydantic model.
+        assert isinstance(result, MigratedStartupDetails)
+        assert result == {"type": "StartupDetails", "ti": {}}
 
-    def test_migrate_dag_file_parse_request_delegates_to_client_compat(self):
-        mock_client = MagicMock()
-        schema = MagicMock()
-        result = BaseCoordinator().migrate_dag_file_parse_request(mock_client, schema, "2026-04-17")
+    def test_migrate_dag_file_parse_request_delegates_to_in_process_migrator(self):
+        # Same contract as migrate_startup_details, but the base method
+        # also converts the full ``DagFileParseRequest`` into the slim
+        # ``DagFileParseRequestCompat`` shape before migration (drops
+        # ``callback_requests``) so the foreign parser never sees the
+        # Python-only discriminated callback union.
+        from pathlib import Path
 
-        mock_client.compat.migrate_dag_file_parse_request.assert_called_once_with(schema, "2026-04-17")
-        assert result is mock_client.compat.migrate_dag_file_parse_request.return_value
+        from airflow.api_fastapi.execution_api.datamodels.compat import DagFileParseRequestCompat
+        from airflow.dag_processing.processor import DagFileParseRequest
+        from airflow.sdk.execution_time.coordinator import MigratedDagFileParseRequest
+
+        class _Coordinator(BaseCoordinator):
+            def target_schema_version(self, schema):
+                return "2026-04-17"
+
+        schema = DagFileParseRequest(
+            file="/b/dags/x.jar",
+            bundle_path=Path("/b"),
+            bundle_name="b",
+            callback_requests=[],
+        )
+
+        with patch("airflow.sdk.execution_time.schema_migrator.get_schema_version_migrator") as mock_get:
+            mock_get.return_value.migrate.return_value = {
+                "type": "DagFileParseRequest",
+                "file": "/b/dags/x.jar",
+                "bundle_path": "/b",
+                "bundle_name": "b",
+            }
+            result = _Coordinator().migrate_dag_file_parse_request(schema)
+
+        # The migrator saw the slim shape (no ``callback_requests``).
+        slim_arg, version_arg = mock_get.return_value.migrate.call_args[0]
+        assert isinstance(slim_arg, DagFileParseRequestCompat)
+        assert slim_arg.file == "/b/dags/x.jar"
+        assert slim_arg.bundle_name == "b"
+        assert version_arg == "2026-04-17"
+        assert isinstance(result, MigratedDagFileParseRequest)
+        assert "callback_requests" not in result
 
     def test_dag_parsing_cmd_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):
@@ -499,7 +540,7 @@ class TestRuntimeSubprocessEntrypoint:
         mock_lock_instance.__enter__ = MagicMock(return_value=mock_lock_instance)
         mock_lock_instance.__exit__ = MagicMock(return_value=False)
 
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
         startup_payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}}
         mock_ti = MagicMock()
@@ -535,7 +576,7 @@ class TestRuntimeSubprocessEntrypoint:
         mock_send_startup.assert_called_once()
         send_args, _ = mock_send_startup.call_args
         assert send_args[0] is runtime_comm
-        assert isinstance(send_args[1], ClientCompatibleStartupDetails)
+        assert isinstance(send_args[1], MigratedStartupDetails)
         assert dict(send_args[1]) == startup_payload
         mock_bridge.assert_called_once()
 

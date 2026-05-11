@@ -3822,18 +3822,15 @@ def test_ipc_trace_context_propagation(mocker):
     assert get_current_span().get_span_context().span_id != expected_span_id
 
 
-class TestStartupDetailsCoordinatorMigration:
+class TestSendsRawStartupDetails:
     """
-    Foreign-language SDK runtimes decode IPC frames against a schema
-    version frozen at SDK build time. The supervisor must hand them a
-    payload shaped for *that* version, not the latest one. The
-    interception point is ``ActivitySubprocess._on_child_started``,
-    which routes ``StartupDetails`` through the coordinator's compat
-    layer when the task's queue is mapped to a coordinator. These tests
-    pin that contract: when a coordinator handles the queue, the child
-    must receive a ``ClientCompatibleStartupDetails`` (migrated body);
-    when no coordinator is configured, the Python worker receives the
-    raw ``StartupDetails`` model unchanged.
+    The supervisor -> task_runner channel always carries the head
+    ``StartupDetails``: the child process is Python and decodes the
+    head schema natively. When the task is routed to a foreign-language
+    runtime, the migration to the runtime's wire shape happens later
+    in ``task_runner._resolve_runtime_entrypoint`` -- not here. These
+    tests pin that the supervisor performs *no* coordinator lookup or
+    migration on the way out.
     """
 
     @staticmethod
@@ -3861,89 +3858,38 @@ class TestStartupDetailsCoordinatorMigration:
             process=mocker.MagicMock(),
         )
 
-    def test_routes_through_coordinator_when_queue_is_mapped(self, mocker, make_ti_context):
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+    @pytest.mark.parametrize(
+        ("queue", "dag_rel_path"),
+        [
+            pytest.param("java-queue", "dags/example.jar", id="would-be-foreign-coordinator"),
+            pytest.param("default", "dags/example.py", id="python-worker"),
+        ],
+    )
+    def test_supervisor_sends_raw_head_shape_regardless_of_queue(
+        self, mocker, make_ti_context, queue, dag_rel_path
+    ):
         from airflow.sdk.execution_time.comms import StartupDetails
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
-        ti = self._make_ti(queue="java-queue")
+        ti = self._make_ti(queue=queue)
         bundle_info = BundleInfo(name="my-bundle", version="v1")
 
         client = MagicMock(spec=sdk_client.Client)
         client.task_instances.start.return_value = make_ti_context()
 
-        coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_schema_version.return_value = "2026-04-17"
-        migrated = ClientCompatibleStartupDetails(
-            {"type": "StartupDetails", "version": "2026-04-17", "ti": {"task_id": "t1"}}
-        )
-        coordinator.migrate_startup_details.return_value = migrated
-
-        manager = CoordinatorManager({"java": coordinator}, {"java-queue": "java"})
-        mocker.patch(
-            "airflow.sdk.execution_time.supervisor.get_coordinator_manager",
-            return_value=manager,
-        )
         mocker.patch.object(ActivitySubprocess, "kill")
         mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
 
         proc = self._make_proc(client, mocker)
         proc._on_child_started(
             ti=ti,
-            dag_rel_path="dags/example.jar",
-            bundle_info=bundle_info,
-            sentry_integration="",
-        )
-
-        # The coordinator was asked for the schema version of the *real*
-        # StartupDetails (not a dict) so it can read the runtime's pinned
-        # version.
-        coordinator.target_schema_version.assert_called_once()
-        ((real_msg,), _) = coordinator.target_schema_version.call_args
-        assert isinstance(real_msg, StartupDetails)
-        assert real_msg.ti.task_id == "t1"
-
-        # The migration call sees the same real StartupDetails plus the
-        # target version. The body forwarded to the child must be the
-        # migrated ClientCompatible dict, not the latest-schema model.
-        coordinator.migrate_startup_details.assert_called_once_with(client, real_msg, "2026-04-17")
-        send_args, send_kwargs = mock_send.call_args
-        sent_body = send_args[1]
-        assert sent_body is migrated
-        assert isinstance(sent_body, ClientCompatibleStartupDetails)
-        assert send_kwargs == {"request_id": 0}
-
-    def test_sends_raw_startup_details_when_no_coordinator_matches(self, mocker, make_ti_context):
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
-        from airflow.sdk.execution_time.comms import StartupDetails
-        from airflow.sdk.execution_time.coordinator import CoordinatorManager
-
-        ti = self._make_ti(queue="default")
-        bundle_info = BundleInfo(name="my-bundle", version="v1")
-
-        client = MagicMock(spec=sdk_client.Client)
-        client.task_instances.start.return_value = make_ti_context()
-
-        # No queue mapping: the Python worker is on the other end, so we
-        # send the latest-schema StartupDetails model verbatim. Migrating
-        # here would burn a network round-trip per Python task for no gain.
-        manager = CoordinatorManager({}, {})
-        mocker.patch(
-            "airflow.sdk.execution_time.supervisor.get_coordinator_manager",
-            return_value=manager,
-        )
-        mocker.patch.object(ActivitySubprocess, "kill")
-        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
-
-        proc = self._make_proc(client, mocker)
-        proc._on_child_started(
-            ti=ti,
-            dag_rel_path="dags/example.py",
+            dag_rel_path=dag_rel_path,
             bundle_info=bundle_info,
             sentry_integration="",
         )
 
         sent_body = mock_send.call_args[0][1]
         assert isinstance(sent_body, StartupDetails)
-        assert not isinstance(sent_body, ClientCompatibleStartupDetails)
+        assert not isinstance(sent_body, MigratedStartupDetails)
         assert sent_body.ti.task_id == "t1"
+        assert sent_body.ti.queue == queue

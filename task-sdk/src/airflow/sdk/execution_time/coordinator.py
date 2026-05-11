@@ -50,7 +50,7 @@ import selectors
 import socket
 import subprocess
 import time
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from airflow.sdk._shared.module_loading import import_string
 
@@ -59,14 +59,31 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from airflow.dag_processing.processor import DagFileParseRequest
-    from airflow.sdk.api.client import (
-        Client,
-        ClientCompatibleDagFileParseRequest,
-        ClientCompatibleStartupDetails,
-    )
     from airflow.sdk.api.datamodels._generated import BundleInfo
     from airflow.sdk.execution_time.comms import StartupDetails
     from airflow.sdk.execution_time.workloads.task import TaskInstanceDTO
+
+
+class MigratedStartupDetails(dict[str, Any]):
+    """
+    A ``StartupDetails`` body already migrated to a foreign runtime's pinned schema version.
+
+    Subclass of ``dict`` so the JSON body returned by the in-process
+    :class:`~airflow.sdk.execution_time.schema_migrator.SchemaVersionMigrator`
+    can be wrapped without copying. Carrying its own type (rather than
+    annotating as ``StartupDetails`` or ``dict[str, Any]``) makes call
+    sites self-document the fact that the value is **not** a
+    latest-schema Pydantic model and must be forwarded verbatim into
+    the IPC frame to the foreign runtime subprocess.
+    """
+
+
+class MigratedDagFileParseRequest(dict[str, Any]):
+    """
+    A ``DagFileParseRequest`` body already migrated to a foreign runtime's pinned schema version.
+
+    See :class:`MigratedStartupDetails` for why this carries its own type.
+    """
 
 
 def _start_server() -> socket.socket:
@@ -80,17 +97,17 @@ def _start_server() -> socket.socket:
 
 def _send_startup_details(
     runtime_comm: socket.socket,
-    body: ClientCompatibleStartupDetails,
+    body: MigratedStartupDetails,
 ) -> None:
     """
-    Send a ``ClientCompatibleStartupDetails`` frame to the runtime subprocess.
+    Send a ``MigratedStartupDetails`` frame to the runtime subprocess.
 
     In the task execution flow, ``task_runner.main()`` consumes the
     ``StartupDetails`` message from fd 0 (to determine routing) before
     delegating to the runtime coordinator. The caller (typically
     :meth:`BaseCoordinator._runtime_subprocess_entrypoint`) is responsible
     for converting the latest-schema ``StartupDetails`` into a
-    ``ClientCompatibleStartupDetails`` -- either via
+    ``MigratedStartupDetails`` -- either via
     :meth:`BaseCoordinator.to_client_compatible_startup_details` (latest
     schema, no migration) or via
     :meth:`BaseCoordinator.migrate_startup_details` (migrated to a foreign
@@ -222,7 +239,10 @@ class BaseCoordinator:
         what: TaskInstanceDTO
         dag_rel_path: str | os.PathLike[str]
         bundle_info: BundleInfo
-        startup_details: StartupDetails
+        # Already migrated to the foreign runtime's pinned schema version
+        # by ``task_runner._resolve_runtime_entrypoint``; the coordinator
+        # forwards this verbatim to the runtime over IPC.
+        startup_details: MigratedStartupDetails
         mode: str = "task-execution"
 
     def target_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
@@ -230,49 +250,57 @@ class BaseCoordinator:
         Return the ``Airflow-SDK-Schema-Version`` the foreign runtime expects for *schema*.
 
         Subclasses override this to read the version from their bundle
-        artifact (e.g. a JAR manifest entry). Returning ``None`` means the
-        runtime speaks the latest schema and no migration is needed --
-        :meth:`_runtime_subprocess_entrypoint` will skip the compat call
-        and fall through to the no-migration ``to_client_compatible_*``
-        conversion below.
+        artifact (e.g. a JAR manifest entry).
         """
-        return ""
+        raise NotImplementedError
 
-    def migrate_startup_details(
-        self,
-        client: Client,
-        schema: StartupDetails,
-        lang_sdk_target_version: str,
-    ) -> ClientCompatibleStartupDetails:
+    def migrate_startup_details(self, schema: StartupDetails) -> MigratedStartupDetails:
         """
-        Migrate a ``StartupDetails`` payload to *lang_sdk_target_version* via the compat API.
+        Migrate a ``StartupDetails`` payload to the runtime's pinned schema version, in-process.
 
-        Subclasses override this to call
-        :meth:`~airflow.sdk.api.client.CompatOperations.migrate_startup_details`
-        on *client* and return the migrated body shaped for the foreign
-        runtime's schema version. Returning ``None`` (the default) means
-        no migration was performed and the caller will fall back to
-        :meth:`to_client_compatible_startup_details`.
+        The target version is sourced from :meth:`target_schema_version`
+        on the coordinator itself -- the supervisor does not need to
+        pass it in. Calls
+        :class:`~airflow.sdk.execution_time.schema_migrator.SchemaVersionMigrator`
+        directly so no HTTP round-trip to the compat echo route is
+        needed. The migrator and the route both consume the single
+        execution-API ``VersionBundle``, so the result is identical to
+        what posting *schema* with the matching ``Airflow-API-Version``
+        header would return -- minus the network hop. Subclasses can
+        override (for example to short-circuit when the runtime is
+        already on head) but the default is the right answer for every
+        foreign-runtime coordinator we ship today.
         """
-        return client.compat.migrate_startup_details(schema, lang_sdk_target_version)
+        from airflow.sdk.execution_time.schema_migrator import get_schema_version_migrator
 
-    def migrate_dag_file_parse_request(
-        self,
-        client: Client,
-        schema: DagFileParseRequest,
-        lang_sdk_target_version: str,
-    ) -> ClientCompatibleDagFileParseRequest:
-        """
-        Migrate a ``DagFileParseRequest`` payload to *lang_sdk_target_version* via the compat API.
+        migrated = get_schema_version_migrator().migrate(schema, self.target_schema_version(schema))
+        return MigratedStartupDetails(migrated)
 
-        Subclasses override this to call
-        :meth:`~airflow.sdk.api.client.CompatOperations.migrate_dag_file_parse_request`
-        on *client* and return the migrated body shaped for the foreign
-        runtime's schema version. Returning ``None`` (the default) means
-        no migration was performed and the caller will fall back to
-        :meth:`to_client_compatible_dag_file_parse_request`.
+    def migrate_dag_file_parse_request(self, schema: DagFileParseRequest) -> MigratedDagFileParseRequest:
         """
-        return client.compat.migrate_dag_file_parse_request(schema, lang_sdk_target_version)
+        Migrate a ``DagFileParseRequest`` payload to the runtime's pinned schema version, in-process.
+
+        See :meth:`migrate_startup_details` for the rationale on calling
+        the migrator directly rather than the compat HTTP route, and on
+        sourcing the target version from :meth:`target_schema_version`.
+        The Python-only ``callback_requests`` field is excluded before
+        migration so the foreign parser never sees the discriminated
+        callback union (which foreign runtimes have no decoder for).
+        """
+        from airflow.api_fastapi.execution_api.datamodels.compat import DagFileParseRequestCompat
+        from airflow.sdk.execution_time.schema_migrator import get_schema_version_migrator
+
+        # Convert to the slim wire schema first (drops ``callback_requests``)
+        # so the migration runs against the same shape the OpenAPI compat
+        # route declares -- a foreign runtime built against that shape
+        # would otherwise see fields it did not codegen for.
+        slim = DagFileParseRequestCompat(
+            file=schema.file,
+            bundle_path=schema.bundle_path,
+            bundle_name=schema.bundle_name,
+        )
+        migrated = get_schema_version_migrator().migrate(slim, self.target_schema_version(schema))
+        return MigratedDagFileParseRequest(migrated)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:
         """
@@ -366,8 +394,16 @@ class BaseCoordinator:
         what: TaskInstanceDTO,
         dag_rel_path: str | os.PathLike[str],
         bundle_info: BundleInfo,
-        startup_details: StartupDetails,
+        startup_details: MigratedStartupDetails,
     ) -> None:
+        """
+        Spawn the runtime subprocess and forward *startup_details* over IPC.
+
+        *startup_details* is the already-migrated wire-shape body produced
+        by :meth:`migrate_startup_details` inside
+        ``task_runner._resolve_runtime_entrypoint`` -- this method does
+        not migrate again.
+        """
         self._runtime_subprocess_entrypoint(
             self.TaskExecutionInfo(
                 what=what,
@@ -612,6 +648,8 @@ def reset_coordinator_manager() -> None:
 __all__ = [
     "BaseCoordinator",
     "CoordinatorManager",
+    "MigratedDagFileParseRequest",
+    "MigratedStartupDetails",
     "get_coordinator_manager",
     "reset_coordinator_manager",
 ]

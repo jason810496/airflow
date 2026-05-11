@@ -1992,17 +1992,25 @@ def _resolve_runtime_entrypoint(startup_details: StartupDetails, log: Logger) ->
     """
     import functools
 
-    from airflow.sdk.execution_time.coordinator import get_coordinator_manager
+    from airflow.sdk.execution_time.coordinator import BaseCoordinator, get_coordinator_manager
 
     manager = get_coordinator_manager()
 
-    def _build(coordinator) -> Callable[[], None]:
+    def _build(coordinator: BaseCoordinator) -> Callable[[], None]:
+        # The supervisor -> task_runner channel always carries the head
+        # ``StartupDetails``. Migration to the foreign runtime's pinned
+        # schema version happens here, right before the entrypoint is
+        # built, so the body that crosses task_runner -> runtime is
+        # already wire-shape. Keeping the migration on this side (not in
+        # the supervisor) means the Python worker path never pays for a
+        # migration it doesn't need.
+        migrated = coordinator.migrate_startup_details(startup_details)
         return functools.partial(
             coordinator.run_task_execution,
             what=startup_details.ti,
             dag_rel_path=startup_details.dag_rel_path,
             bundle_info=startup_details.bundle_info,
-            startup_details=startup_details,
+            startup_details=migrated,
         )
 
     # Step 1: queue-to-coordinator mapping.

@@ -244,10 +244,10 @@ class TestStartupDetailsCompatProtocolMigration:
             assert field not in echoed, f"{field!r} must be stripped at version {api_version}"
 
 
-class TestClientCompatibleStartupDetailsAtEachVersion:
+class TestMigratedStartupDetailsAtEachVersion:
     """
     The task-sdk-side counterpart: when ``client.compat.migrate_startup_details``
-    requests a target version, the returned ``ClientCompatibleStartupDetails``
+    requests a target version, the returned ``MigratedStartupDetails``
     must carry exactly the fields that existed at that version. This pins
     the contract from the language-runtime's point of view: whatever
     Cadwyn produced on the server, the client wraps verbatim and hands
@@ -285,10 +285,10 @@ class TestClientCompatibleStartupDetailsAtEachVersion:
         # injection) orthogonal to the migration we want to pin. The
         # contract the language-runtime cares about is: server returns
         # a body shaped for ``target_version``, and that body is what
-        # ends up wrapped in ``ClientCompatibleStartupDetails`` on the
+        # ends up wrapped in ``MigratedStartupDetails`` on the
         # caller side. So we hit the endpoint directly and wrap the
         # response the same way the production client does.
-        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
         resp = compat_protocol_client.post(
             "/compat/startup-details",
@@ -297,9 +297,9 @@ class TestClientCompatibleStartupDetailsAtEachVersion:
         )
         assert resp.status_code == 200, resp.text
 
-        wrapped = ClientCompatibleStartupDetails(resp.json())
+        wrapped = MigratedStartupDetails(resp.json())
 
-        assert isinstance(wrapped, ClientCompatibleStartupDetails)
+        assert isinstance(wrapped, MigratedStartupDetails)
         assert isinstance(wrapped, dict)
         for field in expected_present:
             assert field in wrapped, f"{field!r} missing at {target_version}"

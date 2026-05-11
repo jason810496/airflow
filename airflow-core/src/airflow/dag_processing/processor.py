@@ -80,11 +80,12 @@ if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
     from airflow.api_fastapi.execution_api.app import InProcessExecutionAPI
-    from airflow.sdk.api.client import Client, ClientCompatibleDagFileParseRequest
+    from airflow.sdk.api.client import Client
     from airflow.sdk.bases.operator import BaseOperator
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.dag import DAG
     from airflow.sdk.definitions.mappedoperator import MappedOperator
+    from airflow.sdk.execution_time.coordinator import MigratedDagFileParseRequest
     from airflow.sdk.execution_time.supervisor import SelectorCallback
     from airflow.typing_compat import Self
 
@@ -621,15 +622,17 @@ class DagFileProcessorProcess(WatchedSubprocess):
         )
         # When a runtime coordinator handles this file, the child is a foreign
         # SDK runtime that cannot decode Python-only fields (notably
-        # ``callback_requests``). Convert through the coordinator's
-        # ``to_client_compatible_dag_file_parse_request`` so the child receives
-        # the slim wire shape; the Python parser path keeps the full message.
+        # ``callback_requests``). The coordinator's migrate hook runs the slim
+        # wire shape through the in-process schema-version migrator (same Cadwyn
+        # bundle the OpenAPI compat route exposes) so the child receives a
+        # payload its decoder understands -- no HTTP round-trip needed. The
+        # Python parser path keeps the full message including callbacks.
         coordinator = get_coordinator_manager().for_dag_file(bundle_name, path)
-        body: DagFileParseRequest | ClientCompatibleDagFileParseRequest
+        body: DagFileParseRequest | MigratedDagFileParseRequest
         if coordinator is not None:
-            body = coordinator.migrate_dag_file_parse_request(
-                self.client, msg, coordinator.target_schema_version(msg)
-            )
+            # The coordinator picks the target schema version itself from
+            # its bundle artifact -- the processor doesn't need to know.
+            body = coordinator.migrate_dag_file_parse_request(msg)
         else:
             body = msg
         self.send_msg(body, request_id=0)
