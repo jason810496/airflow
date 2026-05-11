@@ -3820,3 +3820,130 @@ def test_ipc_trace_context_propagation(mocker):
     assert captured == [expected_span_id]
     # Context is detached after dispatch — no leak.
     assert get_current_span().get_span_context().span_id != expected_span_id
+
+
+class TestStartupDetailsCoordinatorMigration:
+    """
+    Foreign-language SDK runtimes decode IPC frames against a schema
+    version frozen at SDK build time. The supervisor must hand them a
+    payload shaped for *that* version, not the latest one. The
+    interception point is ``ActivitySubprocess._on_child_started``,
+    which routes ``StartupDetails`` through the coordinator's compat
+    layer when the task's queue is mapped to a coordinator. These tests
+    pin that contract: when a coordinator handles the queue, the child
+    must receive a ``ClientCompatibleStartupDetails`` (migrated body);
+    when no coordinator is configured, the Python worker receives the
+    raw ``StartupDetails`` model unchanged.
+    """
+
+    @staticmethod
+    def _make_ti(queue: str):
+        return TaskInstanceDTO(
+            id=uuid7(),
+            task_id="t1",
+            dag_id="d1",
+            run_id="r1",
+            try_number=1,
+            dag_version_id=uuid7(),
+            pool_slots=1,
+            queue=queue,
+            priority_weight=1,
+        )
+
+    @staticmethod
+    def _make_proc(client, mocker):
+        return ActivitySubprocess(
+            process_log=mocker.MagicMock(),
+            id=TI_ID,
+            pid=12345,
+            stdin=mocker.MagicMock(),
+            client=client,
+            process=mocker.MagicMock(),
+        )
+
+    def test_routes_through_coordinator_when_queue_is_mapped(self, mocker, make_ti_context):
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.comms import StartupDetails
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
+
+        ti = self._make_ti(queue="java-queue")
+        bundle_info = BundleInfo(name="my-bundle", version="v1")
+
+        client = MagicMock(spec=sdk_client.Client)
+        client.task_instances.start.return_value = make_ti_context()
+
+        coordinator = MagicMock(spec=BaseCoordinator)
+        coordinator.target_schema_version.return_value = "2026-04-17"
+        migrated = ClientCompatibleStartupDetails(
+            {"type": "StartupDetails", "version": "2026-04-17", "ti": {"task_id": "t1"}}
+        )
+        coordinator.migrate_startup_details.return_value = migrated
+
+        manager = CoordinatorManager({"java": coordinator}, {"java-queue": "java"})
+        mocker.patch(
+            "airflow.sdk.execution_time.supervisor.get_coordinator_manager",
+            return_value=manager,
+        )
+        mocker.patch.object(ActivitySubprocess, "kill")
+        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+
+        proc = self._make_proc(client, mocker)
+        proc._on_child_started(
+            ti=ti,
+            dag_rel_path="dags/example.jar",
+            bundle_info=bundle_info,
+            sentry_integration="",
+        )
+
+        # The coordinator was asked for the schema version of the *real*
+        # StartupDetails (not a dict) so it can read the runtime's pinned
+        # version.
+        coordinator.target_schema_version.assert_called_once()
+        ((real_msg,), _) = coordinator.target_schema_version.call_args
+        assert isinstance(real_msg, StartupDetails)
+        assert real_msg.ti.task_id == "t1"
+
+        # The migration call sees the same real StartupDetails plus the
+        # target version. The body forwarded to the child must be the
+        # migrated ClientCompatible dict, not the latest-schema model.
+        coordinator.migrate_startup_details.assert_called_once_with(client, real_msg, "2026-04-17")
+        send_args, send_kwargs = mock_send.call_args
+        sent_body = send_args[1]
+        assert sent_body is migrated
+        assert isinstance(sent_body, ClientCompatibleStartupDetails)
+        assert send_kwargs == {"request_id": 0}
+
+    def test_sends_raw_startup_details_when_no_coordinator_matches(self, mocker, make_ti_context):
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+        from airflow.sdk.execution_time.comms import StartupDetails
+        from airflow.sdk.execution_time.coordinator import CoordinatorManager
+
+        ti = self._make_ti(queue="default")
+        bundle_info = BundleInfo(name="my-bundle", version="v1")
+
+        client = MagicMock(spec=sdk_client.Client)
+        client.task_instances.start.return_value = make_ti_context()
+
+        # No queue mapping: the Python worker is on the other end, so we
+        # send the latest-schema StartupDetails model verbatim. Migrating
+        # here would burn a network round-trip per Python task for no gain.
+        manager = CoordinatorManager({}, {})
+        mocker.patch(
+            "airflow.sdk.execution_time.supervisor.get_coordinator_manager",
+            return_value=manager,
+        )
+        mocker.patch.object(ActivitySubprocess, "kill")
+        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+
+        proc = self._make_proc(client, mocker)
+        proc._on_child_started(
+            ti=ti,
+            dag_rel_path="dags/example.py",
+            bundle_info=bundle_info,
+            sentry_integration="",
+        )
+
+        sent_body = mock_send.call_args[0][1]
+        assert isinstance(sent_body, StartupDetails)
+        assert not isinstance(sent_body, ClientCompatibleStartupDetails)
+        assert sent_body.ti.task_id == "t1"

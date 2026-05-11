@@ -1920,3 +1920,169 @@ class TestAssetStateOperations:
         client = make_client(transport=httpx.MockTransport(handle_request))
         result = client.asset_state.clear(uri="s3://bucket/key")
         assert result == OKResponse(ok=True)
+
+
+class TestCompatOperations:
+    """
+    The compat client surface is what the supervisor uses to hand a foreign
+    language runtime a payload shaped for the schema it was built against.
+    These tests pin the wire contract: endpoint paths, the
+    ``airflow-api-version`` header, the request bodies (in particular the
+    Python-only ``callback_requests`` is stripped), and the dedicated
+    ``ClientCompatible*`` return types so call sites can't accidentally treat
+    a migrated body as a latest-schema Pydantic model.
+    """
+
+    @staticmethod
+    def _make_startup_details():
+        from airflow.sdk import timezone
+        from airflow.sdk.api.datamodels._generated import (
+            AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
+            AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
+            BundleInfo,
+            DagRunState,
+            DagRunType,
+        )
+        from airflow.sdk.execution_time.comms import StartupDetails
+        from airflow.sdk.execution_time.workloads.task import TaskInstanceDTO
+
+        ti_id = uuid6.uuid7()
+        ts = timezone.parse("2024-12-01T01:00:00Z")
+        return StartupDetails(
+            ti=TaskInstanceDTO(
+                id=ti_id,
+                task_id="t1",
+                dag_id="d1",
+                run_id="r1",
+                try_number=1,
+                dag_version_id=uuid6.uuid7(),
+                pool_slots=1,
+                queue="default",
+                priority_weight=1,
+            ),
+            dag_rel_path="dags/example.jar",
+            bundle_info=BundleInfo(name="my-bundle", version="v1"),
+            start_date=ts,
+            ti_context=TIRunContext(
+                dag_run=DagRun(
+                    dag_id="d1",
+                    run_id="r1",
+                    logical_date=ts,
+                    data_interval_start=ts,
+                    data_interval_end=ts,
+                    run_after=ts,
+                    start_date=ts,
+                    clear_number=0,
+                    run_type=DagRunType.MANUAL,
+                    state=DagRunState.RUNNING,
+                    consumed_asset_events=[],
+                ),
+                max_tries=0,
+            ),
+            sentry_integration="",
+        )
+
+    @staticmethod
+    def _make_dag_file_parse_request():
+        from pathlib import Path
+
+        from airflow.callbacks.callback_requests import DagCallbackRequest
+        from airflow.dag_processing.processor import DagFileParseRequest
+
+        return DagFileParseRequest(
+            file="/bundles/my-bundle/dags/example.jar",
+            bundle_path=Path("/bundles/my-bundle"),
+            bundle_name="my-bundle",
+            callback_requests=[
+                DagCallbackRequest(
+                    filepath="dags/example.jar",
+                    dag_id="d1",
+                    run_id="r1",
+                    bundle_name="my-bundle",
+                    bundle_version=None,
+                    is_failure_callback=False,
+                ),
+            ],
+        )
+
+    def test_migrate_startup_details_posts_to_compat_route(self):
+        from airflow.sdk.api.client import ClientCompatibleStartupDetails
+
+        body = self._make_startup_details()
+        captured: dict = {}
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["path"] = request.url.path
+            captured["version_header"] = request.headers.get("airflow-api-version")
+            captured["body"] = json.loads(request.read())
+            # Echo the body back exactly as the real compat endpoint would.
+            return httpx.Response(status_code=200, json=captured["body"])
+
+        client = make_client(transport=httpx.MockTransport(handle_request))
+        # Use a target_version that is *not* the client default API_VERSION so
+        # the test actually exercises the override path. If the per-call header
+        # were silently dropped here, a foreign runtime that was built against
+        # an older schema would receive a latest-shape body it cannot decode.
+        result = client.compat.migrate_startup_details(body, "2026-04-17")
+
+        assert captured["method"] == "POST"
+        assert captured["path"] == "/compat/startup-details"
+        assert captured["version_header"] == "2026-04-17"
+        # The wire payload is the full ``StartupDetails`` body (no fields stripped).
+        assert captured["body"]["type"] == "StartupDetails"
+        assert captured["body"]["dag_rel_path"] == "dags/example.jar"
+        assert captured["body"]["bundle_info"] == {"name": "my-bundle", "version": "v1"}
+        assert captured["body"]["ti"]["task_id"] == "t1"
+        # Return type is the dedicated dict-subclass so callers cannot mistake
+        # it for a latest-schema Pydantic model.
+        assert isinstance(result, ClientCompatibleStartupDetails)
+        assert result["type"] == "StartupDetails"
+
+    def test_migrate_dag_file_parse_request_strips_callback_requests(self):
+        from airflow.sdk.api.client import ClientCompatibleDagFileParseRequest
+
+        body = self._make_dag_file_parse_request()
+        captured: dict = {}
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            captured["method"] = request.method
+            captured["path"] = request.url.path
+            captured["version_header"] = request.headers.get("airflow-api-version")
+            captured["body"] = json.loads(request.read())
+            # Echo the body back exactly as the real compat endpoint would.
+            return httpx.Response(status_code=200, json=captured["body"])
+
+        client = make_client(transport=httpx.MockTransport(handle_request))
+        result = client.compat.migrate_dag_file_parse_request(body, "2026-06-16")
+
+        assert captured["method"] == "POST"
+        assert captured["path"] == "/compat/dag-file-parse-request"
+        assert captured["version_header"] == "2026-06-16"
+        # ``callback_requests`` is a Python-only discriminated union and must
+        # never leave the supervisor for a foreign runtime.
+        assert "callback_requests" not in captured["body"]
+        assert captured["body"]["file"] == "/bundles/my-bundle/dags/example.jar"
+        assert captured["body"]["bundle_name"] == "my-bundle"
+        # Return type is the dedicated dict-subclass.
+        assert isinstance(result, ClientCompatibleDagFileParseRequest)
+        assert result["bundle_name"] == "my-bundle"
+
+    def test_migrate_startup_details_forwards_distinct_target_versions(self):
+        """Each call's ``target_version`` must drive its own request header
+        independently -- the supervisor calls this once per child process,
+        and a stale header would silently migrate a payload to the wrong
+        schema for a co-tenant runtime on a different SDK version."""
+
+        body = self._make_startup_details()
+        captured_versions: list[str | None] = []
+
+        def handle_request(request: httpx.Request) -> httpx.Response:
+            captured_versions.append(request.headers.get("airflow-api-version"))
+            return httpx.Response(status_code=200, json=json.loads(request.read()))
+
+        client = make_client(transport=httpx.MockTransport(handle_request))
+        client.compat.migrate_startup_details(body, "2026-06-16")
+        client.compat.migrate_startup_details(body, "2026-04-17")
+
+        assert captured_versions == ["2026-06-16", "2026-04-17"]

@@ -160,6 +160,38 @@ class TestBaseCoordinatorDefaults:
         with pytest.raises(NotImplementedError):
             BaseCoordinator().get_code_from_file("/path/to/dag.jar")
 
+    def test_target_schema_version_defaults_to_empty_string(self):
+        # The empty-string sentinel means "no migration needed, latest
+        # schema is fine". Concrete coordinators (JavaCoordinator, etc.)
+        # override this to read their bundle artifact's pinned schema
+        # version.  Any other default would silently migrate every
+        # foreign-runtime payload through the compat endpoint and add a
+        # network hop the user never asked for.
+        assert BaseCoordinator().target_schema_version(MagicMock()) == ""
+
+    def test_migrate_startup_details_delegates_to_client_compat(self):
+        # The base implementation is the contract the supervisor relies
+        # on: it must forward the call straight to
+        # ``client.compat.migrate_startup_details`` so the foreign
+        # runtime receives the migrated body Cadwyn returns. Coordinator
+        # subclasses are free to override (e.g. to short-circuit when
+        # the runtime speaks the latest schema), but the default must
+        # not silently drop the migration.
+        mock_client = MagicMock()
+        schema = MagicMock()
+        result = BaseCoordinator().migrate_startup_details(mock_client, schema, "2026-04-17")
+
+        mock_client.compat.migrate_startup_details.assert_called_once_with(schema, "2026-04-17")
+        assert result is mock_client.compat.migrate_startup_details.return_value
+
+    def test_migrate_dag_file_parse_request_delegates_to_client_compat(self):
+        mock_client = MagicMock()
+        schema = MagicMock()
+        result = BaseCoordinator().migrate_dag_file_parse_request(mock_client, schema, "2026-04-17")
+
+        mock_client.compat.migrate_dag_file_parse_request.assert_called_once_with(schema, "2026-04-17")
+        assert result is mock_client.compat.migrate_dag_file_parse_request.return_value
+
     def test_dag_parsing_cmd_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):
             BaseCoordinator().dag_parsing_cmd(
