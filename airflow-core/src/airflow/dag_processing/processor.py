@@ -328,7 +328,7 @@ def _execute_callbacks(
 
 def _execute_dag_callbacks(dagbag: DagBag, request: DagCallbackRequest, log: FilteringBoundLogger) -> None:
     from airflow.sdk.api.datamodels._generated import (
-        AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
+        TIRunContext,
     )
 
     dag, _ = _get_dag_with_task(dagbag, request.dag_id)
@@ -652,9 +652,9 @@ class DagFileProcessorProcess(WatchedSubprocess):
 
     def _handle_request(self, msg: ToManager, log: FilteringBoundLogger, req_id: int) -> None:
         from airflow.sdk.api.datamodels._generated import (
-            AirflowSdkApiDatamodelsGeneratedConnectionResponse as ConnectionResponse,
-            AirflowSdkApiDatamodelsGeneratedVariableResponse as VariableResponse,
+            ConnectionResponse,
             TaskStatesResponse,
+            VariableResponse,
             XComSequenceIndexResponse,
         )
 

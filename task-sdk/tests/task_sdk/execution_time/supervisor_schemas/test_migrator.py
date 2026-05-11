@@ -15,12 +15,11 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Unit tests for :mod:`airflow.sdk.execution_time.schema_migrator`.
+Unit tests for :mod:`airflow.sdk.execution_time.supervisor_schemas.migrator`.
 
-These pin the in-process IPC schema migration path -- what the
-supervisor and parser-supervisor use to hand foreign-language runtimes
-a body shaped for the schema version they were built against, without
-the HTTP round-trip the compat echo routes would otherwise impose.
+These pin the in-process supervisor schema migration path -- what
+the supervisor and parser-supervisor use to hand foreign-language
+runtimes a body shaped for the schema version they were built against.
 """
 
 from __future__ import annotations
@@ -32,7 +31,10 @@ import pytest
 from cadwyn import HeadVersion, Version, VersionBundle, VersionChange, schema
 from pydantic import BaseModel
 
-from airflow.sdk.execution_time.schema_migrator import SchemaVersionMigrator, get_schema_version_migrator
+from airflow.sdk.execution_time.supervisor_schemas import (
+    SchemaVersionMigrator,
+    get_schema_version_migrator,
+)
 
 
 class _SyntheticBody(BaseModel):
@@ -73,8 +75,8 @@ _BUNDLE = VersionBundle(
 class TestSchemaVersionMigratorMigratesAgainstSyntheticBundle:
     """
     Drive the migrator against a synthetic bundle so we can pin
-    *field-level* migration behaviour. The real execution-API bundle
-    has no schema-level migrations on the IPC bodies yet, so it would
+    *field-level* migration behaviour. The real supervisor bundle has
+    no schema-level migrations on the IPC bodies yet, so it would
     no-op every version -- which proves nothing about the migration
     chain. The synthetic bundle's mechanism is identical to the real
     one, so what we prove about it applies to the real bundle the
@@ -127,7 +129,7 @@ class TestSchemaVersionMigratorMigratesAgainstSyntheticBundle:
         # instruction in the bundle is still a legal argument: Cadwyn
         # walks the migration chain and finds nothing to apply, so the
         # body is returned verbatim. This matches the current state of
-        # the real IPC bodies (StartupDetails, DagFileParseRequestCompat),
+        # the real IPC bodies (StartupDetails, DagFileParseRequest),
         # which have no field-level migrations registered yet.
         class _Unregistered(BaseModel):
             value: int
@@ -143,15 +145,11 @@ class TestGetSchemaVersionMigrator:
         # introspection runs at most once per process.
         assert get_schema_version_migrator() is get_schema_version_migrator()
 
-    def test_is_bound_to_execution_api_bundle(self):
-        # Sanity check: the singleton uses the real execution-API
-        # bundle, not a synthetic one. A regression here would silently
-        # detach the supervisor from the source of truth.
-        # We don't expose the bundle attribute publicly; the contract
-        # is that ``migrate`` on a model registered in *that* bundle
-        # works. Use one of the registered taskinstance models to
-        # confirm the binding without leaning on private state.
-        from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRetryStatePayload
-        from airflow.api_fastapi.execution_api.versions import bundle
+    def test_is_bound_to_supervisor_bundle(self):
+        # Sanity check: the singleton uses the real supervisor IPC
+        # bundle, not a synthetic one and not the execution-API HTTP
+        # bundle. A regression here would silently detach the
+        # supervisor from its versioning source of truth.
+        from airflow.sdk.execution_time.supervisor_schemas.versions import bundle
 
-        assert TIRetryStatePayload in bundle.versioned_schemas.values()
+        assert get_schema_version_migrator()._bundle is bundle

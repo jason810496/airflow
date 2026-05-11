@@ -57,10 +57,10 @@ from airflow.sdk import BaseOperator, timezone
 from airflow.sdk.api import client as sdk_client
 from airflow.sdk.api.client import ServerResponseError
 from airflow.sdk.api.datamodels._generated import (
-    AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
     AssetEventResponse,
     AssetProfile,
     AssetResponse,
+    DagRun,
     DagRunState,
     DagRunType,
     PreviousTIResponse,

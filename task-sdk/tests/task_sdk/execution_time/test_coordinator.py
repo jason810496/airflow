@@ -182,7 +182,7 @@ class TestBaseCoordinatorDefaults:
                 return "2026-04-17"
 
         schema = MagicMock()
-        with patch("airflow.sdk.execution_time.schema_migrator.get_schema_version_migrator") as mock_get:
+        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.migrate.return_value = {"type": "StartupDetails", "ti": {}}
             result = _Coordinator().migrate_startup_details(schema)
 
@@ -193,14 +193,14 @@ class TestBaseCoordinatorDefaults:
         assert result == {"type": "StartupDetails", "ti": {}}
 
     def test_migrate_dag_file_parse_request_delegates_to_in_process_migrator(self):
-        # Same contract as migrate_startup_details, but the base method
-        # also converts the full ``DagFileParseRequest`` into the slim
-        # ``DagFileParseRequestCompat`` shape before migration (drops
-        # ``callback_requests``) so the foreign parser never sees the
-        # Python-only discriminated callback union.
+        # Same contract as migrate_startup_details: the base method
+        # forwards the canonical ``DagFileParseRequest`` to the
+        # in-process migrator. The supervisor IPC bundle versions the
+        # canonical shape directly -- no slim mirror, and the
+        # ``callback_requests`` field is left to the migrator's
+        # passthrough behaviour.
         from pathlib import Path
 
-        from airflow.api_fastapi.execution_api.datamodels.compat import DagFileParseRequestCompat
         from airflow.dag_processing.processor import DagFileParseRequest
         from airflow.sdk.execution_time.coordinator import MigratedDagFileParseRequest
 
@@ -215,7 +215,7 @@ class TestBaseCoordinatorDefaults:
             callback_requests=[],
         )
 
-        with patch("airflow.sdk.execution_time.schema_migrator.get_schema_version_migrator") as mock_get:
+        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.migrate.return_value = {
                 "type": "DagFileParseRequest",
                 "file": "/b/dags/x.jar",
@@ -224,14 +224,9 @@ class TestBaseCoordinatorDefaults:
             }
             result = _Coordinator().migrate_dag_file_parse_request(schema)
 
-        # The migrator saw the slim shape (no ``callback_requests``).
-        slim_arg, version_arg = mock_get.return_value.migrate.call_args[0]
-        assert isinstance(slim_arg, DagFileParseRequestCompat)
-        assert slim_arg.file == "/b/dags/x.jar"
-        assert slim_arg.bundle_name == "b"
-        assert version_arg == "2026-04-17"
+        # The migrator received the canonical ``DagFileParseRequest`` as-is.
+        mock_get.return_value.migrate.assert_called_once_with(schema, "2026-04-17")
         assert isinstance(result, MigratedDagFileParseRequest)
-        assert "callback_requests" not in result
 
     def test_dag_parsing_cmd_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):

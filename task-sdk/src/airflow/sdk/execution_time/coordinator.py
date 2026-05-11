@@ -69,7 +69,7 @@ class MigratedStartupDetails(dict[str, Any]):
     A ``StartupDetails`` body already migrated to a foreign runtime's pinned schema version.
 
     Subclass of ``dict`` so the JSON body returned by the in-process
-    :class:`~airflow.sdk.execution_time.schema_migrator.SchemaVersionMigrator`
+    :class:`~airflow.sdk.execution_time.supervisor_schemas.SchemaVersionMigrator`
     can be wrapped without copying. Carrying its own type (rather than
     annotating as ``StartupDetails`` or ``dict[str, Any]``) makes call
     sites self-document the fact that the value is **not** a
@@ -261,17 +261,13 @@ class BaseCoordinator:
         The target version is sourced from :meth:`target_schema_version`
         on the coordinator itself -- the supervisor does not need to
         pass it in. Calls
-        :class:`~airflow.sdk.execution_time.schema_migrator.SchemaVersionMigrator`
-        directly so no HTTP round-trip to the compat echo route is
-        needed. The migrator and the route both consume the single
-        execution-API ``VersionBundle``, so the result is identical to
-        what posting *schema* with the matching ``Airflow-API-Version``
-        header would return -- minus the network hop. Subclasses can
-        override (for example to short-circuit when the runtime is
+        :class:`~airflow.sdk.execution_time.supervisor_schemas.SchemaVersionMigrator`
+        directly against the supervisor IPC ``VersionBundle``. Subclasses
+        can override (for example to short-circuit when the runtime is
         already on head) but the default is the right answer for every
         foreign-runtime coordinator we ship today.
         """
-        from airflow.sdk.execution_time.schema_migrator import get_schema_version_migrator
+        from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
         migrated = get_schema_version_migrator().migrate(schema, self.target_schema_version(schema))
         return MigratedStartupDetails(migrated)
@@ -281,25 +277,17 @@ class BaseCoordinator:
         Migrate a ``DagFileParseRequest`` payload to the runtime's pinned schema version, in-process.
 
         See :meth:`migrate_startup_details` for the rationale on calling
-        the migrator directly rather than the compat HTTP route, and on
-        sourcing the target version from :meth:`target_schema_version`.
-        The Python-only ``callback_requests`` field is excluded before
-        migration so the foreign parser never sees the discriminated
-        callback union (which foreign runtimes have no decoder for).
+        the migrator directly and on sourcing the target version from
+        :meth:`target_schema_version`. The canonical
+        ``DagFileParseRequest`` (including its Python-only
+        ``callback_requests`` field) is passed straight to the
+        migrator; the foreign runtime ignores any field it does not
+        decode for, and Cadwyn only rewrites fields the supervisor
+        bundle's version files explicitly mention.
         """
-        from airflow.api_fastapi.execution_api.datamodels.compat import DagFileParseRequestCompat
-        from airflow.sdk.execution_time.schema_migrator import get_schema_version_migrator
+        from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-        # Convert to the slim wire schema first (drops ``callback_requests``)
-        # so the migration runs against the same shape the OpenAPI compat
-        # route declares -- a foreign runtime built against that shape
-        # would otherwise see fields it did not codegen for.
-        slim = DagFileParseRequestCompat(
-            file=schema.file,
-            bundle_path=schema.bundle_path,
-            bundle_name=schema.bundle_name,
-        )
-        migrated = get_schema_version_migrator().migrate(slim, self.target_schema_version(schema))
+        migrated = get_schema_version_migrator().migrate(schema, self.target_schema_version(schema))
         return MigratedDagFileParseRequest(migrated)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:

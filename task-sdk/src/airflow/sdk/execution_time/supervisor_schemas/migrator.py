@@ -15,23 +15,22 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-In-process schema-version migration for IPC payloads.
+In-process schema-version migration for supervisor IPC payloads.
 
 The supervisor and the parser-supervisor need to hand foreign-language
 SDK runtimes (Java, etc.) payloads shaped for the schema version those
-runtimes were built against. Cadwyn already knows how to apply the
-chain of ``VersionChange`` entries registered against the execution-API
-:class:`~cadwyn.VersionBundle`; this module exposes that capability as
-an in-process call so neither the supervisor nor the parser has to
-round-trip the body through the compat HTTP echo routes just to perform
-a pure schema transformation.
+runtimes were built against. Cadwyn already knows how to apply a chain
+of ``VersionChange`` entries against a :class:`~cadwyn.VersionBundle`;
+this module exposes that capability as a single in-process call so
+neither the supervisor nor the parser has to round-trip the body
+through a network endpoint just to perform a pure schema
+transformation.
 
-The same :data:`~airflow.api_fastapi.execution_api.versions.bundle` is
-the single source of truth for both the in-process migrator here and
-the HTTP echo routes in
-:mod:`airflow.api_fastapi.execution_api.routes.compat`; the routes
-exist so the OpenAPI spec carries the head-shape schemas a foreign
-runtime needs for its own codegen.
+The bundle used here is :data:`.versions.bundle` -- the supervisor-IPC
+``VersionBundle``, independent of the execution-API HTTP bundle in
+``airflow.api_fastapi.execution_api.versions``. See the package
+docstring on :mod:`airflow.sdk.execution_time.supervisor_schemas` for
+the boundary between the two.
 """
 
 from __future__ import annotations
@@ -57,16 +56,16 @@ class SchemaVersionMigrator:
     before migration because the migrated value is validated against a
     *different* generated class per version).
 
-    A model does not need an explicit ``schema(...)`` instruction in the
-    bundle for :meth:`migrate` to accept it -- Cadwyn looks the model
-    up lazily and returns the body verbatim if no field-level
+    A model does not need an explicit ``schema(...)`` instruction in
+    the bundle for :meth:`migrate` to accept it -- Cadwyn looks the
+    model up lazily and returns the body verbatim if no field-level
     instructions apply. That matches the current state of the IPC
-    bodies (``StartupDetails`` and ``DagFileParseRequestCompat``):
-    today the bundle only tracks endpoint existence at older versions,
-    not field changes on those schemas, so calling :meth:`migrate` at
-    every supported target version is a no-op until the first breaking
-    field change ships. Once that happens, this migrator picks the
-    migration up automatically without any change at the call site.
+    bodies (``StartupDetails``, ``DagFileParseRequest``): the
+    supervisor bundle has no field-level migrations on those schemas
+    today, so calling :meth:`migrate` at every supported target version
+    is a no-op until the first breaking field change ships. Once that
+    happens, this migrator picks the migration up automatically without
+    any change at the call site.
     """
 
     __slots__ = ("_bundle",)
@@ -111,20 +110,14 @@ class SchemaVersionMigrator:
 @functools.cache
 def get_schema_version_migrator() -> SchemaVersionMigrator:
     """
-    Return the process-wide :class:`SchemaVersionMigrator` bound to the execution-API bundle.
+    Return the process-wide :class:`SchemaVersionMigrator` bound to the supervisor bundle.
 
     Cached so the bundle is bound once per process. Cadwyn itself also
     caches the generated versioned model classes behind
     :func:`cadwyn.generate_versioned_models`, so per-call cost after
     the first migration is just one ``model_dump`` + dict copy.
-
-    The bundle import is deferred to call time so importing this
-    module does not pull airflow-core into the task-sdk import graph
-    eagerly -- the supervisor process always has airflow-core
-    available at runtime, but tests and out-of-band tools that exercise
-    only the SDK surface should not pay the import cost.
     """
-    from airflow.api_fastapi.execution_api.versions import bundle
+    from airflow.sdk.execution_time.supervisor_schemas.versions import bundle
 
     return SchemaVersionMigrator(bundle)
 

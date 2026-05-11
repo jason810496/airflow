@@ -30,8 +30,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from airflow.sdk.api.datamodels._generated import (
-    AirflowSdkApiDatamodelsGeneratedConnectionResponse as ConnectionResponse,
-    AirflowSdkApiDatamodelsGeneratedVariableResponse as VariableResponse,
+    ConnectionResponse,
+    VariableResponse,
 )
 from airflow.sdk.execution_time.comms import (
     ConnectionResult,

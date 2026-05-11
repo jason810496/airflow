@@ -30,7 +30,7 @@ from airflow.providers.standard.operators.python import PythonOperator
 from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk._shared.timezones import timezone
 from airflow.sdk.api.datamodels._generated import (
-    AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
+    DagRun,
     DagRunState,
     DagRunType,
     TaskInstanceState,

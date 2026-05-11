@@ -22,40 +22,12 @@ from __future__ import annotations
 
 from datetime import timedelta
 from enum import Enum
-from pathlib import Path
 from typing import Annotated, Any, Final, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, RootModel
 
 API_VERSION: Final[str] = "2026-06-16"
-
-
-class AirflowSdkApiDatamodelsGeneratedConnectionResponse(BaseModel):
-    """
-    Connection schema for responses with fields that are needed for Runtime.
-    """
-
-    conn_id: Annotated[str, Field(title="Conn Id")]
-    conn_type: Annotated[str, Field(title="Conn Type")]
-    host: Annotated[str | None, Field(title="Host")] = None
-    schema_: Annotated[str | None, Field(alias="schema", title="Schema")] = None
-    login: Annotated[str | None, Field(title="Login")] = None
-    password: Annotated[str | None, Field(title="Password")] = None
-    port: Annotated[int | None, Field(title="Port")] = None
-    extra: Annotated[str | None, Field(title="Extra")] = None
-
-
-class AirflowSdkApiDatamodelsGeneratedVariableResponse(BaseModel):
-    """
-    Variable schema for responses with fields that are needed for Runtime.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    key: Annotated[str, Field(title="Key")]
-    value: Annotated[str | None, Field(title="Value")] = None
 
 
 class AssetAliasReferenceAssetEventDagRun(BaseModel):
@@ -113,15 +85,6 @@ class AssetStateResponse(BaseModel):
     value: Annotated[str, Field(title="Value")]
 
 
-class BundleInfo(BaseModel):
-    """
-    Schema for telling task which bundle to run with.
-    """
-
-    name: Annotated[str, Field(title="Name")]
-    version: Annotated[str | None, Field(title="Version")] = None
-
-
 class ConnectionResponse(BaseModel):
     """
     Connection schema for responses with fields that are needed for Runtime.
@@ -135,24 +98,6 @@ class ConnectionResponse(BaseModel):
     password: Annotated[str | None, Field(title="Password")] = None
     port: Annotated[int | None, Field(title="Port")] = None
     extra: Annotated[str | None, Field(title="Extra")] = None
-
-
-class DagFileParseRequestCompat(BaseModel):
-    """
-    Slim compat-protocol shape for ``DagFileParseRequest``.
-
-    Mirrors the parser-supervisor's ``DagFileParseRequest`` minus the
-    ``callback_requests`` field (which is Python-runtime-specific and
-    causes the OpenAPI codegen to emit a malformed ``Literal | None``
-    discriminator). The discriminator literal value matches the original
-    so a foreign runtime that recognises ``"DagFileParseRequest"`` can
-    decode either shape interchangeably.
-    """
-
-    file: Annotated[str, Field(title="File")]
-    bundle_path: Annotated[Path, Field(title="Bundle Path")]
-    bundle_name: Annotated[str, Field(title="Bundle Name")]
-    type: Annotated[Literal["DagFileParseRequest"] | None, Field(title="Type")] = "DagFileParseRequest"
 
 
 class DagResponse(BaseModel):
@@ -401,45 +346,6 @@ class TaskBreadcrumbsResponse(BaseModel):
     breadcrumbs: Annotated[list[dict[str, Any]], Field(title="Breadcrumbs")]
 
 
-class TaskInstanceDTOInput(BaseModel):
-    """
-    Task SDK TaskInstanceDTO.
-    """
-
-    id: Annotated[UUID, Field(title="Id")]
-    dag_version_id: Annotated[UUID, Field(title="Dag Version Id")]
-    task_id: Annotated[str, Field(title="Task Id")]
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    try_number: Annotated[int, Field(title="Try Number")]
-    map_index: Annotated[int | None, Field(title="Map Index")] = -1
-    pool_slots: Annotated[int, Field(title="Pool Slots")]
-    queue: Annotated[str, Field(title="Queue")]
-    priority_weight: Annotated[int, Field(title="Priority Weight")]
-    executor_config: Annotated[dict[str, Any] | None, Field(title="Executor Config")] = None
-    parent_context_carrier: Annotated[dict[str, Any] | None, Field(title="Parent Context Carrier")] = None
-    context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
-
-
-class TaskInstanceDTOOutput(BaseModel):
-    """
-    Task SDK TaskInstanceDTO.
-    """
-
-    id: Annotated[UUID, Field(title="Id")]
-    dag_version_id: Annotated[UUID, Field(title="Dag Version Id")]
-    task_id: Annotated[str, Field(title="Task Id")]
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    try_number: Annotated[int, Field(title="Try Number")]
-    map_index: Annotated[int | None, Field(title="Map Index")] = -1
-    pool_slots: Annotated[int, Field(title="Pool Slots")]
-    queue: Annotated[str, Field(title="Queue")]
-    priority_weight: Annotated[int, Field(title="Priority Weight")]
-    parent_context_carrier: Annotated[dict[str, Any] | None, Field(title="Parent Context Carrier")] = None
-    context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
-
-
 class TaskInstanceState(str, Enum):
     """
     All possible states that a Task Instance can be in.
@@ -609,6 +515,15 @@ class TaskInstance(BaseModel):
     context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
 
 
+class BundleInfo(BaseModel):
+    """
+    Schema for telling task which bundle to run with.
+    """
+
+    name: Annotated[str, Field(title="Name")]
+    version: Annotated[str | None, Field(title="Version")] = None
+
+
 class TerminalTIState(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
@@ -712,74 +627,6 @@ class TITerminalStatePayload(BaseModel):
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
 
 
-class AirflowSdkApiDatamodelsGeneratedAssetEventDagRunReference(BaseModel):
-    """
-    Schema for AssetEvent model used in DagRun.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    asset: AssetReferenceAssetEventDagRun
-    extra: Annotated[dict[str, JsonValue], Field(title="Extra")]
-    source_task_id: Annotated[str | None, Field(title="Source Task Id")] = None
-    source_dag_id: Annotated[str | None, Field(title="Source Dag Id")] = None
-    source_run_id: Annotated[str | None, Field(title="Source Run Id")] = None
-    source_map_index: Annotated[int | None, Field(title="Source Map Index")] = None
-    source_aliases: Annotated[list[AssetAliasReferenceAssetEventDagRun], Field(title="Source Aliases")]
-    timestamp: Annotated[AwareDatetime, Field(title="Timestamp")]
-
-
-class AirflowSdkApiDatamodelsGeneratedDagRun(BaseModel):
-    """
-    Schema for DagRun model with minimal required fields needed for Runtime.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    dag_id: Annotated[str, Field(title="Dag Id")]
-    run_id: Annotated[str, Field(title="Run Id")]
-    logical_date: Annotated[AwareDatetime | None, Field(title="Logical Date")] = None
-    data_interval_start: Annotated[AwareDatetime | None, Field(title="Data Interval Start")] = None
-    data_interval_end: Annotated[AwareDatetime | None, Field(title="Data Interval End")] = None
-    run_after: Annotated[AwareDatetime, Field(title="Run After")]
-    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
-    end_date: Annotated[AwareDatetime | None, Field(title="End Date")] = None
-    clear_number: Annotated[int | None, Field(title="Clear Number")] = 0
-    run_type: DagRunType
-    state: DagRunState
-    conf: Annotated[dict[str, Any] | None, Field(title="Conf")] = None
-    triggering_user_name: Annotated[str | None, Field(title="Triggering User Name")] = None
-    consumed_asset_events: Annotated[
-        list[AirflowSdkApiDatamodelsGeneratedAssetEventDagRunReference], Field(title="Consumed Asset Events")
-    ]
-    partition_key: Annotated[str | None, Field(title="Partition Key")] = None
-    note: Annotated[str | None, Field(title="Note")] = None
-    team_name: Annotated[str | None, Field(title="Team Name")] = None
-
-
-class AirflowSdkApiDatamodelsGeneratedTIRunContext(BaseModel):
-    """
-    Response schema for TaskInstance run context.
-    """
-
-    dag_run: AirflowSdkApiDatamodelsGeneratedDagRun
-    task_reschedule_count: Annotated[int | None, Field(title="Task Reschedule Count")] = 0
-    max_tries: Annotated[int, Field(title="Max Tries")]
-    variables: Annotated[
-        list[AirflowSdkApiDatamodelsGeneratedVariableResponse] | None, Field(title="Variables")
-    ] = None
-    connections: Annotated[
-        list[AirflowSdkApiDatamodelsGeneratedConnectionResponse] | None, Field(title="Connections")
-    ] = None
-    next_method: Annotated[str | None, Field(title="Next Method")] = None
-    next_kwargs: Annotated[dict[str, Any] | str | None, Field(title="Next Kwargs")] = None
-    xcom_keys_to_clear: Annotated[list[str] | None, Field(title="Xcom Keys To Clear")] = None
-    should_retry: Annotated[bool | None, Field(title="Should Retry")] = False
-    start_date: Annotated[AwareDatetime | None, Field(title="Start Date")] = None
-
-
 class AssetEventDagRunReference(BaseModel):
     """
     Schema for AssetEvent model used in DagRun.
@@ -848,26 +695,6 @@ class DagRun(BaseModel):
     partition_key: Annotated[str | None, Field(title="Partition Key")] = None
     note: Annotated[str | None, Field(title="Note")] = None
     team_name: Annotated[str | None, Field(title="Team Name")] = None
-
-
-class StartupDetailsInput(BaseModel):
-    ti: TaskInstanceDTOInput
-    dag_rel_path: Annotated[str, Field(title="Dag Rel Path")]
-    bundle_info: BundleInfo
-    start_date: Annotated[AwareDatetime, Field(title="Start Date")]
-    ti_context: AirflowSdkApiDatamodelsGeneratedTIRunContext
-    sentry_integration: Annotated[str, Field(title="Sentry Integration")]
-    type: Annotated[Literal["StartupDetails"] | None, Field(title="Type")] = "StartupDetails"
-
-
-class StartupDetailsOutput(BaseModel):
-    ti: TaskInstanceDTOOutput
-    dag_rel_path: Annotated[str, Field(title="Dag Rel Path")]
-    bundle_info: BundleInfo
-    start_date: Annotated[AwareDatetime, Field(title="Start Date")]
-    ti_context: AirflowSdkApiDatamodelsGeneratedTIRunContext
-    sentry_integration: Annotated[str, Field(title="Sentry Integration")]
-    type: Annotated[Literal["StartupDetails"] | None, Field(title="Type")] = "StartupDetails"
 
 
 class TIRunContext(BaseModel):

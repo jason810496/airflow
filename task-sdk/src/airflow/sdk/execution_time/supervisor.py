@@ -51,8 +51,8 @@ from pydantic import BaseModel, TypeAdapter
 from airflow.sdk._shared.logging.structlog import reconfigure_logger
 from airflow.sdk.api.client import Client, ServerResponseError
 from airflow.sdk.api.datamodels._generated import (
-    AirflowSdkApiDatamodelsGeneratedConnectionResponse as ConnectionResponse,
     AssetResponse,
+    ConnectionResponse,
     TaskInstance,
     TaskInstanceState,
     TaskStatesResponse,

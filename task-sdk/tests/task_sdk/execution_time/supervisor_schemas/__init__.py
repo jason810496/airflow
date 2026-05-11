@@ -14,20 +14,3 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-
-from __future__ import annotations
-
-from cadwyn import VersionChange, schema
-
-from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRetryStatePayload
-
-
-class AddRetryPolicyFields(VersionChange):
-    """Add retry_delay_seconds and retry_reason fields to TIRetryStatePayload for pluggable retry policies."""
-
-    description = __doc__
-
-    instructions_to_migrate_to_previous_version = (
-        schema(TIRetryStatePayload).field("retry_delay_seconds").didnt_exist,
-        schema(TIRetryStatePayload).field("retry_reason").didnt_exist,
-    )

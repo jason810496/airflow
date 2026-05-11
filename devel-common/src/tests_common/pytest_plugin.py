@@ -2547,9 +2547,9 @@ def create_runtime_ti(mocked_parse):
             )
 
         from airflow.sdk.api.datamodels._generated import (
-            AirflowSdkApiDatamodelsGeneratedDagRun as DagRun,
-            AirflowSdkApiDatamodelsGeneratedTIRunContext as TIRunContext,
+            DagRun,
             DagRunState,
+            TIRunContext,
         )
         from airflow.utils.types import DagRunType
 

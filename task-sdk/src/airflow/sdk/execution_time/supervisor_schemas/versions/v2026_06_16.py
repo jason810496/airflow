@@ -14,20 +14,19 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""
+Baseline supervisor schema version.
+
+The head ``VersionBundle`` opens with this file as the in-progress
+version. It carries no ``VersionChange`` entries today: the bundle's
+seed shape is the head shape of every IPC body it references
+(``StartupDetails``, ``DagFileParseRequest``, ...), and there are no
+older versions to migrate down to yet.
+
+When the first breaking change to one of those bodies ships, append a
+``VersionChange`` subclass to this file (see the execution-API bundle's
+``versions/`` folder for the canonical pattern) and reference it from
+the ``VersionBundle`` in ``versions/__init__.py``.
+"""
 
 from __future__ import annotations
-
-from cadwyn import VersionChange, schema
-
-from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRetryStatePayload
-
-
-class AddRetryPolicyFields(VersionChange):
-    """Add retry_delay_seconds and retry_reason fields to TIRetryStatePayload for pluggable retry policies."""
-
-    description = __doc__
-
-    instructions_to_migrate_to_previous_version = (
-        schema(TIRetryStatePayload).field("retry_delay_seconds").didnt_exist,
-        schema(TIRetryStatePayload).field("retry_reason").didnt_exist,
-    )
