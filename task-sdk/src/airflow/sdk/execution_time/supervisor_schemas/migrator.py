@@ -31,7 +31,7 @@ Cadwyn publishes ``migrate_response_body`` for the head-to-older
 (downgrade) direction. There is no symmetric public helper for the
 older-to-head (upgrade) direction: ``VersionBundle._migrate_request``
 exists but is async and HTTP-coupled (FastAPI ``Request`` +
-``Dependant`` + ``solve_dependencies``). We therefore drive both
+``Dependent`` + ``solve_dependencies``). We therefore drive both
 directions ourselves over the bundle's public ``versions`` /
 ``reversed_versions`` tuples and ``VersionChange``'s public
 ``alter_request_by_schema_instructions`` /
@@ -128,7 +128,13 @@ class SchemaVersionMigrator:
     def server_version(self) -> str:
         return self._server_version
 
-    def downgrade(self, body: BaseModel, client_version: str | date) -> dict[str, Any]:
+    def downgrade(
+        self,
+        body: BaseModel,
+        client_version: str | date,
+        *,
+        dump_kwargs: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Migrate *body* from the server (head) shape down to *client_version*.
 
@@ -141,6 +147,17 @@ class SchemaVersionMigrator:
         :param client_version: Either an ISO-format date string (e.g.
             ``"2026-04-17"``) or a :class:`datetime.date`. Cadwyn maps
             a ``date`` to the closest lesser defined version.
+        :param dump_kwargs: Optional keyword arguments forwarded to
+            both ``model_dump`` calls (the initial dump that feeds the
+            migration walk and the final dump that produces the wire
+            shape). Used to preserve OpenAPI-generated response options
+            like ``exclude_unset=True`` / ``by_alias=True``. ``mode``
+            is always forced to ``"json"`` and cannot be overridden.
+            Caveat: ``by_alias=True`` makes the initial dump emit
+            alias-keyed fields, which cadwyn's ``schema(...)``
+            instructions (keyed by Python field name) will not match.
+            Safe for models without registered field-level migrations
+            today; revisit if an aliased model ever ships migrations.
         :returns: A plain dict shaped for *client_version*. Returning
             a dict (rather than a versioned Pydantic instance) is
             deliberate: call sites forward the result straight onto an
@@ -152,9 +169,10 @@ class SchemaVersionMigrator:
             )
         client_value = self._resolve(client_version)
         body_type = type(body)
+        merged_dump_kwargs: dict[str, Any] = {**(dump_kwargs or {}), "mode": "json"}
         # ``mode="json"`` so datetime/UUID/Path serialise to primitives
         # the versioned-model validators inside the chain accept.
-        info = _BodyInfo(body.model_dump(mode="json"))
+        info = _BodyInfo(body.model_dump(**merged_dump_kwargs))
         for version in self._bundle.versions:
             if version.value > self._server_version:
                 continue
@@ -168,7 +186,7 @@ class SchemaVersionMigrator:
         # those alter the class shape, not the dict, so without this
         # round-trip the dropped field would still appear on the wire.
         versioned_class: type[BaseModel] = generate_versioned_models(self._bundle)[client_value][body_type]
-        return versioned_class.model_validate(info.body).model_dump(mode="json")
+        return versioned_class.model_validate(info.body).model_dump(**merged_dump_kwargs)
 
     def upgrade(
         self,

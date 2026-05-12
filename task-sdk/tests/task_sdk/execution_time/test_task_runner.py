@@ -5160,14 +5160,15 @@ class TestTaskInstanceStateOperations:
         )
 
 
-class TestResolveRuntimeEntrypointMigratesStartupDetails:
+class TestResolveRuntimeEntrypoint:
     """
     When ``_resolve_runtime_entrypoint`` picks a coordinator, the
-    returned partial must hand ``coordinator.run_task_execution`` the
-    *migrated* (wire-shape) body, not the raw head ``StartupDetails``.
-    The supervisor sends the head shape verbatim on the
-    supervisor -> task_runner channel; migration happens here, right
-    before the IPC handoff to the foreign runtime subprocess.
+    returned partial hands ``coordinator.run_task_execution`` the head
+    ``StartupDetails`` model plus the resolved ``client_version``. The
+    one-shot seed downgrade to the runtime's wire shape happens later,
+    inside ``_send_startup_details``; every subsequent IPC frame is
+    migrated by the supervisor parent through its ``client_version``
+    pin.
     """
 
     @staticmethod
@@ -5183,19 +5184,12 @@ class TestResolveRuntimeEntrypointMigratesStartupDetails:
             sentry_integration="",
         )
 
-    def test_queue_mapped_path_forwards_migrated_body(self, mocker):
-        from airflow.sdk.execution_time.coordinator import (
-            BaseCoordinator,
-            CoordinatorManager,
-            MigratedStartupDetails,
-        )
+    def test_queue_mapped_path_forwards_head_startup_details(self, mocker):
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
         from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
 
         coordinator = MagicMock(spec=BaseCoordinator)
-        migrated = MigratedStartupDetails(
-            {"type": "StartupDetails", "ti": {"task_id": "t1"}, "version": "2026-04-17"}
-        )
-        coordinator.migrate_startup_details.return_value = migrated
+        coordinator.target_schema_version.return_value = "2026-04-17"
 
         manager = CoordinatorManager({"java": coordinator}, {"java-queue": "java"})
         mocker.patch(
@@ -5206,29 +5200,25 @@ class TestResolveRuntimeEntrypointMigratesStartupDetails:
         startup = self._make_startup_details()
         entrypoint = _resolve_runtime_entrypoint(startup, log=MagicMock())
 
-        # Coordinator.migrate_startup_details is called once with the
-        # head-shape StartupDetails; the partial's startup_details kwarg
-        # is the migrated wire-shape dict.
-        coordinator.migrate_startup_details.assert_called_once_with(startup)
+        # The head ``StartupDetails`` is threaded through to the
+        # coordinator entrypoint untouched; the one-shot seed downgrade
+        # happens later inside ``_send_startup_details`` using the
+        # resolved ``client_version``.
         assert entrypoint is not None
-        assert entrypoint.keywords["startup_details"] is migrated
-        assert isinstance(entrypoint.keywords["startup_details"], MigratedStartupDetails)
+        assert entrypoint.keywords["startup_details"] is startup
+        assert entrypoint.keywords["client_version"] == "2026-04-17"
+        coordinator.target_schema_version.assert_called_once_with(startup)
 
-    def test_extension_fallback_path_forwards_migrated_body(self, mocker):
+    def test_extension_fallback_path_forwards_head_startup_details(self, mocker):
         # Pure-runtime DAGs (no queue mapping) resolve the coordinator by
-        # file extension. Migration must still run on this branch -- the
-        # body crosses IPC to the foreign runtime either way.
-        from airflow.sdk.execution_time.coordinator import (
-            BaseCoordinator,
-            CoordinatorManager,
-            MigratedStartupDetails,
-        )
+        # file extension. The seed body is still the head model -- only
+        # the resolved ``client_version`` changes.
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
         from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
 
         coordinator = MagicMock(spec=BaseCoordinator)
         type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
-        migrated = MigratedStartupDetails({"type": "StartupDetails", "via": "extension"})
-        coordinator.migrate_startup_details.return_value = migrated
+        coordinator.target_schema_version.return_value = "2026-04-17"
 
         # No queue mapping -- forces the extension fallback.
         manager = CoordinatorManager({"java": coordinator}, {})
@@ -5240,9 +5230,9 @@ class TestResolveRuntimeEntrypointMigratesStartupDetails:
         startup = self._make_startup_details()
         entrypoint = _resolve_runtime_entrypoint(startup, log=MagicMock())
 
-        coordinator.migrate_startup_details.assert_called_once_with(startup)
         assert entrypoint is not None
-        assert entrypoint.keywords["startup_details"] is migrated
+        assert entrypoint.keywords["startup_details"] is startup
+        assert entrypoint.keywords["client_version"] == "2026-04-17"
 
     def test_no_coordinator_skips_migration_entirely(self, mocker):
         # The Python worker path must not pay for a migration: nothing

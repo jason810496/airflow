@@ -37,7 +37,7 @@ from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from http import HTTPStatus
 from socket import socket, socketpair
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, NoReturn, TextIO, cast
+from typing import TYPE_CHECKING, BinaryIO, ClassVar, NoReturn, TextIO, cast
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -567,6 +567,22 @@ class WatchedSubprocess:
     start_time: float = attrs.field(factory=time.monotonic)
     """The start time of the child process."""
 
+    client_version: str | None = attrs.field(default=None, init=False)
+    """
+    Pinned client schema version for the child process, when the child
+    is a foreign-language runtime launched by a coordinator. When set,
+    every outgoing frame body is ``downgrade``d through the supervisor
+    IPC migrator and every incoming body is ``upgrade``d back to head
+    shape before validation. ``None`` (the default) means head shape on
+    both sides -- which is the right behaviour for Python-runtime
+    children.
+
+    Set once in the per-subprocess ``_on_child_started`` hook before any
+    I/O runs; safe as a plain mutable attribute because each
+    ``WatchedSubprocess`` is single-owner and is never aliased between
+    bind time and first frame exchange.
+    """
+
     @classmethod
     def start(
         cls,
@@ -738,7 +754,7 @@ class WatchedSubprocess:
 
     def send_msg(
         self,
-        msg: BaseModel | dict[str, Any] | None,
+        msg: BaseModel | None,
         request_id: int,
         error: ErrorResponse | None = None,
         **dump_opts,
@@ -750,9 +766,15 @@ class WatchedSubprocess:
 
         """
         if isinstance(msg, BaseModel):
-            frame = _ResponseFrame(id=request_id, body=msg.model_dump(**dump_opts))
-        elif isinstance(msg, dict):
-            frame = _ResponseFrame(id=request_id, body=msg)
+            if self.client_version is not None:
+                from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
+
+                body = get_schema_version_migrator().downgrade(
+                    msg, self.client_version, dump_kwargs=dump_opts or None
+                )
+            else:
+                body = msg.model_dump(**dump_opts)
+            frame = _ResponseFrame(id=request_id, body=body)
         else:
             err_resp = error.model_dump() if error else None
             frame = _ResponseFrame(id=request_id, error=err_resp)
@@ -764,8 +786,16 @@ class WatchedSubprocess:
         while True:
             request = yield
 
+            body = request.body
+            if self.client_version is not None and isinstance(body, dict):
+                from airflow.sdk.execution_time.comms import _resolve_body_type
+                from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
+
+                body_type = _resolve_body_type(body)
+                if body_type is not None:
+                    body = get_schema_version_migrator().upgrade(body, body_type, self.client_version)
             try:
-                msg = self.decoder.validate_python(request.body)
+                msg = self.decoder.validate_python(body)
             except Exception:
                 log.exception("Unable to decode message", body=request.body)
                 continue
@@ -1195,14 +1225,14 @@ class ActivitySubprocess(WatchedSubprocess):
             start_date=start_date,
             sentry_integration=sentry_integration,
         )
-        # The supervisor -> task_runner channel is always Python; the head-shape
-        # StartupDetails decodes natively on the other side. When the queue is
-        # mapped to a foreign-language coordinator, the migration to that
-        # runtime's wire shape happens later in task_runner._resolve_runtime_entrypoint,
-        # right before the coordinator forwards the body over the IPC socket to
-        # the runtime subprocess.
-
-        # Send the message to tell the process what it needs to execute
+        # The supervisor -> task_runner channel is always Python, so the seed
+        # StartupDetails is sent in head shape: task_runner decodes it natively
+        # and only then forks the foreign-language runtime subprocess (downgrading
+        # the seed once for that hand-off). After the seed is sent, we pin
+        # ``self.client_version`` to the coordinator's pinned schema version
+        # (resolved from ``ti.queue`` / ``dag_rel_path``) so every subsequent
+        # ``send_msg`` (responses to ``GetConnection`` etc.) and ``handle_requests``
+        # decode is migrated through the supervisor IPC bundle.
         log.debug("Sending", msg=msg)
 
         try:
@@ -1210,6 +1240,20 @@ class ActivitySubprocess(WatchedSubprocess):
         except (BrokenPipeError, ConnectionResetError):
             # Debug is fine, the process will have shown _something_ in it's last_chance exception handler
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
+            return
+
+        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
+
+        manager = get_coordinator_manager()
+        coordinator = manager.for_queue(ti.queue)
+        if coordinator is None:
+            for candidate in manager.all():
+                ext = getattr(type(candidate), "file_extension", None)
+                if ext and os.fspath(dag_rel_path).endswith(ext):
+                    coordinator = candidate
+                    break
+        if coordinator is not None:
+            self.client_version = coordinator.target_schema_version(msg)
 
     def wait(self) -> int:
         if self._exit_code is not None:
@@ -1739,9 +1783,9 @@ class InProcessSupervisorComms:
 
     log: FilteringBoundLogger = attrs.field(repr=False, factory=structlog.get_logger)
     supervisor: InProcessTestSupervisor
-    messages: deque[BaseModel | dict[str, Any] | None] = attrs.field(factory=deque)
+    messages: deque[BaseModel | None] = attrs.field(factory=deque)
 
-    def _get_response(self) -> BaseModel | dict[str, Any] | None:
+    def _get_response(self) -> BaseModel | None:
         """Get a message from the supervisor. Blocks until a message is available."""
         return self.messages.popleft()
 
@@ -1909,7 +1953,7 @@ class InProcessTestSupervisor(ActivitySubprocess):
 
     def send_msg(
         self,
-        msg: BaseModel | dict[str, Any] | None,
+        msg: BaseModel | None,
         request_id: int,
         error: ErrorResponse | None = None,
         **dump_opts,

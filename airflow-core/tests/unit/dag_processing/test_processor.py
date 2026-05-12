@@ -2158,12 +2158,12 @@ class TestDagFileParseRequestCoordinatorMigration:
     Foreign-language SDK parsers decode IPC frames against a schema
     version frozen at SDK build time. The parser-supervisor's
     interception point is ``DagFileProcessorProcess._on_child_started``,
-    which routes ``DagFileParseRequest`` through the coordinator's
-    compat layer when a coordinator says it can handle the file. These
-    tests pin that contract: when a coordinator matches, the child must
-    receive a ``MigratedDagFileParseRequest`` (migrated, slim
-    body without ``callback_requests``); when no coordinator matches,
-    the Python parser receives the raw ``DagFileParseRequest`` model.
+    which pins ``self.client_version`` to the coordinator's schema
+    version when a coordinator says it can handle the file. The
+    supervisor IPC migrator then downgrades every outgoing body
+    (including the seed ``DagFileParseRequest``) through ``send_msg``
+    and upgrades every incoming body through ``handle_requests`` --
+    without any pre-migrated dict wrappers on the call site.
     """
 
     @pytest.fixture
@@ -2190,25 +2190,10 @@ class TestDagFileParseRequestCoordinatorMigration:
         return instance
 
     def test_routes_through_coordinator_when_can_handle_dag_file(self, proc):
-        from airflow.sdk.execution_time.coordinator import (
-            BaseCoordinator,
-            CoordinatorManager,
-            MigratedDagFileParseRequest,
-        )
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
 
         coordinator = MagicMock(spec=BaseCoordinator)
-        migrated = MigratedDagFileParseRequest(
-            {
-                "type": "DagFileParseRequest",
-                "file": "/bundles/mybundle/dags/example.jar",
-                "bundle_path": "/bundles/mybundle",
-                "bundle_name": "mybundle",
-            }
-        )
-        coordinator.migrate_dag_file_parse_request.return_value = migrated
-        # ``for_dag_file`` is the routing decision in the processor's
-        # interception site: it must match the same coordinator the
-        # supervisor would have picked for parsing.
+        coordinator.target_schema_version.return_value = "2026-04-17"
         manager = CoordinatorManager({"java": coordinator}, {})
         manager_mock = MagicMock(wraps=manager)
         manager_mock.for_dag_file.return_value = coordinator
@@ -2227,31 +2212,25 @@ class TestDagFileParseRequestCoordinatorMigration:
                 bundle_name="mybundle",
             )
 
-        # The migration call sees the real DagFileParseRequest. The
-        # processor passes no version of its own -- the coordinator's
-        # migrate hook is expected to read the target version from its
-        # own ``target_schema_version`` and run the in-process
-        # SchemaVersionMigrator (no HTTP round-trip).
-        coordinator.migrate_dag_file_parse_request.assert_called_once()
-        real_msg = coordinator.migrate_dag_file_parse_request.call_args[0][0]
+        # ``target_schema_version`` is the only coordinator call --
+        # the processor pins ``client_version`` and lets the
+        # supervisor IPC migrator downgrade the seed frame on the
+        # ``send_msg`` path.
+        coordinator.target_schema_version.assert_called_once()
+        real_msg = coordinator.target_schema_version.call_args[0][0]
         assert isinstance(real_msg, DagFileParseRequest)
-        # The processor must not pre-resolve the version: the coordinator
-        # owns that decision.
-        coordinator.target_schema_version.assert_not_called()
+        assert proc.client_version == "2026-04-17"
         _, args, kwargs = mock_send.mock_calls[0]
         sent_body = args[1]
-        assert sent_body is migrated
-        assert isinstance(sent_body, MigratedDagFileParseRequest)
-        assert "callback_requests" not in sent_body
+        assert sent_body is real_msg
         assert kwargs == {"request_id": 0}
 
     def test_sends_raw_request_when_no_coordinator_matches(self, proc):
-        from airflow.sdk.execution_time.coordinator import CoordinatorManager, MigratedDagFileParseRequest
+        from airflow.sdk.execution_time.coordinator import CoordinatorManager
 
         # ``for_dag_file`` returns None: the Python parser is on the
         # other end, so we hand it the latest-schema model verbatim
-        # (callbacks included). Running the in-process interceptor for
-        # the Python parser would be a pointless dump/reload cycle.
+        # (callbacks included).
         manager = CoordinatorManager({}, {})
 
         callbacks = [
@@ -2281,6 +2260,7 @@ class TestDagFileParseRequestCoordinatorMigration:
 
         sent_body = mock_send.mock_calls[0].args[1]
         assert isinstance(sent_body, DagFileParseRequest)
-        assert not isinstance(sent_body, MigratedDagFileParseRequest)
         # Python parser path keeps callback_requests intact.
         assert sent_body.callback_requests == callbacks
+        # No coordinator -> client_version stays unset.
+        assert proc.client_version is None

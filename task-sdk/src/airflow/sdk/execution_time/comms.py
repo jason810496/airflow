@@ -49,6 +49,7 @@ Execution API server is because:
 from __future__ import annotations
 
 import asyncio
+import functools
 import itertools
 import threading
 from collections.abc import Iterator
@@ -185,6 +186,32 @@ class _ResponseFrame(_FrameMixin, msgspec.Struct, array_like=True, frozen=True, 
     error: dict[str, Any] | None = None
 
 
+@functools.cache
+def _registered_models_by_name() -> dict[str, type[BaseModel]]:
+    """
+    Map every supervisor-IPC body's class name to the head Pydantic class.
+
+    Used by the bound :class:`CommsDecoder` to resolve the wire-shape
+    discriminator (``body["type"]``) to the head class the migrator's
+    ``upgrade`` path needs. Cached per-process; the registry only
+    changes when a union member is added in ``comms.py`` or
+    ``processor.py``, which requires a restart anyway.
+    """
+    from airflow.sdk.execution_time.supervisor_schemas import registered_models
+
+    return {cls.__name__: cls for cls in registered_models()}
+
+
+def _resolve_body_type(body: Any) -> type[BaseModel] | None:
+    """Resolve a wire-body dict's ``type`` discriminator to its head class."""
+    if not isinstance(body, dict):
+        return None
+    name = body.get("type")
+    if not isinstance(name, str):
+        return None
+    return _registered_models_by_name().get(name)
+
+
 @attrs.define()
 class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
     """Handle communication between the task in this process and the supervisor parent process."""
@@ -210,10 +237,42 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
     # Async lock for async operations
     _async_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, repr=False)
 
+    # When set, every outgoing message is run through the supervisor IPC
+    # migrator's ``downgrade`` to the pinned client version before being
+    # framed, and every incoming body is ``upgrade``d back to the head
+    # shape before validation. ``None`` means head shape on both sides
+    # (the default for the Python-runtime task case).
+    client_version: str | None = attrs.field(default=None)
+
+    def bind(self, *, client_version: str | None) -> CommsDecoder[ReceiveMsgType, SendMsgType]:
+        """
+        Return a new decoder pinned to *client_version*, structlog-style.
+
+        The returned instance shares this instance's ``socket``,
+        ``id_counter`` and both locks **by reference**. That is safe
+        only when the caller immediately reassigns and discards the
+        unbound original (so nothing else holds a reference to the
+        shared mutable state). The expected pattern is::
+
+            comms = comms.bind(client_version=coordinator.target_schema_version(...))
+
+        Pass ``client_version=None`` to drop the pin.
+        """
+        return attrs.evolve(self, client_version=client_version)
+
     def _make_frame(self, msg: SendMsgType) -> _RequestFrame:
         carrier: dict[str, str] = {}
         _trace_propagator.inject(carrier)
-        return _RequestFrame(id=next(self.id_counter), body=msg.model_dump(), context_carrier=carrier or None)
+        if self.client_version is not None:
+            from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
+
+            body = get_schema_version_migrator().downgrade(msg, self.client_version)
+        else:
+            # ``mode="json"`` so ``datetime`` / ``UUID`` / ``Path`` / ``Decimal``
+            # cross the wire as JSON-safe primitives a non-Python decoder can
+            # consume. This matches the wire shape the bound path produces.
+            body = msg.model_dump(mode="json")
+        return _RequestFrame(id=next(self.id_counter), body=body, context_carrier=carrier or None)
 
     def send(self, msg: SendMsgType) -> ReceiveMsgType | None:
         """Send a request to the parent and block until the response is received."""
@@ -322,8 +381,16 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
         if frame.body is None:
             return None
 
+        body = frame.body
+        if self.client_version is not None:
+            body_type = _resolve_body_type(body)
+            if body_type is not None:
+                from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
+
+                body = get_schema_version_migrator().upgrade(body, body_type, self.client_version)
+
         try:
-            return self.body_decoder.validate_python(frame.body)
+            return self.body_decoder.validate_python(body)
         except Exception:
             self.log.exception("Unable to decode message")
             raise

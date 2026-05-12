@@ -175,30 +175,36 @@ class JavaCoordinator(BaseCoordinator):
 
         For pure-Java DAGs the JAR path is the entrypoint; for Python stub DAGs
         the actual JAR is resolved from ``bundles_folder`` via the ``dag_id``.
-        Returns ``None`` when the JAR has no manifest stamp -- in that case the
-        coordinator skips the compat call and forwards the latest payload.
+        Raises ``ValueError`` when the JAR has no manifest stamp.
+
+        The JAR manifest is re-read on every call so that operators can
+        swap a JAR on disk without restarting the coordinator -- caching
+        the result per (process, jar_path) would mask the swap and pin
+        the supervisor to the old schema version.
         """
+        jar_path = self._resolve_jar_path(schema)
+        if schema_version := read_schema_version(jar_path):
+            return schema_version
+        raise ValueError(
+            f"JAR bundle {jar_path} is missing required manifest attribute "
+            f"{BundleScanner.SCHEMA_VERSION_MANIFEST_KEY!r}"
+        )
+
+    def _resolve_jar_path(self, schema: StartupDetails | DagFileParseRequest) -> Path:
+        """Resolve the JAR path the manifest version should be read from for *schema*."""
         # Local import to keep the module-level imports tidy and avoid a
         # circular ``airflow.dag_processing`` import at coordinator load time.
         from airflow.dag_processing.processor import DagFileParseRequest
 
         if isinstance(schema, DagFileParseRequest):
-            jar_path = Path(schema.file)
-        else:
-            if schema.dag_rel_path and str(schema.dag_rel_path).endswith(self.file_extension):
-                # Pure-Java task: ``dag_rel_path`` already points at the JAR.
-                jar_path = Path(schema.dag_rel_path)
-            elif self.bundles_folder:
-                # Python-stub task: resolve the real JAR via ``bundles_folder``.
-                resolved = BundleScanner(Path(self.bundles_folder)).resolve(dag_id=schema.ti.dag_id)
-                # ``classpath`` lists every JAR; the first entry is the bundle JAR
-                # whose manifest carries the SDK metadata.
-                jar_path = Path(resolved.classpath.split(os.pathsep)[0])
-            else:
-                raise ValueError(f"Unable to determine target schema version for {schema}")
-
-        if schema_version := read_schema_version(jar_path):
-            return schema_version
-        raise ValueError(
-            f"JAR bundle {jar_path} is missing required manifest attribute {BundleScanner.SCHEMA_VERSION_MANIFEST_KEY!r}"
-        )
+            return Path(schema.file)
+        if schema.dag_rel_path and str(schema.dag_rel_path).endswith(self.file_extension):
+            # Pure-Java task: ``dag_rel_path`` already points at the JAR.
+            return Path(schema.dag_rel_path)
+        if self.bundles_folder:
+            # Python-stub task: resolve the real JAR via ``bundles_folder``.
+            resolved = BundleScanner(Path(self.bundles_folder)).resolve(dag_id=schema.ti.dag_id)
+            # ``classpath`` lists every JAR; the first entry is the bundle JAR
+            # whose manifest carries the SDK metadata.
+            return Path(resolved.classpath.split(os.pathsep)[0])
+        raise ValueError(f"Unable to determine target schema version for {schema}")

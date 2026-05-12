@@ -85,7 +85,6 @@ if TYPE_CHECKING:
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.dag import DAG
     from airflow.sdk.definitions.mappedoperator import MappedOperator
-    from airflow.sdk.execution_time.coordinator import MigratedDagFileParseRequest
     from airflow.sdk.execution_time.supervisor import SelectorCallback
     from airflow.typing_compat import Self
 
@@ -620,22 +619,17 @@ class DagFileProcessorProcess(WatchedSubprocess):
             bundle_name=bundle_name,
             callback_requests=callbacks,
         )
-        # When a runtime coordinator handles this file, the child is a foreign
-        # SDK runtime that cannot decode Python-only fields (notably
-        # ``callback_requests``). The coordinator's migrate hook runs the slim
-        # wire shape through the in-process schema-version migrator (same Cadwyn
-        # bundle the OpenAPI compat route exposes) so the child receives a
-        # payload its decoder understands -- no HTTP round-trip needed. The
-        # Python parser path keeps the full message including callbacks.
+        # When a runtime coordinator handles this file, pin the supervisor
+        # to the coordinator's schema version so ``send_msg`` downgrades
+        # outgoing head-shape bodies and ``handle_requests`` upgrades
+        # incoming bodies through the in-process Cadwyn migrator. The
+        # seed ``DagFileParseRequest`` below goes through the same
+        # downgrade path -- the foreign runtime receives a payload its
+        # decoder understands without an HTTP round-trip.
         coordinator = get_coordinator_manager().for_dag_file(bundle_name, path)
-        body: DagFileParseRequest | MigratedDagFileParseRequest
         if coordinator is not None:
-            # The coordinator picks the target schema version itself from
-            # its bundle artifact -- the processor doesn't need to know.
-            body = coordinator.migrate_dag_file_parse_request(msg)
-        else:
-            body = msg
-        self.send_msg(body, request_id=0)
+            self.client_version = coordinator.target_schema_version(msg)
+        self.send_msg(msg, request_id=0)
 
     def _get_target_loggers(self) -> tuple[FilteringBoundLogger, ...]:
         base = super()._get_target_loggers()

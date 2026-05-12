@@ -3827,10 +3827,11 @@ class TestSendsRawStartupDetails:
     The supervisor -> task_runner channel always carries the head
     ``StartupDetails``: the child process is Python and decodes the
     head schema natively. When the task is routed to a foreign-language
-    runtime, the migration to the runtime's wire shape happens later
-    in ``task_runner._resolve_runtime_entrypoint`` -- not here. These
-    tests pin that the supervisor performs *no* coordinator lookup or
-    migration on the way out.
+    runtime, the seed-frame downgrade to the runtime's wire shape
+    happens once inside ``_send_startup_details`` in the coordinator
+    child; every subsequent IPC frame is migrated by the supervisor
+    parent through ``WatchedSubprocess.client_version`` set right
+    here, after the seed message has been sent.
     """
 
     @staticmethod
@@ -3869,7 +3870,6 @@ class TestSendsRawStartupDetails:
         self, mocker, make_ti_context, queue, dag_rel_path
     ):
         from airflow.sdk.execution_time.comms import StartupDetails
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
 
         ti = self._make_ti(queue=queue)
         bundle_info = BundleInfo(name="my-bundle", version="v1")
@@ -3879,6 +3879,15 @@ class TestSendsRawStartupDetails:
 
         mocker.patch.object(ActivitySubprocess, "kill")
         mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+        # Empty coordinator registry: no foreign-runtime resolution
+        # path is exercised here -- the seed message is sent in head
+        # shape and ``client_version`` stays unset.
+        from airflow.sdk.execution_time.coordinator import CoordinatorManager
+
+        mocker.patch(
+            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
+            return_value=CoordinatorManager({}, {}),
+        )
 
         proc = self._make_proc(client, mocker)
         proc._on_child_started(
@@ -3890,6 +3899,43 @@ class TestSendsRawStartupDetails:
 
         sent_body = mock_send.call_args[0][1]
         assert isinstance(sent_body, StartupDetails)
-        assert not isinstance(sent_body, MigratedStartupDetails)
         assert sent_body.ti.task_id == "t1"
         assert sent_body.ti.queue == queue
+        assert proc.client_version is None
+
+    def test_supervisor_pins_client_version_after_seed_send(self, mocker, make_ti_context):
+        """When a coordinator matches the queue, the seed message is sent
+        first in head shape, then ``client_version`` is pinned so
+        subsequent IPC frames are migrated through the supervisor IPC
+        bundle."""
+        from airflow.sdk.execution_time.comms import StartupDetails
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
+
+        ti = self._make_ti(queue="java-queue")
+        bundle_info = BundleInfo(name="my-bundle", version="v1")
+
+        client = MagicMock(spec=sdk_client.Client)
+        client.task_instances.start.return_value = make_ti_context()
+
+        coordinator = MagicMock(spec=BaseCoordinator)
+        coordinator.target_schema_version.return_value = "2026-04-17"
+        mocker.patch(
+            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
+            return_value=CoordinatorManager({"java": coordinator}, {"java-queue": "java"}),
+        )
+
+        mocker.patch.object(ActivitySubprocess, "kill")
+        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+
+        proc = self._make_proc(client, mocker)
+        proc._on_child_started(
+            ti=ti,
+            dag_rel_path="dags/example.jar",
+            bundle_info=bundle_info,
+            sentry_integration="",
+        )
+
+        sent_body = mock_send.call_args[0][1]
+        assert isinstance(sent_body, StartupDetails)
+        coordinator.target_schema_version.assert_called_once_with(sent_body)
+        assert proc.client_version == "2026-04-17"

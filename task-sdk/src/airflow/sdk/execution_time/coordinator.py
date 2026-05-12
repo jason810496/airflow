@@ -50,40 +50,17 @@ import selectors
 import socket
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
 from airflow.sdk._shared.module_loading import import_string
 
 if TYPE_CHECKING:
-    from structlog.typing import FilteringBoundLogger
     from typing_extensions import Self
 
     from airflow.dag_processing.processor import DagFileParseRequest
     from airflow.sdk.api.datamodels._generated import BundleInfo
     from airflow.sdk.execution_time.comms import StartupDetails
     from airflow.sdk.execution_time.workloads.task import TaskInstanceDTO
-
-
-class MigratedStartupDetails(dict[str, Any]):
-    """
-    A ``StartupDetails`` body already migrated to a foreign runtime's pinned schema version.
-
-    Subclass of ``dict`` so the JSON body returned by the in-process
-    :class:`~airflow.sdk.execution_time.supervisor_schemas.SchemaVersionMigrator`
-    can be wrapped without copying. Carrying its own type (rather than
-    annotating as ``StartupDetails`` or ``dict[str, Any]``) makes call
-    sites self-document the fact that the value is **not** a
-    latest-schema Pydantic model and must be forwarded verbatim into
-    the IPC frame to the foreign runtime subprocess.
-    """
-
-
-class MigratedDagFileParseRequest(dict[str, Any]):
-    """
-    A ``DagFileParseRequest`` body already migrated to a foreign runtime's pinned schema version.
-
-    See :class:`MigratedStartupDetails` for why this carries its own type.
-    """
 
 
 def _start_server() -> socket.socket:
@@ -97,30 +74,32 @@ def _start_server() -> socket.socket:
 
 def _send_startup_details(
     runtime_comm: socket.socket,
-    body: MigratedStartupDetails,
+    startup_details: StartupDetails,
+    client_version: str | None,
 ) -> None:
     """
-    Send a ``MigratedStartupDetails`` frame to the runtime subprocess.
+    Send the seed ``StartupDetails`` frame to the runtime subprocess.
 
-    In the task execution flow, ``task_runner.main()`` consumes the
-    ``StartupDetails`` message from fd 0 (to determine routing) before
-    delegating to the runtime coordinator. The caller (typically
-    :meth:`BaseCoordinator._runtime_subprocess_entrypoint`) is responsible
-    for converting the latest-schema ``StartupDetails`` into a
-    ``MigratedStartupDetails`` -- either via
-    :meth:`BaseCoordinator.to_client_compatible_startup_details` (latest
-    schema, no migration) or via
-    :meth:`BaseCoordinator.migrate_startup_details` (migrated to a foreign
-    runtime's schema version) -- so that the runtime subprocess receives a
-    payload shaped for *its* schema rather than the latest one.
+    When *client_version* is set, the body is downgraded to the runtime's
+    pinned schema version through the supervisor IPC migrator. With
+    *client_version* ``None`` the body is dumped in head shape -- this
+    only happens when the foreign runtime and the supervisor agree on
+    the schema version (e.g. both at head).
 
-    The body is encoded using ``mode="json"`` upstream so that datetime,
-    UUID, and other complex Python types are serialized as plain
-    strings/numbers in msgpack, avoiding extension types (e.g. Timestamp)
-    that non-Python decoders may not support.
+    ``mode="json"`` is used so ``datetime`` / ``UUID`` / ``Path`` /
+    ``Decimal`` cross the wire as JSON-safe primitives a non-Python
+    decoder can consume.
     """
     from airflow.sdk.execution_time.comms import _ResponseFrame
 
+    if client_version is not None:
+        from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
+
+        body = get_schema_version_migrator().downgrade(
+            startup_details, client_version, dump_kwargs={"mode": "json"}
+        )
+    else:
+        body = startup_details.model_dump(mode="json")
     frame = _ResponseFrame(id=0, body=body)
     runtime_comm.sendall(frame.as_bytes())
 
@@ -131,17 +110,23 @@ def _bridge(
     runtime_logs: socket.socket,
     runtime_stderr: socket.socket,
     proc: subprocess.Popen,
-    log: FilteringBoundLogger,
+    log,
 ) -> None:
     """
     Multiplex I/O between the supervisor and a runtime subprocess.
 
-    Four channels are registered with the selector:
+    Four channels are handled:
 
-    - ``supervisor_comm`` -> ``runtime_comm`` (raw byte forwarding)
-    - ``runtime_comm`` -> ``supervisor_comm`` (raw byte forwarding)
+    - ``supervisor_comm`` <-> ``runtime_comm`` (raw byte forward)
     - ``runtime_logs`` -> structlog (line-buffered JSON logs)
     - ``runtime_stderr`` -> structlog (line-buffered stderr output)
+
+    The comm channels are raw-byte forwarded by the selector loop in
+    both directions. End-to-end schema migration is the supervisor
+    parent's responsibility: it sets ``WatchedSubprocess.client_version``
+    so ``send_msg`` downgrades head-shape bodies to the runtime's
+    pinned version and ``handle_requests`` upgrades incoming bodies
+    back to head shape. The bridge stays out of the migration loop.
 
     Uses the same ``(handler, on_close)`` callback contract as
     :class:`~airflow.sdk.execution_time.supervisor.WatchedSubprocess`,
@@ -165,7 +150,6 @@ def _bridge(
 
     target_loggers = (log,)
 
-    # Comm: bidirectional raw byte forwarding.
     sel.register(supervisor_comm, selectors.EVENT_READ, make_raw_forwarder(runtime_comm, on_close))
     sel.register(runtime_comm, selectors.EVENT_READ, make_raw_forwarder(supervisor_comm, on_close))
 
@@ -239,10 +223,17 @@ class BaseCoordinator:
         what: TaskInstanceDTO
         dag_rel_path: str | os.PathLike[str]
         bundle_info: BundleInfo
-        # Already migrated to the foreign runtime's pinned schema version
-        # by ``task_runner._resolve_runtime_entrypoint``; the coordinator
-        # forwards this verbatim to the runtime over IPC.
-        startup_details: MigratedStartupDetails
+        # Head-shape ``StartupDetails`` from ``task_runner``; the
+        # coordinator downgrades this once to ``client_version`` before
+        # writing it to the runtime IPC socket.
+        startup_details: StartupDetails
+        # The foreign runtime's pinned client schema version. Used by
+        # ``_send_startup_details`` to downgrade the seed frame. The
+        # ongoing supervisor <-> runtime migration is handled by the
+        # supervisor parent via ``WatchedSubprocess.client_version``
+        # (set in ``ActivitySubprocess._on_child_started``), so the
+        # bridge raw-forwards every subsequent frame.
+        client_version: str | None = None
         mode: str = "task-execution"
 
     def target_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
@@ -253,42 +244,6 @@ class BaseCoordinator:
         artifact (e.g. a JAR manifest entry).
         """
         raise NotImplementedError
-
-    def migrate_startup_details(self, schema: StartupDetails) -> MigratedStartupDetails:
-        """
-        Migrate a ``StartupDetails`` payload to the runtime's pinned schema version, in-process.
-
-        The target version is sourced from :meth:`target_schema_version`
-        on the coordinator itself -- the supervisor does not need to
-        pass it in. Calls
-        :class:`~airflow.sdk.execution_time.supervisor_schemas.SchemaVersionMigrator`
-        directly against the supervisor IPC ``VersionBundle``. Subclasses
-        can override (for example to short-circuit when the runtime is
-        already on head) but the default is the right answer for every
-        foreign-runtime coordinator we ship today.
-        """
-        from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
-
-        migrated = get_schema_version_migrator().downgrade(schema, self.target_schema_version(schema))
-        return MigratedStartupDetails(migrated)
-
-    def migrate_dag_file_parse_request(self, schema: DagFileParseRequest) -> MigratedDagFileParseRequest:
-        """
-        Migrate a ``DagFileParseRequest`` payload to the runtime's pinned schema version, in-process.
-
-        See :meth:`migrate_startup_details` for the rationale on calling
-        the migrator directly and on sourcing the target version from
-        :meth:`target_schema_version`. The canonical
-        ``DagFileParseRequest`` (including its Python-only
-        ``callback_requests`` field) is passed straight to the
-        migrator; the foreign runtime ignores any field it does not
-        decode for, and Cadwyn only rewrites fields the supervisor
-        bundle's version files explicitly mention.
-        """
-        from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
-
-        migrated = get_schema_version_migrator().downgrade(schema, self.target_schema_version(schema))
-        return MigratedDagFileParseRequest(migrated)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:
         """
@@ -382,15 +337,19 @@ class BaseCoordinator:
         what: TaskInstanceDTO,
         dag_rel_path: str | os.PathLike[str],
         bundle_info: BundleInfo,
-        startup_details: MigratedStartupDetails,
+        startup_details: StartupDetails,
+        client_version: str | None = None,
     ) -> None:
         """
         Spawn the runtime subprocess and forward *startup_details* over IPC.
 
-        *startup_details* is the already-migrated wire-shape body produced
-        by :meth:`migrate_startup_details` inside
-        ``task_runner._resolve_runtime_entrypoint`` -- this method does
-        not migrate again.
+        *startup_details* is the head-shape Pydantic model the supervisor
+        sent to ``task_runner``. The seed frame to the runtime is
+        downgraded to *client_version* in :func:`_send_startup_details`
+        (a one-shot migration). Every subsequent frame between the
+        supervisor and the runtime is migrated by the supervisor parent
+        via ``WatchedSubprocess.client_version`` -- the bridge in this
+        process raw-forwards bytes only.
         """
         self._runtime_subprocess_entrypoint(
             self.TaskExecutionInfo(
@@ -398,6 +357,7 @@ class BaseCoordinator:
                 dag_rel_path=dag_rel_path,
                 bundle_info=bundle_info,
                 startup_details=startup_details,
+                client_version=client_version,
             )
         )
 
@@ -518,15 +478,27 @@ class BaseCoordinator:
 
             # For task execution the supervisor already sent ``StartupDetails``
             # on fd 0 and ``task_runner.main()`` consumed it before delegating
-            # here.  Re-encode and forward it to the runtime subprocess so it
-            # knows which task to execute.
+            # here.  Forward it to the runtime subprocess (downgraded to the
+            # runtime's pinned schema version) so it knows which task to
+            # execute.
             if isinstance(entrypoint_info, self.TaskExecutionInfo):
-                _send_startup_details(runtime_comm, entrypoint_info.startup_details)
+                _send_startup_details(
+                    runtime_comm,
+                    entrypoint_info.startup_details,
+                    entrypoint_info.client_version,
+                )
 
             # fd 0 is the bidirectional comms socket to the supervisor.
             supervisor_comm = socket.socket(fileno=os.dup(0))
 
-            _bridge(supervisor_comm, runtime_comm, runtime_logs, read_stderr, proc, log)
+            _bridge(
+                supervisor_comm,
+                runtime_comm,
+                runtime_logs,
+                read_stderr,
+                proc,
+                log,
+            )
 
 
 class CoordinatorManager:
@@ -636,8 +608,6 @@ def reset_coordinator_manager() -> None:
 __all__ = [
     "BaseCoordinator",
     "CoordinatorManager",
-    "MigratedDagFileParseRequest",
-    "MigratedStartupDetails",
     "get_coordinator_manager",
     "reset_coordinator_manager",
 ]

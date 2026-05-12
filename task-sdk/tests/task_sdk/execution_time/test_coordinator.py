@@ -75,16 +75,21 @@ class TestStartServer:
 
 
 class TestSendStartupDetails:
-    def test_sends_frame_bytes_to_socket(self):
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
+    @staticmethod
+    def _make_startup(payload: dict | None = None):
+        from airflow.sdk.execution_time.comms import StartupDetails
 
-        body = MigratedStartupDetails({"type": "StartupDetails", "ti": {}})
+        msg = MagicMock(spec=StartupDetails)
+        msg.model_dump.return_value = payload or {"type": "StartupDetails", "ti": {}}
+        return msg
+
+    def test_sends_frame_bytes_to_socket(self):
+        msg = self._make_startup()
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, body)
+        _send_startup_details(mock_socket, msg, client_version=None)
 
         mock_socket.sendall.assert_called_once()
-
         sent_bytes = mock_socket.sendall.call_args[0][0]
         assert len(sent_bytes) > 4
         length = int.from_bytes(sent_bytes[:4], "big")
@@ -93,63 +98,49 @@ class TestSendStartupDetails:
     def test_frame_contains_response_id_zero(self):
         import msgpack
 
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
-
-        body = MigratedStartupDetails({"type": "StartupDetails"})
+        msg = self._make_startup()
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, body)
+        _send_startup_details(mock_socket, msg, client_version=None)
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
         assert frame[0] == 0
 
-    def test_frame_body_matches_input(self):
+    def test_unbound_uses_model_dump(self):
         import msgpack
 
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
-
         payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}, "dag_rel_path": "test.jar"}
-        body = MigratedStartupDetails(payload)
+        msg = self._make_startup(payload)
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, body)
+        _send_startup_details(mock_socket, msg, client_version=None)
 
+        msg.model_dump.assert_called_once_with(mode="json")
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
         assert frame[1] == payload
 
-    def test_real_socket_roundtrip(self):
+    def test_bound_routes_through_migrator(self):
         import msgpack
 
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
+        msg = self._make_startup({"head-only": True})
+        downgraded = {"type": "StartupDetails", "ti": {"task_id": "t1"}}
+        mock_socket = MagicMock(spec=socket.socket)
 
-        server = socket.socket()
-        server.bind(("127.0.0.1", 0))
-        server.listen(1)
-        addr = server.getsockname()
+        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
+            mock_get.return_value.downgrade.return_value = downgraded
+            _send_startup_details(mock_socket, msg, client_version="2026-04-17")
 
-        client = socket.socket()
-        client.connect(addr)
-        conn, _ = server.accept()
-
-        try:
-            payload = {"type": "StartupDetails", "value": 42}
-            body = MigratedStartupDetails(payload)
-
-            _send_startup_details(conn, body)
-
-            length_bytes = client.recv(4)
-            length = int.from_bytes(length_bytes, "big")
-
-            data = client.recv(length)
-            frame = msgpack.unpackb(data)
-            assert frame[0] == 0
-            assert frame[1] == payload
-        finally:
-            conn.close()
-            client.close()
-            server.close()
+        # ``client_version`` set: migrator downgrades (with json mode
+        # forced) instead of falling through to model_dump.
+        mock_get.return_value.downgrade.assert_called_once_with(
+            msg, "2026-04-17", dump_kwargs={"mode": "json"}
+        )
+        msg.model_dump.assert_not_called()
+        sent_bytes = mock_socket.sendall.call_args[0][0]
+        frame = msgpack.unpackb(sent_bytes[4:])
+        assert frame[1] == downgraded
 
 
 class TestBaseCoordinatorDefaults:
@@ -167,66 +158,6 @@ class TestBaseCoordinatorDefaults:
         # every foreign-runtime payload to the wrong version.
         with pytest.raises(NotImplementedError):
             BaseCoordinator().target_schema_version(MagicMock())
-
-    def test_migrate_startup_details_delegates_to_in_process_migrator(self):
-        # The base implementation is the contract the supervisor relies
-        # on: it must forward the call to the in-process
-        # ``SchemaVersionMigrator`` (no HTTP) so the foreign runtime
-        # receives a body shaped for its pinned schema version. The
-        # target version comes from ``self.target_schema_version``;
-        # the supervisor passes no version of its own.
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
-
-        class _Coordinator(BaseCoordinator):
-            def target_schema_version(self, schema):
-                return "2026-04-17"
-
-        schema = MagicMock()
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails", "ti": {}}
-            result = _Coordinator().migrate_startup_details(schema)
-
-        mock_get.return_value.downgrade.assert_called_once_with(schema, "2026-04-17")
-        # Result is wrapped in the dedicated dict-subclass so the call
-        # site cannot mistake it for a latest-schema Pydantic model.
-        assert isinstance(result, MigratedStartupDetails)
-        assert result == {"type": "StartupDetails", "ti": {}}
-
-    def test_migrate_dag_file_parse_request_delegates_to_in_process_migrator(self):
-        # Same contract as migrate_startup_details: the base method
-        # forwards the canonical ``DagFileParseRequest`` to the
-        # in-process migrator. The supervisor IPC bundle versions the
-        # canonical shape directly -- no slim mirror, and the
-        # ``callback_requests`` field is left to the migrator's
-        # passthrough behaviour.
-        from pathlib import Path
-
-        from airflow.dag_processing.processor import DagFileParseRequest
-        from airflow.sdk.execution_time.coordinator import MigratedDagFileParseRequest
-
-        class _Coordinator(BaseCoordinator):
-            def target_schema_version(self, schema):
-                return "2026-04-17"
-
-        schema = DagFileParseRequest(
-            file="/b/dags/x.jar",
-            bundle_path=Path("/b"),
-            bundle_name="b",
-            callback_requests=[],
-        )
-
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = {
-                "type": "DagFileParseRequest",
-                "file": "/b/dags/x.jar",
-                "bundle_path": "/b",
-                "bundle_name": "b",
-            }
-            result = _Coordinator().migrate_dag_file_parse_request(schema)
-
-        # The migrator received the canonical ``DagFileParseRequest`` as-is.
-        mock_get.return_value.downgrade.assert_called_once_with(schema, "2026-04-17")
-        assert isinstance(result, MigratedDagFileParseRequest)
 
     def test_dag_parsing_cmd_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):
@@ -535,8 +466,6 @@ class TestRuntimeSubprocessEntrypoint:
         mock_lock_instance.__enter__ = MagicMock(return_value=mock_lock_instance)
         mock_lock_instance.__exit__ = MagicMock(return_value=False)
 
-        from airflow.sdk.execution_time.coordinator import MigratedStartupDetails
-
         startup_payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}}
         mock_ti = MagicMock()
         mock_bundle_info = MagicMock()
@@ -551,6 +480,7 @@ class TestRuntimeSubprocessEntrypoint:
             dag_rel_path="dags/example.test",
             bundle_info=mock_bundle_info,
             startup_details=mock_startup,
+            client_version="2026-04-17",
         )
 
         supervisor_comm = MagicMock(spec=socket.socket)
@@ -568,11 +498,10 @@ class TestRuntimeSubprocessEntrypoint:
         cmd = mock_popen.call_args[0][0]
         assert cmd == ["test-runtime", "--execute", "/resolved/bundles/test-bundle/dags/example.test"]
 
-        mock_send_startup.assert_called_once()
-        send_args, _ = mock_send_startup.call_args
-        assert send_args[0] is runtime_comm
-        assert isinstance(send_args[1], MigratedStartupDetails)
-        assert dict(send_args[1]) == startup_payload
+        # Seed StartupDetails is downgraded once before being written to
+        # the runtime socket. The head Pydantic model and the resolved
+        # client_version both reach ``_send_startup_details``.
+        mock_send_startup.assert_called_once_with(runtime_comm, mock_startup, "2026-04-17")
         mock_bridge.assert_called_once()
 
     @patch("airflow.sdk.execution_time.coordinator._bridge")
