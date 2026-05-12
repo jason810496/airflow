@@ -41,7 +41,7 @@ that only reads/writes ``info.body``, so a body-only ``_BodyInfo``
 duck-type lets us skip the HTTP plumbing entirely.
 
 The downgrade path additionally validates the walked body against
-the cadwyn-generated versioned class for *client_version*. That is
+the cadwyn-generated versioned class for *lang_sdk_version*. That is
 how a declarative ``schema(X).field(Y).didnt_exist`` (no companion
 ``convert_response_to_previous_version_for``) actually drops the
 field on the wire -- the field is removed from the class shape, not
@@ -97,13 +97,13 @@ class SchemaVersionMigrator:
 
     The supervisor is always on the head shape of *bundle* (its
     canonical Pydantic models). Each foreign runtime is pinned to a
-    specific dated client version; this class walks Cadwyn's
+    specific dated lang SDK version; this class walks Cadwyn's
     ``VersionChange`` chain in-process to bridge the two::
 
-        head shape  --- downgrade(body, client) --->  client wire
-        head shape  <-- upgrade(body, client)   ---   client wire
+        head shape  --- downgrade(body, lang_sdk) --->  lang SDK wire
+        head shape  <-- upgrade(body, lang_sdk)   ---   lang SDK wire
 
-    *server_version* is fixed at construction time. It defaults to
+    *supervisor_version* is fixed at construction time. It defaults to
     ``bundle.versions[0].value`` -- cadwyn keeps that tuple in
     newest-to-oldest order, and the very last entry is asserted to
     carry no migrations (it is the baseline), so [0] is the natural
@@ -118,33 +118,35 @@ class SchemaVersionMigrator:
     first breaking field change ships.
     """
 
-    __slots__ = ("_bundle", "_server_version")
+    __slots__ = ("_bundle", "_supervisor_version")
 
-    def __init__(self, bundle: VersionBundle, server_version: str | None = None) -> None:
+    def __init__(self, bundle: VersionBundle, supervisor_version: str | None = None) -> None:
         self._bundle = bundle
-        self._server_version = server_version if server_version is not None else bundle.versions[0].value
+        self._supervisor_version = (
+            supervisor_version if supervisor_version is not None else bundle.versions[0].value
+        )
 
     @property
-    def server_version(self) -> str:
-        return self._server_version
+    def supervisor_version(self) -> str:
+        return self._supervisor_version
 
     def downgrade(
         self,
         body: BaseModel,
-        client_version: str | date,
+        lang_sdk_version: str | date,
         *,
         dump_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Migrate *body* from the server (head) shape down to *client_version*.
+        Migrate *body* from the server (head) shape down to *lang_sdk_version*.
 
         Used on the supervisor -> foreign-runtime path: *body* is a
         head-shape Pydantic instance, and the returned dict matches
-        the wire shape the client SDK was built against.
+        the wire shape the lang SDK was built against.
 
         :param body: A Pydantic instance shaped according to the head
             (latest) version of the bundle.
-        :param client_version: Either an ISO-format date string (e.g.
+        :param lang_sdk_version: Either an ISO-format date string (e.g.
             ``"2026-04-17"``) or a :class:`datetime.date`. Cadwyn maps
             a ``date`` to the closest lesser defined version.
         :param dump_kwargs: Optional keyword arguments forwarded to
@@ -158,7 +160,7 @@ class SchemaVersionMigrator:
             instructions (keyed by Python field name) will not match.
             Safe for models without registered field-level migrations
             today; revisit if an aliased model ever ships migrations.
-        :returns: A plain dict shaped for *client_version*. Returning
+        :returns: A plain dict shaped for *lang_sdk_version*. Returning
             a dict (rather than a versioned Pydantic instance) is
             deliberate: call sites forward the result straight onto an
             IPC frame.
@@ -167,16 +169,16 @@ class SchemaVersionMigrator:
             raise TypeError(
                 f"SchemaVersionMigrator.downgrade expects a pydantic BaseModel instance, got {type(body)!r}"
             )
-        client_value = self._resolve(client_version)
+        lang_sdk_value = self._resolve(lang_sdk_version)
         body_type = type(body)
         merged_dump_kwargs: dict[str, Any] = {**(dump_kwargs or {}), "mode": "json"}
         # ``mode="json"`` so datetime/UUID/Path serialise to primitives
         # the versioned-model validators inside the chain accept.
         info = _BodyInfo(body.model_dump(**merged_dump_kwargs))
         for version in self._bundle.versions:
-            if version.value > self._server_version:
+            if version.value > self._supervisor_version:
                 continue
-            if version.value <= client_value:
+            if version.value <= lang_sdk_value:
                 break
             for change in version.changes:
                 for instr in change.alter_response_by_schema_instructions.get(body_type, ()):
@@ -185,21 +187,21 @@ class SchemaVersionMigrator:
         # ``schema(X).field(Y).didnt_exist`` instructions take effect:
         # those alter the class shape, not the dict, so without this
         # round-trip the dropped field would still appear on the wire.
-        versioned_class: type[BaseModel] = generate_versioned_models(self._bundle)[client_value][body_type]
+        versioned_class: type[BaseModel] = generate_versioned_models(self._bundle)[lang_sdk_value][body_type]
         return versioned_class.model_validate(info.body).model_dump(**merged_dump_kwargs)
 
     def upgrade(
         self,
         body: dict[str, Any],
         body_type: type[BaseModel],
-        client_version: str | date,
+        lang_sdk_version: str | date,
     ) -> dict[str, Any]:
         """
-        Migrate *body* from *client_version* up to the server (head) shape.
+        Migrate *body* from *lang_sdk_version* up to the server (head) shape.
 
         Used on the foreign-runtime -> supervisor path: *body* is the
         already-deserialised payload off the wire (still in the
-        client's schema), and the returned dict is shaped for
+        lang SDK's schema), and the returned dict is shaped for
         ``model_validate`` against the head Pydantic class.
 
         *body_type* must be supplied because a dict carries no Python
@@ -211,18 +213,18 @@ class SchemaVersionMigrator:
         :param body: The wire payload as a dict.
         :param body_type: The head Pydantic class *body* should
             validate against once migrated.
-        :param client_version: Either an ISO-format date string or a
+        :param lang_sdk_version: Either an ISO-format date string or a
             :class:`datetime.date` (mapped to the closest lesser
             defined version).
         """
         if not isinstance(body, dict):
             raise TypeError(f"SchemaVersionMigrator.upgrade expects a dict payload, got {type(body)!r}")
-        client_value = self._resolve(client_version)
+        lang_sdk_value = self._resolve(lang_sdk_version)
         info = _BodyInfo(body)
         for version in self._bundle.reversed_versions:
-            if version.value <= client_value:
+            if version.value <= lang_sdk_value:
                 continue
-            if version.value > self._server_version:
+            if version.value > self._supervisor_version:
                 continue
             for change in version.changes:
                 for instr in change.alter_request_by_schema_instructions.get(body_type, ()):

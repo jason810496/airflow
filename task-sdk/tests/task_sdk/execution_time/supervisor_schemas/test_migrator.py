@@ -107,7 +107,7 @@ class TestSchemaVersionMigratorDowngradeAgainstSyntheticBundle:
 
     @pytest.fixture
     def migrator(self) -> SchemaVersionMigrator:
-        # Default server_version picks up the latest dated entry
+        # Default supervisor_version picks up the latest dated entry
         # (``3026-06-16``) -- the same anchor the real supervisor uses.
         return SchemaVersionMigrator(_BUNDLE)
 
@@ -118,10 +118,10 @@ class TestSchemaVersionMigratorDowngradeAgainstSyntheticBundle:
             sentry_trace_id="00-trace-span-00",
         )
 
-    def test_server_version_defaults_to_latest_dated_entry(self, migrator):
+    def test_supervisor_version_defaults_to_latest_dated_entry(self, migrator):
         # ``bundle.versions`` is newest -> oldest; the supervisor's
         # head wire shape is the latest released date.
-        assert migrator.server_version == "3026-06-16"
+        assert migrator.supervisor_version == "3026-06-16"
 
     def test_head_version_returns_every_field(self, migrator):
         out = migrator.downgrade(self._body(), "3026-06-16")
@@ -231,22 +231,22 @@ class TestSchemaVersionMigratorUpgradeAgainstSyntheticBundle:
         assert out == {"value": 42}
 
 
-class TestSchemaVersionMigratorRespectsExplicitServerVersion:
+class TestSchemaVersionMigratorRespectsExplicitSupervisorVersion:
     """
-    A migrator pinned to an older ``server_version`` must stop walking
+    A migrator pinned to an older ``supervisor_version`` must stop walking
     once the chain reaches that anchor. This is the knob a coordinator
     on a non-head build would use to clamp the upgrade walk so that
     transformers above its own version are not applied.
 
     Only the upgrade direction is asserted here: the downgrade walk
     delegates the final field-shape to ``generate_versioned_models``
-    keyed by *client_version*, which is independent of the server
+    keyed by *lang_sdk_version*, which is independent of the supervisor
     anchor, so the anchor has no observable effect when the inbound
-    body is already shaped for *server_version*.
+    body is already shaped for *supervisor_version*.
     """
 
-    def test_upgrade_does_not_apply_changes_above_server_anchor(self):
-        migrator = SchemaVersionMigrator(_BUNDLE, server_version="3026-04-17")
+    def test_upgrade_does_not_apply_changes_above_supervisor_anchor(self):
+        migrator = SchemaVersionMigrator(_BUNDLE, supervisor_version="3026-04-17")
         out = migrator.upgrade({"ti_id": "t1"}, _SyntheticBody, "3025-01-01")
         # The 04-17 backfill ran; the 06-16 backfill did not.
         assert out["queue_capacity"] == 0
@@ -273,9 +273,9 @@ class TestGetSchemaVersionMigrator:
 
         assert get_schema_version_migrator()._bundle is bundle
 
-    def test_server_version_defaults_to_real_bundle_head(self):
+    def test_supervisor_version_defaults_to_real_bundle_head(self):
         # The supervisor anchor must be the latest dated entry in the
         # real bundle -- never the head sentinel, never silently older.
         from airflow.sdk.execution_time.supervisor_schemas.versions import bundle
 
-        assert get_schema_version_migrator().server_version == bundle.versions[0].value
+        assert get_schema_version_migrator().supervisor_version == bundle.versions[0].value

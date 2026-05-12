@@ -143,6 +143,7 @@ from airflow.sdk.execution_time.request_handlers import (
     handle_mask_secret,
 )
 from airflow.sdk.execution_time.selector_loop import make_buffered_socket_reader, service_selector
+from airflow.sdk.execution_time.supervisor_schemas import resolve_body_class
 
 try:
     from socket import send_fds
@@ -567,7 +568,7 @@ class WatchedSubprocess:
     start_time: float = attrs.field(factory=time.monotonic)
     """The start time of the child process."""
 
-    client_version: str | None = attrs.field(default=None, init=False)
+    lang_sdk_version: str | None = attrs.field(default=None, init=False)
     """
     Pinned client schema version for the child process, when the child
     is a foreign-language runtime launched by a coordinator. When set,
@@ -762,11 +763,11 @@ class WatchedSubprocess:
 
         """
         if isinstance(msg, BaseModel):
-            if self.client_version is not None:
+            if self.lang_sdk_version is not None:
                 from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
                 body = get_schema_version_migrator().downgrade(
-                    msg, self.client_version, dump_kwargs=dump_opts or None
+                    msg, self.lang_sdk_version, dump_kwargs=dump_opts or None
                 )
             else:
                 body = msg.model_dump(**dump_opts)
@@ -783,13 +784,14 @@ class WatchedSubprocess:
             request = yield
 
             body = request.body
-            if self.client_version is not None and isinstance(body, dict):
-                from airflow.sdk.execution_time.comms import _resolve_body_type
+            if (
+                self.lang_sdk_version is not None
+                and isinstance(body, dict)
+                and (body_type := resolve_body_class(body)) is not None
+            ):
                 from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-                body_type = _resolve_body_type(body)
-                if body_type is not None:
-                    body = get_schema_version_migrator().upgrade(body, body_type, self.client_version)
+                body = get_schema_version_migrator().upgrade(body, body_type, self.lang_sdk_version)
             try:
                 msg = self.decoder.validate_python(body)
             except Exception:
@@ -1224,16 +1226,7 @@ class ActivitySubprocess(WatchedSubprocess):
         # The supervisor -> task_runner channel is always Python, so the seed
         # StartupDetails is sent in head shape: task_runner decodes it natively
         # and only then forks the foreign-language runtime subprocess (downgrading
-        # the seed once for that hand-off). After the seed is sent, we pin
-        # ``self.client_version`` to the coordinator's pinned schema version
-        # (resolved from ``ti.queue`` / ``dag_rel_path``) so every subsequent
-        # ``send_msg`` (responses to ``GetConnection`` etc.) and ``handle_requests``
-        # decode is migrated through the supervisor IPC bundle.
-        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
-
-        if (coordinator := get_coordinator_manager().for_queue(ti.queue)) is not None:
-            self.client_version = coordinator.target_schema_version(msg)
-
+        # the seed once for that hand-off inside ``_send_startup_details``).
         log.debug("Sending", msg=msg)
         try:
             self.send_msg(msg, request_id=0)
@@ -1241,6 +1234,16 @@ class ActivitySubprocess(WatchedSubprocess):
             # Debug is fine, the process will have shown _something_ in it's last_chance exception handler
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
             return
+
+        # After the seed is sent, pin ``self.lang_sdk_version`` to the
+        # coordinator's pinned schema version (resolved from ``ti.queue`` /
+        # ``dag_rel_path``) so every subsequent ``send_msg`` (responses to
+        # ``GetConnection`` etc.) and ``handle_requests`` decode is migrated
+        # through the supervisor IPC bundle.
+        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
+
+        if (coordinator := get_coordinator_manager().for_queue(ti.queue)) is not None:
+            self.lang_sdk_version = coordinator.target_schema_version(msg)
 
     def wait(self) -> int:
         if self._exit_code is not None:

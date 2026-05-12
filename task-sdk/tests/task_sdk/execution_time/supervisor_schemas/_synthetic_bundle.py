@@ -181,17 +181,17 @@ def install_synthetic_migrator() -> None:
     registry with ones backed by :data:`SYNTHETIC_BUNDLE`.
 
     Every production call site re-imports
-    ``get_schema_version_migrator`` and ``_registered_models_by_name``
+    ``get_schema_version_migrator`` and ``registered_models_by_name``
     per call, so re-binding the module-level attributes is enough to
     redirect every downgrade and upgrade through the synthetic bundle.
     Idempotent: calling twice leaves the rebound state unchanged.
     """
-    from airflow.sdk.execution_time import comms as comms_mod, supervisor_schemas as ss_mod
+    from airflow.sdk.execution_time import supervisor_schemas as ss_mod
     from airflow.sdk.execution_time.supervisor_schemas import SchemaVersionMigrator
 
     migrator = SchemaVersionMigrator(SYNTHETIC_BUNDLE)
     ss_mod.get_schema_version_migrator = lambda: migrator  # type: ignore[assignment]
-    comms_mod._registered_models_by_name = lambda: {  # type: ignore[assignment]
+    ss_mod.registered_models_by_name = lambda: {  # type: ignore[assignment]
         "_RequestBody": _RequestBody,
         "_ResponseBody": _ResponseBody,
     }

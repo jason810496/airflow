@@ -15,16 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Unit tests for the ``client_version`` attribute on ``WatchedSubprocess``.
+Unit tests for the ``lang_sdk_version`` attribute on ``WatchedSubprocess``.
 
 Pins:
 
-1. Default ``client_version`` is ``None`` -- existing behaviour is
+1. Default ``lang_sdk_version`` is ``None`` -- existing behaviour is
    unchanged for Python-runtime children.
-2. With ``client_version`` set, ``send_msg`` routes head Pydantic
+2. With ``lang_sdk_version`` set, ``send_msg`` routes head Pydantic
    bodies through the migrator's ``downgrade`` (forwarding
    ``dump_opts`` via ``dump_kwargs``).
-3. With ``client_version`` set, ``handle_requests`` upgrades incoming
+3. With ``lang_sdk_version`` set, ``handle_requests`` upgrades incoming
    wire-shape dicts before validating via ``self.decoder``.
 4. Unknown or missing body-type discriminators fall through to the
    underlying ``TypeAdapter`` -- same contract as ``CommsDecoder``.
@@ -84,15 +84,15 @@ def _new_watched_subprocess() -> _StubWatchedSubprocess:
 class TestClientVersionDefault:
     def test_default_is_none(self):
         ws = _new_watched_subprocess()
-        assert ws.client_version is None
+        assert ws.lang_sdk_version is None
 
 
 class TestSendMsgDowngradesWhenBound:
-    """When ``client_version`` is set, ``send_msg`` routes BaseModel bodies through downgrade."""
+    """When ``lang_sdk_version`` is set, ``send_msg`` routes BaseModel bodies through downgrade."""
 
     def test_basemodel_body_is_downgraded(self):
         ws = _new_watched_subprocess()
-        ws.client_version = "2026-04-17"
+        ws.lang_sdk_version = "2026-04-17"
         msg = _FakeBody(payload="hello")
         wire = {"type": "_FakeBody", "payload": "downgraded"}
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
@@ -104,7 +104,7 @@ class TestSendMsgDowngradesWhenBound:
 
     def test_dump_opts_are_forwarded_to_migrator(self):
         ws = _new_watched_subprocess()
-        ws.client_version = "2026-04-17"
+        ws.lang_sdk_version = "2026-04-17"
         msg = _FakeBody()
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.downgrade.return_value = {"type": "_FakeBody"}
@@ -114,7 +114,7 @@ class TestSendMsgDowngradesWhenBound:
         )
 
     def test_unbound_uses_model_dump_directly(self):
-        ws = _new_watched_subprocess()  # client_version is None
+        ws = _new_watched_subprocess()  # lang_sdk_version is None
         msg = MagicMock(spec=BaseModel)
         msg.model_dump.return_value = {"type": "Whatever"}
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
@@ -124,7 +124,7 @@ class TestSendMsgDowngradesWhenBound:
 
 
 class TestHandleRequestsUpgradesWhenBound:
-    """When ``client_version`` is set, ``handle_requests`` upgrades dicts before decoding."""
+    """When ``lang_sdk_version`` is set, ``handle_requests`` upgrades dicts before decoding."""
 
     def _drive_one_request(self, ws: WatchedSubprocess, body) -> Any:
         """Feed one request into the handle_requests generator and return what self.decoder saw."""
@@ -138,7 +138,7 @@ class TestHandleRequestsUpgradesWhenBound:
 
     def test_upgrade_called_for_known_body_type(self):
         ws = _new_watched_subprocess()
-        ws.client_version = "2026-04-17"
+        ws.lang_sdk_version = "2026-04-17"
         ws.decoder = MagicMock(spec=TypeAdapter)
         ws.decoder.validate_python.return_value = "validated"
         wire = {"type": "GetConnection", "conn_id": "c1"}
@@ -156,7 +156,7 @@ class TestHandleRequestsUpgradesWhenBound:
 
     def test_unknown_body_type_falls_through(self):
         ws = _new_watched_subprocess()
-        ws.client_version = "2026-04-17"
+        ws.lang_sdk_version = "2026-04-17"
         ws.decoder = MagicMock(spec=TypeAdapter)
         ws.decoder.validate_python.return_value = "validated"
         wire = {"type": "DefinitelyNotAType"}
@@ -167,7 +167,7 @@ class TestHandleRequestsUpgradesWhenBound:
 
     def test_missing_type_falls_through(self):
         ws = _new_watched_subprocess()
-        ws.client_version = "2026-04-17"
+        ws.lang_sdk_version = "2026-04-17"
         ws.decoder = MagicMock(spec=TypeAdapter)
         ws.decoder.validate_python.return_value = "validated"
         wire = {"payload": "x"}
@@ -177,7 +177,7 @@ class TestHandleRequestsUpgradesWhenBound:
         ws.decoder.validate_python.assert_called_once_with(wire)
 
     def test_unbound_does_not_call_upgrade(self):
-        ws = _new_watched_subprocess()  # client_version is None
+        ws = _new_watched_subprocess()  # lang_sdk_version is None
         ws.decoder = MagicMock(spec=TypeAdapter)
         ws.decoder.validate_python.return_value = "validated"
         wire = {"type": "GetConnection", "conn_id": "c1"}
@@ -188,20 +188,20 @@ class TestHandleRequestsUpgradesWhenBound:
 
 
 class TestClientVersionIsolation:
-    """Two WatchedSubprocess instances do not share client_version state."""
+    """Two WatchedSubprocess instances do not share lang_sdk_version state."""
 
     def test_two_instances_with_different_versions(self):
         a = _new_watched_subprocess()
         b = _new_watched_subprocess()
-        a.client_version = "2026-04-17"
-        b.client_version = "2026-06-16"
-        assert a.client_version == "2026-04-17"
-        assert b.client_version == "2026-06-16"
+        a.lang_sdk_version = "2026-04-17"
+        b.lang_sdk_version = "2026-06-16"
+        assert a.lang_sdk_version == "2026-04-17"
+        assert b.lang_sdk_version == "2026-06-16"
 
     @pytest.mark.parametrize("version", ["2026-04-17", "2026-06-16", None])
     def test_assigning_does_not_leak_to_class(self, version):
         ws = _new_watched_subprocess()
-        ws.client_version = version
+        ws.lang_sdk_version = version
         # A fresh instance still defaults to None.
         ws2 = _new_watched_subprocess()
-        assert ws2.client_version is None
+        assert ws2.lang_sdk_version is None

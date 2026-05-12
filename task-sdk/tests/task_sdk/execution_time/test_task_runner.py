@@ -5164,10 +5164,10 @@ class TestResolveRuntimeEntrypoint:
     """
     When ``_resolve_runtime_entrypoint`` picks a coordinator, the
     returned partial hands ``coordinator.run_task_execution`` the head
-    ``StartupDetails`` model plus the resolved ``client_version``. The
+    ``StartupDetails`` model plus the resolved ``lang_sdk_version``. The
     one-shot seed downgrade to the runtime's wire shape happens later,
     inside ``_send_startup_details``; every subsequent IPC frame is
-    migrated by the supervisor parent through its ``client_version``
+    migrated by the supervisor parent through its ``lang_sdk_version``
     pin.
     """
 
@@ -5203,16 +5203,16 @@ class TestResolveRuntimeEntrypoint:
         # The head ``StartupDetails`` is threaded through to the
         # coordinator entrypoint untouched; the one-shot seed downgrade
         # happens later inside ``_send_startup_details`` using the
-        # resolved ``client_version``.
+        # resolved ``lang_sdk_version``.
         assert entrypoint is not None
         assert entrypoint.keywords["startup_details"] is startup
-        assert entrypoint.keywords["client_version"] == "2026-04-17"
+        assert entrypoint.keywords["lang_sdk_version"] == "2026-04-17"
         coordinator.target_schema_version.assert_called_once_with(startup)
 
     def test_extension_fallback_path_forwards_head_startup_details(self, mocker):
         # Pure-runtime DAGs (no queue mapping) resolve the coordinator by
         # file extension. The seed body is still the head model -- only
-        # the resolved ``client_version`` changes.
+        # the resolved ``lang_sdk_version`` changes.
         from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
         from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
 
@@ -5232,7 +5232,7 @@ class TestResolveRuntimeEntrypoint:
 
         assert entrypoint is not None
         assert entrypoint.keywords["startup_details"] is startup
-        assert entrypoint.keywords["client_version"] == "2026-04-17"
+        assert entrypoint.keywords["lang_sdk_version"] == "2026-04-17"
 
     def test_no_coordinator_skips_migration_entirely(self, mocker):
         # The Python worker path must not pay for a migration: nothing

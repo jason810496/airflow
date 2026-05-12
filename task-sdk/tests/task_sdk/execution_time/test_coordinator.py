@@ -87,7 +87,9 @@ class TestSendStartupDetails:
         msg = self._make_startup()
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, msg, client_version=None)
+        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
+            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
+            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
 
         mock_socket.sendall.assert_called_once()
         sent_bytes = mock_socket.sendall.call_args[0][0]
@@ -101,27 +103,15 @@ class TestSendStartupDetails:
         msg = self._make_startup()
         mock_socket = MagicMock(spec=socket.socket)
 
-        _send_startup_details(mock_socket, msg, client_version=None)
+        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
+            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
+            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
         assert frame[0] == 0
 
-    def test_unbound_uses_model_dump(self):
-        import msgpack
-
-        payload = {"type": "StartupDetails", "ti": {"task_id": "t1"}, "dag_rel_path": "test.jar"}
-        msg = self._make_startup(payload)
-        mock_socket = MagicMock(spec=socket.socket)
-
-        _send_startup_details(mock_socket, msg, client_version=None)
-
-        msg.model_dump.assert_called_once_with(mode="json")
-        sent_bytes = mock_socket.sendall.call_args[0][0]
-        frame = msgpack.unpackb(sent_bytes[4:])
-        assert frame[1] == payload
-
-    def test_bound_routes_through_migrator(self):
+    def test_routes_through_migrator(self):
         import msgpack
 
         msg = self._make_startup({"head-only": True})
@@ -130,10 +120,10 @@ class TestSendStartupDetails:
 
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.downgrade.return_value = downgraded
-            _send_startup_details(mock_socket, msg, client_version="2026-04-17")
+            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
 
-        # ``client_version`` set: migrator downgrades (with json mode
-        # forced) instead of falling through to model_dump.
+        # The seed StartupDetails is always downgraded through the
+        # migrator (json mode forced) before being framed.
         mock_get.return_value.downgrade.assert_called_once_with(
             msg, "2026-04-17", dump_kwargs={"mode": "json"}
         )
@@ -202,10 +192,12 @@ class TestCoordinatorNamedTuples:
             dag_rel_path="dags/example.jar",
             bundle_info=mock_bundle,
             startup_details=mock_startup,
+            lang_sdk_version="2026-04-17",
         )
         assert info.mode == "task-execution"
         assert info.what is mock_ti
         assert info.dag_rel_path == "dags/example.jar"
+        assert info.lang_sdk_version == "2026-04-17"
 
 
 class TestBridge:
@@ -342,6 +334,7 @@ class TestRunTaskExecution:
             dag_rel_path="dags/example.jar",
             bundle_info=mock_bundle_info,
             startup_details=mock_startup,
+            lang_sdk_version="2026-04-17",
         )
 
         mock_entrypoint.assert_called_once()
@@ -351,6 +344,7 @@ class TestRunTaskExecution:
         assert info.dag_rel_path == "dags/example.jar"
         assert info.bundle_info is mock_bundle_info
         assert info.startup_details is mock_startup
+        assert info.lang_sdk_version == "2026-04-17"
         assert info.mode == "task-execution"
 
 
@@ -480,7 +474,7 @@ class TestRuntimeSubprocessEntrypoint:
             dag_rel_path="dags/example.test",
             bundle_info=mock_bundle_info,
             startup_details=mock_startup,
-            client_version="2026-04-17",
+            lang_sdk_version="2026-04-17",
         )
 
         supervisor_comm = MagicMock(spec=socket.socket)
@@ -500,7 +494,7 @@ class TestRuntimeSubprocessEntrypoint:
 
         # Seed StartupDetails is downgraded once before being written to
         # the runtime socket. The head Pydantic model and the resolved
-        # client_version both reach ``_send_startup_details``.
+        # lang_sdk_version both reach ``_send_startup_details``.
         mock_send_startup.assert_called_once_with(runtime_comm, mock_startup, "2026-04-17")
         mock_bridge.assert_called_once()
 

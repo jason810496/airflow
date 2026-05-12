@@ -47,7 +47,8 @@ consume for codegen.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated, get_args, get_origin
+import functools
+from typing import TYPE_CHECKING, Annotated, Any, get_args, get_origin
 
 from airflow.sdk.execution_time.supervisor_schemas.migrator import (
     SchemaVersionMigrator,
@@ -66,6 +67,30 @@ def _members_of_discriminated_union(union_type: object) -> tuple[type, ...]:
         union_type = get_args(union_type)[0]
     members = get_args(union_type)
     return tuple(m for m in members if isinstance(m, type))
+
+
+@functools.cache
+def registered_models_by_name() -> dict[str, type[BaseModel]]:
+    """
+    Map every supervisor-IPC body's class name to the head Pydantic class.
+
+    Used by :func:`resolve_body_class` to resolve a wire-shape
+    discriminator (``body["type"]``) to the head class the migrator's
+    ``upgrade`` path needs. Cached per-process; the registry only
+    changes when a union member is added in ``comms.py`` or
+    ``processor.py``, which requires a restart anyway.
+    """
+    return {cls.__name__: cls for cls in registered_models()}
+
+
+def resolve_body_class(body: Any) -> type[BaseModel] | None:
+    """Resolve a wire-body dict's ``type`` discriminator to its head Pydantic class."""
+    if not isinstance(body, dict):
+        return None
+    name = body.get("type")
+    if not isinstance(name, str):
+        return None
+    return registered_models_by_name().get(name)
 
 
 def registered_models() -> tuple[type[BaseModel], ...]:
@@ -101,4 +126,6 @@ __all__ = [
     "bundle",
     "get_schema_version_migrator",
     "registered_models",
+    "registered_models_by_name",
+    "resolve_body_class",
 ]

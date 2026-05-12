@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Supervisor-side harness for the supervisor IPC integration test.
+Supervisor-side subprocess for the supervisor IPC integration test.
 
 Plays the role ``airflow dag-processor`` and ``airflow worker`` play
 in production: a real OS process that runs the supervisor side of the
@@ -28,7 +28,7 @@ version) and decodes upstream requests through
 Running the actual ``airflow dag-processor`` or ``airflow worker``
 CLI in a unit-test environment is impractical: both require a
 configured Airflow deployment (database, DAG bundles, queue broker,
-API server). This harness stops one layer earlier -- it constructs
+API server). This subprocess stops one layer earlier -- it constructs
 the same :class:`WatchedSubprocess` subclass the CLI would, configures
 the synthetic schema bundle, launches the runtime through the stub
 coordinator's ``task_execution_cmd`` / ``dag_parsing_cmd``, and
@@ -41,12 +41,12 @@ CLI:
 
   --config PATH    JSON file with the full scenario configuration.
 
-The single-file config keeps the harness invocation hermetic: every
-parameter the test wants to vary lives in the JSON, so the harness's
+The single-file config keeps the subprocess invocation hermetic: every
+parameter the test wants to vary lives in the JSON, so the subprocess's
 argv is identical across scenarios. Required keys:
 
   mode                          "dag-processing" | "task-execution"
-  client_version                pinned schema version (ISO date)
+  lang_sdk_version                pinned schema version (ISO date)
   runtime_script                absolute path to ``_fake_runtime.py``
   runtime_capture_out           where the runtime writes captures
   supervisor_capture_out        where this harness writes captures
@@ -59,12 +59,12 @@ argv is identical across scenarios. Required keys:
   runtime_final_read_count      frames the runtime reads after
                                 sending upstream
 
-The harness records its observations as a JSON object::
+The subprocess records its observations as a JSON object::
 
     {
         "sent": [body_dict, ...],  # head-shape values fed into send_msg
         "received": [body_dict, ...],  # head-shape values after handle_requests upgrade
-        "client_version": "3026-...",
+        "lang_sdk_version": "3026-...",
     }
 """
 
@@ -200,7 +200,7 @@ def _run(config: dict) -> int:
     if mode not in _SUPERVISOR_FOR_MODE:
         raise ValueError(f"unknown mode {mode!r}")
 
-    client_version: str = config["client_version"]
+    lang_sdk_version: str = config["lang_sdk_version"]
     runtime_script: str = config["runtime_script"]
     runtime_capture_out: str = config["runtime_capture_out"]
     supervisor_capture_out: str = config["supervisor_capture_out"]
@@ -230,7 +230,7 @@ def _run(config: dict) -> int:
         os.fspath(runtime_send_frames_path),
     ]
 
-    coordinator = _StubCoordinator(target_version=client_version, runtime_cmd=runtime_cmd)
+    coordinator = _StubCoordinator(target_version=lang_sdk_version, runtime_cmd=runtime_cmd)
 
     comm_server = _start_server()
     host, port = comm_server.getsockname()
@@ -253,7 +253,7 @@ def _run(config: dict) -> int:
 
     try:
         supervisor = _build_supervisor(mode, runtime_sock)
-        supervisor.client_version = coordinator.target_schema_version(None)
+        supervisor.lang_sdk_version = coordinator.target_schema_version(None)
 
         # Phase 1 -- supervisor -> runtime. The task-execution mode
         # starts with the special one-shot ``_send_startup_details``
@@ -265,7 +265,7 @@ def _run(config: dict) -> int:
             response_body = _ResponseBody(**body_dict)
             captured_sent.append(response_body.model_dump(mode="json"))
             if mode == "task-execution" and index == 0:
-                _send_startup_details(runtime_sock, response_body, client_version=client_version)
+                _send_startup_details(runtime_sock, response_body, lang_sdk_version=lang_sdk_version)
             else:
                 supervisor.send_msg(response_body, request_id=index)
 
@@ -298,7 +298,7 @@ def _run(config: dict) -> int:
         json.dumps(
             {
                 "mode": mode,
-                "client_version": client_version,
+                "lang_sdk_version": lang_sdk_version,
                 "sent": captured_sent,
                 "received": captured_received,
             }

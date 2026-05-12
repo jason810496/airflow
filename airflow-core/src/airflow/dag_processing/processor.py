@@ -624,7 +624,7 @@ class DagFileProcessorProcess(WatchedSubprocess):
         # downgrade path -- the foreign runtime receives a payload its
         # decoder understands without an HTTP round-trip.
         if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
-            self.client_version = coordinator.target_schema_version(msg)
+            self.lang_sdk_version = coordinator.target_schema_version(msg)
         self.send_msg(msg, request_id=0)
 
     def _get_target_loggers(self) -> tuple[FilteringBoundLogger, ...]:
