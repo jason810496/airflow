@@ -17,661 +17,354 @@
 """
 End-to-end integration tests for supervisor IPC schema migration.
 
-These tests synthesise a Cadwyn :class:`~cadwyn.VersionBundle` with
-**six dated** :class:`~cadwyn.VersionChange` entries -- three field
-additions on a request body and three on a response body -- and drive
-the full ``send_msg`` / ``handle_requests`` pipeline against a **real
-foreign-runtime subprocess** spawned through the coordinator
-interface. Every msgpack frame in the test crosses a real TCP socket
-between two real OS processes, so the assertions cover the wire
-representation, not just an in-memory model dump.
+Three OS processes participate in every test:
 
-Two body classes mirror the production split between channels:
+- The test parent (pytest) -- orchestrator.
+- :file:`_supervisor_harness.py` -- a real Python subprocess that
+  plays the role ``airflow dag-processor`` and ``airflow worker``
+  play in production. It constructs the same
+  :class:`WatchedSubprocess` subclass the CLIs do and drives
+  :meth:`send_msg` / :meth:`handle_requests` against the runtime
+  process. (The actual CLIs need a full Airflow deployment to run --
+  database, DAG bundles, queue broker -- which is out of scope for a
+  task-sdk unit test; the harness exercises the same Python code
+  paths those CLIs ultimately execute.)
+- :file:`_fake_runtime.py` -- a real Python subprocess that plays the
+  foreign-language runtime (Java, Go, Rust). Spawned by the
+  supervisor harness through the stub coordinator's
+  ``task_execution_cmd`` / ``dag_parsing_cmd``, just as a production
+  coordinator spawns its runtime.
 
-- :class:`_RequestBody` -- runtime -> supervisor. Three fields
-  (``field_a``, ``field_b``, ``field_c``) introduced at three
-  different dates. Each version-change is paired with a
-  ``convert_request_to_next_version_for`` backfill so an older client
-  payload reaches the head Pydantic class with every field present.
-- :class:`_ResponseBody` -- supervisor -> runtime. Three fields
-  (``response_x``, ``response_y``, ``response_z``) introduced at three
-  different dates. No upgrade backfill is needed (responses only flow
-  downgrade direction); ``schema(...).field(...).didnt_exist`` alone
-  trims later fields from the older wire shape.
+Bytes flow over real TCP sockets between the supervisor harness and
+the runtime. Both subprocesses record every wire body they observe
+to a JSON tempfile, and the test parent validates *both* files: the
+downgrade direction (supervisor -> runtime) is checked against the
+runtime's capture; the upgrade direction (runtime -> supervisor) is
+checked against the supervisor harness's capture.
 
-Test ground covered:
-
-- The subprocess the coordinator launches **really receives** a
-  downgraded wire payload (verified via a temp file the runtime
-  writes after reading the seed frame).
-- The same runtime subprocess **really sends back** a wire-shape
-  request that the supervisor of either channel
-  (:class:`ActivitySubprocess` analogue / :class:`DagFileProcessorProcess`
-  analogue) upgrades to head before the decoder validates it.
-- The coordinator's ``target_schema_version`` is the single source
-  of truth for ``WatchedSubprocess.client_version`` -- both
-  task-execution and dag-processing wiring resolve from there.
+The synthetic bundle the harnesses share has **six** dated
+:class:`~cadwyn.VersionChange` entries -- three on ``_RequestBody``
+(runtime -> supervisor) and three on ``_ResponseBody`` (supervisor
+-> runtime). Tests parameterise the runtime's pinned client version
+across all seven defined dates plus the baseline, so every transformer
+in the chain runs in at least one scenario for each channel.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, ClassVar, Literal
-from unittest.mock import MagicMock
+from typing import Any
 
-import msgspec
-import psutil
 import pytest
-import structlog
-from cadwyn import (
-    HeadVersion,
-    Version,
-    VersionBundle,
-    VersionChange,
-    convert_request_to_next_version_for,
-    schema,
-)
-from pydantic import BaseModel, TypeAdapter
-from uuid6 import uuid7
+from task_sdk.execution_time.supervisor_schemas._synthetic_bundle import ALL_VERSIONS
 
-from airflow.sdk.execution_time.comms import _RequestFrame
-from airflow.sdk.execution_time.coordinator import BaseCoordinator, _send_startup_details, _start_server
-from airflow.sdk.execution_time.supervisor import WatchedSubprocess
-from airflow.sdk.execution_time.supervisor_schemas import SchemaVersionMigrator
-
-_FAKE_RUNTIME_SCRIPT = Path(__file__).with_name("_fake_runtime.py")
+HERE = Path(__file__).resolve().parent
+SUPERVISOR_HARNESS = HERE / "_supervisor_harness.py"
+FAKE_RUNTIME_SCRIPT = HERE / "_fake_runtime.py"
 
 
-class _RequestBody(BaseModel):
+def _run_harness(config: dict[str, Any], tmp_path: Path) -> tuple[dict[str, Any], list[Any]]:
     """
-    Runtime -> supervisor request body.
+    Spawn the supervisor harness as a real subprocess and return both
+    sides' captures.
 
-    Three fields appear in this body, each introduced at a different
-    dated bundle entry. Older runtimes omit later fields; the upgrade
-    walk backfills them so the supervisor's head-class decoder always
-    validates.
+    The harness writes its own observations to ``supervisor_capture_out``
+    and the runtime (spawned in turn by the harness through the stub
+    coordinator) writes its observations to ``runtime_capture_out``.
+    Returning both lets the test assert on the downgrade direction
+    (runtime capture) and the upgrade direction (supervisor capture)
+    in the same parameterisation.
+
+    Surfaces the harness's stdout / stderr on non-zero exit so a CI
+    failure points straight at the misbehaving subprocess rather than
+    at a silent ``pytest.fail``.
     """
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config))
 
-    type: Literal["_RequestBody"] = "_RequestBody"
-    ti_id: str
-    field_a: int | None = None
-    field_b: int | None = None
-    field_c: int | None = None
-
-
-class _ResponseBody(BaseModel):
-    """
-    Supervisor -> runtime response body.
-
-    Three fields appear in this body, each introduced at a different
-    dated bundle entry. The downgrade walk trims any field a runtime
-    pinned to an older version was not built to decode.
-    """
-
-    type: Literal["_ResponseBody"] = "_ResponseBody"
-    ti_id: str
-    response_x: str | None = None
-    response_y: str | None = None
-    response_z: str | None = None
-
-
-# Request-body breaking changes -- each adds a field and a request-side
-# backfill so an older client payload reaches the head shape intact.
-
-
-class _AddRequestFieldA(VersionChange):
-    """3026-02-15: introduce ``_RequestBody.field_a``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_RequestBody).field("field_a").didnt_exist,)
-
-    @convert_request_to_next_version_for(_RequestBody)  # type: ignore[arg-type]
-    def _backfill(request):
-        request.body.setdefault("field_a", 0)
-
-
-class _AddRequestFieldB(VersionChange):
-    """3026-05-10: introduce ``_RequestBody.field_b``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_RequestBody).field("field_b").didnt_exist,)
-
-    @convert_request_to_next_version_for(_RequestBody)  # type: ignore[arg-type]
-    def _backfill(request):
-        request.body.setdefault("field_b", 0)
-
-
-class _AddRequestFieldC(VersionChange):
-    """3026-08-22: introduce ``_RequestBody.field_c``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_RequestBody).field("field_c").didnt_exist,)
-
-    @convert_request_to_next_version_for(_RequestBody)  # type: ignore[arg-type]
-    def _backfill(request):
-        request.body.setdefault("field_c", 0)
-
-
-# Response-body breaking changes -- downgrade-only direction, so each
-# entry only carries the ``didnt_exist`` instruction. No upgrade
-# transformer is needed because responses are never sent runtime ->
-# supervisor.
-
-
-class _AddResponseFieldX(VersionChange):
-    """3026-03-01: introduce ``_ResponseBody.response_x``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_ResponseBody).field("response_x").didnt_exist,)
-
-
-class _AddResponseFieldY(VersionChange):
-    """3026-06-15: introduce ``_ResponseBody.response_y``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_ResponseBody).field("response_y").didnt_exist,)
-
-
-class _AddResponseFieldZ(VersionChange):
-    """3026-09-30: introduce ``_ResponseBody.response_z``."""
-
-    description = __doc__
-    instructions_to_migrate_to_previous_version = (schema(_ResponseBody).field("response_z").didnt_exist,)
-
-
-# Bundle ordered newest -> oldest, the order cadwyn expects for the
-# downgrade walk. Each date carries exactly one breaking change; the
-# request- and response-side changes interleave so a single pinned
-# client_version exercises a mix of both body's transformers.
-_BUNDLE = VersionBundle(
-    HeadVersion(),
-    Version("3026-09-30", _AddResponseFieldZ),
-    Version("3026-08-22", _AddRequestFieldC),
-    Version("3026-06-15", _AddResponseFieldY),
-    Version("3026-05-10", _AddRequestFieldB),
-    Version("3026-03-01", _AddResponseFieldX),
-    Version("3026-02-15", _AddRequestFieldA),
-    Version("3025-12-01"),
-)
-
-
-@pytest.fixture
-def synthetic_migrator(monkeypatch):
-    """
-    Re-route the production migrator and registered-body registry to the
-    synthetic bundle and its two body classes.
-
-    The supervisor IPC code paths re-import these names per call so
-    monkeypatching the module attributes is enough; no cache clearing
-    is required.
-    """
-    migrator = SchemaVersionMigrator(_BUNDLE)
-    monkeypatch.setattr(
-        "airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator",
-        lambda: migrator,
+    proc = subprocess.run(
+        [sys.executable, os.fspath(SUPERVISOR_HARNESS), "--config", os.fspath(config_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
-    monkeypatch.setattr(
-        "airflow.sdk.execution_time.comms._registered_models_by_name",
-        lambda: {"_RequestBody": _RequestBody, "_ResponseBody": _ResponseBody},
-    )
-    return migrator
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"supervisor harness exited {proc.returncode}\n"
+            f"--- stdout ---\n{proc.stdout}\n"
+            f"--- stderr ---\n{proc.stderr}\n"
+        )
+
+    supervisor_capture = json.loads(Path(config["supervisor_capture_out"]).read_text())
+    runtime_capture = json.loads(Path(config["runtime_capture_out"]).read_text())
+    return supervisor_capture, runtime_capture
 
 
-class _StubTaskExecutionSupervisor(WatchedSubprocess):
+def _make_config(
+    *,
+    mode: str,
+    client_version: str,
+    tmp_path: Path,
+    send_response_bodies: list[dict],
+    runtime_send_frames: list[list],
+    runtime_final_read_count: int = 0,
+) -> dict[str, Any]:
+    """Materialise a JSON-serialisable harness config under *tmp_path*."""
+    return {
+        "mode": mode,
+        "client_version": client_version,
+        "runtime_script": os.fspath(FAKE_RUNTIME_SCRIPT),
+        "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
+        "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),
+        "send_response_bodies": send_response_bodies,
+        "runtime_send_frames": runtime_send_frames,
+        "runtime_read_count": len(send_response_bodies),
+        "runtime_final_read_count": runtime_final_read_count,
+    }
+
+
+_DOWNGRADE_EXPECTATIONS: dict[str, dict[str, Any]] = {
+    # For each pinned client version, the wire shape the runtime must
+    # see (every key present + value) and the head fields it must NOT
+    # see (later additions, trimmed by the downgrade walk).
+    "3025-12-01": {
+        "present": {"type": "_ResponseBody", "ti_id": "ti-resp"},
+        "absent": ("response_x", "response_y", "response_z"),
+    },
+    "3026-02-15": {
+        "present": {"type": "_ResponseBody", "ti_id": "ti-resp"},
+        "absent": ("response_x", "response_y", "response_z"),
+    },
+    "3026-03-01": {
+        "present": {
+            "type": "_ResponseBody",
+            "ti_id": "ti-resp",
+            "response_x": "x-value",
+        },
+        "absent": ("response_y", "response_z"),
+    },
+    "3026-05-10": {
+        "present": {
+            "type": "_ResponseBody",
+            "ti_id": "ti-resp",
+            "response_x": "x-value",
+        },
+        "absent": ("response_y", "response_z"),
+    },
+    "3026-06-15": {
+        "present": {
+            "type": "_ResponseBody",
+            "ti_id": "ti-resp",
+            "response_x": "x-value",
+            "response_y": "y-value",
+        },
+        "absent": ("response_z",),
+    },
+    "3026-08-22": {
+        "present": {
+            "type": "_ResponseBody",
+            "ti_id": "ti-resp",
+            "response_x": "x-value",
+            "response_y": "y-value",
+        },
+        "absent": ("response_z",),
+    },
+    "3026-09-30": {
+        "present": {
+            "type": "_ResponseBody",
+            "ti_id": "ti-resp",
+            "response_x": "x-value",
+            "response_y": "y-value",
+            "response_z": "z-value",
+        },
+        "absent": (),
+    },
+}
+
+_HEAD_RESPONSE_BODY: dict[str, Any] = {
+    "ti_id": "ti-resp",
+    "response_x": "x-value",
+    "response_y": "y-value",
+    "response_z": "z-value",
+}
+
+
+def _wire_request_for(client_version: str, ti_id: str) -> dict[str, Any]:
     """
-    :class:`ActivitySubprocess` analogue pinned to ``_RequestBody``.
-
-    The production class decodes against ``TypeAdapter(ToSupervisor)``;
-    swapping in a synthetic decoder lets the real ``handle_requests``
-    pipeline run end-to-end without polluting ``ToSupervisor`` with a
-    test-only class. Inheriting without re-decorating with
-    ``@attrs.define`` keeps the instance ``__dict__`` open so we can
-    stash captured messages on the instance.
+    Build a wire-shape ``_RequestBody`` dict containing exactly the
+    fields a runtime pinned to *client_version* was built to send.
     """
-
-    decoder: ClassVar[TypeAdapter] = TypeAdapter(_RequestBody)
-
-    def _handle_request(self, msg, log, req_id):
-        self.__dict__.setdefault("_received_msgs", []).append(msg)
-
-
-class _StubDagProcessingSupervisor(WatchedSubprocess):
-    """:class:`DagFileProcessorProcess` analogue pinned to ``_RequestBody``."""
-
-    decoder: ClassVar[TypeAdapter] = TypeAdapter(_RequestBody)
-
-    def _handle_request(self, msg, log, req_id):
-        self.__dict__.setdefault("_received_msgs", []).append(msg)
+    wire: dict[str, Any] = {"type": "_RequestBody", "ti_id": ti_id}
+    if client_version >= "3026-02-15":
+        wire["field_a"] = 11
+    if client_version >= "3026-05-10":
+        wire["field_b"] = 22
+    if client_version >= "3026-08-22":
+        wire["field_c"] = 33
+    return wire
 
 
-class _StubCoordinator(BaseCoordinator):
+def _expected_head_request_for(client_version: str, ti_id: str) -> dict[str, Any]:
     """
-    Minimal coordinator that launches :file:`_fake_runtime.py` for both
-    Dag-Processing and Task-Execution.
-
-    *target_version* is what ``target_schema_version`` will return for
-    any inbound body, modelling a foreign runtime pinned to that
-    version. The constructor also takes a list of CLI arguments to
-    forward verbatim to the fake runtime (capture path, send-frames
-    path, read counts) so each test can configure the runtime's
-    per-scenario behaviour without subclassing.
+    Build the head Pydantic shape the supervisor must see after upgrade,
+    for a runtime pinned to *client_version*. Fields the runtime did
+    not send are backfilled by the request transformers to ``0``.
     """
-
-    sdk = "test"
-    file_extension = ".testjar"
-
-    def __init__(self, *, target_version: str, extra_runtime_args: list[str]) -> None:
-        self._target_version = target_version
-        self._extra_runtime_args = list(extra_runtime_args)
-
-    def target_schema_version(self, _body: Any) -> str:
-        return self._target_version
-
-    def _runtime_cmd(self, comm_addr: str) -> list[str]:
-        return [
-            sys.executable,
-            os.fspath(_FAKE_RUNTIME_SCRIPT),
-            "--comm-addr",
-            comm_addr,
-            *self._extra_runtime_args,
-        ]
-
-    def task_execution_cmd(self, *, comm_addr: str, **_unused) -> list[str]:
-        return self._runtime_cmd(comm_addr)
-
-    def dag_parsing_cmd(self, *, comm_addr: str, **_unused) -> list[str]:
-        return self._runtime_cmd(comm_addr)
+    return {
+        "type": "_RequestBody",
+        "ti_id": ti_id,
+        "field_a": 11 if client_version >= "3026-02-15" else 0,
+        "field_b": 22 if client_version >= "3026-05-10" else 0,
+        "field_c": 33 if client_version >= "3026-08-22" else 0,
+    }
 
 
-def _new_supervisor(cls: type[WatchedSubprocess], stdin: socket.socket) -> WatchedSubprocess:
-    """Construct a real :class:`WatchedSubprocess` subclass bound to *stdin*."""
-    return cls(
-        id=uuid7(),
-        pid=1,
-        stdin=stdin,
-        process=MagicMock(spec=psutil.Process),
-        process_log=structlog.get_logger(),
-    )
-
-
-def _spawn_runtime(coordinator: _StubCoordinator, *, channel: str) -> tuple[subprocess.Popen, socket.socket]:
-    """
-    Start a TCP comm server, spawn the fake runtime through *coordinator*,
-    and return ``(proc, server_side_socket)``.
-
-    *channel* picks which coordinator entrypoint is invoked --
-    ``"task-execution"`` for :meth:`task_execution_cmd` and
-    ``"dag-processing"`` for :meth:`dag_parsing_cmd` -- so both
-    coordinator routes are covered by the same helper.
-
-    The returned socket is the *supervisor* end of the runtime <->
-    supervisor comm channel; the runtime end lives inside the spawned
-    subprocess and is closed by the runtime on exit.
-    """
-    comm_server = _start_server()
-    host, port = comm_server.getsockname()
-    comm_addr = f"{host}:{port}"
-
-    if channel == "task-execution":
-        cmd = coordinator.task_execution_cmd(comm_addr=comm_addr)
-    elif channel == "dag-processing":
-        cmd = coordinator.dag_parsing_cmd(comm_addr=comm_addr)
-    else:
-        raise ValueError(f"unknown channel {channel!r}")
-
-    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
-    try:
-        comm_server.settimeout(5.0)
-        runtime_sock, _ = comm_server.accept()
-    finally:
-        comm_server.close()
-    return proc, runtime_sock
-
-
-def _read_one_request_frame(sock: socket.socket) -> _RequestFrame:
-    """
-    Read exactly one :class:`_RequestFrame` from *sock* using the same
-    4-byte length prefix protocol the production selector loop uses.
-    """
-    sock.settimeout(5.0)
-    length_bytes = b""
-    while len(length_bytes) < 4:
-        chunk = sock.recv(4 - len(length_bytes))
-        if not chunk:
-            raise EOFError("socket closed before length prefix")
-        length_bytes += chunk
-    length = int.from_bytes(length_bytes, "big")
-    payload = b""
-    while len(payload) < length:
-        chunk = sock.recv(length - len(payload))
-        if not chunk:
-            raise EOFError("socket closed before body")
-        payload += chunk
-    return msgspec.msgpack.Decoder(_RequestFrame).decode(payload)
-
-
-def _write_send_frames(tmp_path: Path, frames: list[list]) -> Path:
-    """Serialise *frames* to a temp JSON file for ``--send-frames``."""
-    path = tmp_path / "send_frames.json"
-    path.write_text(json.dumps(frames))
-    return path
-
-
-_PARAMETRIZE_CHANNELS = pytest.mark.parametrize(
-    ("supervisor_cls", "channel"),
+_PARAMETRIZE_MODE_AND_VERSION = pytest.mark.parametrize(
+    "mode",
     [
-        pytest.param(_StubTaskExecutionSupervisor, "task-execution", id="task-execution"),
-        pytest.param(_StubDagProcessingSupervisor, "dag-processing", id="dag-processing"),
+        pytest.param("task-execution", id="task-execution"),
+        pytest.param("dag-processing", id="dag-processing"),
     ],
 )
 
 
-# ---------------------------------------------------------------------------
-# Downgrade direction: supervisor's head ``_ResponseBody`` -> runtime wire.
-# Exercised end-to-end through a real subprocess launched by the coordinator.
-# ---------------------------------------------------------------------------
-
-
-class TestCoordinatorSubprocessReceivesDowngradedResponse:
+@_PARAMETRIZE_MODE_AND_VERSION
+@pytest.mark.parametrize("client_version", ALL_VERSIONS)
+def test_supervisor_and_runtime_subprocesses_round_trip(mode, client_version, tmp_path):
     """
-    The runtime subprocess the coordinator launches receives a wire-shape
-    payload trimmed to its pinned schema version -- verified by reading
-    the JSON file the runtime writes after reading the frame.
-    """
+    Drive a full request/response round-trip across two real subprocesses.
 
-    @pytest.fixture
-    def head_response(self) -> _ResponseBody:
-        return _ResponseBody(
-            ti_id="ti-resp",
-            response_x="x-value",
-            response_y="y-value",
-            response_z="z-value",
+    Sequence -- mirrors what production does for the channel under test:
+
+    1. The supervisor harness sends one head-shape ``_ResponseBody`` to
+       the runtime through the production code path
+       (``_send_startup_details`` for the task-execution seed, then
+       ``send_msg``; ``send_msg`` only for dag-processing). The
+       runtime captures the wire body it received and writes it to
+       its capture file.
+    2. The runtime then sends one wire-shape ``_RequestBody`` upstream
+       at *client_version*'s wire shape. The supervisor harness reads
+       the bytes, runs them through ``handle_requests`` (which calls
+       upgrade), and records the head Pydantic model the decoder
+       produced.
+
+    The test then validates **both** capture files: the runtime's
+    capture proves the downgrade direction matches the pinned version,
+    and the supervisor's capture proves the upgrade direction
+    backfills every later-version field.
+    """
+    wire_request = _wire_request_for(client_version, ti_id="ti-up")
+    expected_head_request = _expected_head_request_for(client_version, ti_id="ti-up")
+    expected_wire_response = _DOWNGRADE_EXPECTATIONS[client_version]
+
+    config = _make_config(
+        mode=mode,
+        client_version=client_version,
+        tmp_path=tmp_path,
+        send_response_bodies=[_HEAD_RESPONSE_BODY],
+        runtime_send_frames=[[1, wire_request, None]],
+    )
+    supervisor_capture, runtime_capture = _run_harness(config, tmp_path)
+
+    # -----------------------------------------------------------------
+    # Downgrade direction -- the runtime's capture is the source of truth.
+    # -----------------------------------------------------------------
+    assert len(runtime_capture) == 1, "runtime should have captured exactly one frame"
+    wire_body = runtime_capture[0]
+    for field, value in expected_wire_response["present"].items():
+        assert wire_body.get(field) == value, (
+            f"{mode} @ {client_version}: wire field {field!r} mismatch -- got {wire_body!r}"
+        )
+    for field in expected_wire_response["absent"]:
+        assert field not in wire_body, (
+            f"{mode} @ {client_version}: wire field {field!r} must be stripped by downgrade"
         )
 
-    @pytest.mark.parametrize(
-        ("client_version", "expected_fields", "absent_fields"),
-        [
-            pytest.param(
-                "3026-09-30",
-                {"response_x": "x-value", "response_y": "y-value", "response_z": "z-value"},
-                (),
-                id="head",
-            ),
-            pytest.param(
-                "3026-06-15",
-                {"response_x": "x-value", "response_y": "y-value"},
-                ("response_z",),
-                id="middle",
-            ),
-            pytest.param(
-                "3026-03-01",
-                {"response_x": "x-value"},
-                ("response_y", "response_z"),
-                id="early",
-            ),
-            pytest.param(
-                "3025-12-01",
-                {},
-                ("response_x", "response_y", "response_z"),
-                id="baseline",
-            ),
-        ],
+    # -----------------------------------------------------------------
+    # Upgrade direction -- the supervisor's capture is the source of truth.
+    # -----------------------------------------------------------------
+    assert supervisor_capture["mode"] == mode
+    assert supervisor_capture["client_version"] == client_version
+    assert supervisor_capture["sent"] == [_HEAD_RESPONSE_BODY | {"type": "_ResponseBody"}], (
+        "supervisor harness must record what it fed into send_msg in head shape"
     )
-    @_PARAMETRIZE_CHANNELS
-    def test_runtime_subprocess_sees_downgraded_seed(
-        self,
-        synthetic_migrator,
-        head_response,
-        client_version,
-        expected_fields,
-        absent_fields,
-        supervisor_cls,
-        channel,
-        tmp_path,
-    ):
-        """
-        Drive a real seed-frame downgrade through a real subprocess.
-
-        The flow:
-
-        1. The stub coordinator's ``task_execution_cmd`` /
-           ``dag_parsing_cmd`` returns a real ``[python, fake_runtime,
-           ...]`` invocation.
-        2. The test spawns the subprocess and accepts its TCP
-           connection -- this is exactly what the production
-           ``_runtime_subprocess_entrypoint`` does, minus the bridge.
-        3. The test writes one downgraded seed frame via
-           ``_send_startup_details`` (Task-Execution one-shot) for the
-           task-execution channel, and via ``WatchedSubprocess.send_msg``
-           for the dag-processing channel -- mirroring the production
-           call sites for each channel.
-        4. The runtime subprocess reads the frame, dumps the body to
-           the capture file, and exits. The test reads the file and
-           asserts the wire shape carries exactly the fields the
-           pinned client version was built to decode.
-        """
-        captured_out = tmp_path / "captured.json"
-        coordinator = _StubCoordinator(
-            target_version=client_version,
-            extra_runtime_args=[
-                "--captured-out",
-                os.fspath(captured_out),
-                "--read-count",
-                "1",
-            ],
-        )
-        proc, runtime_sock = _spawn_runtime(coordinator, channel=channel)
-        try:
-            if channel == "task-execution":
-                # Production call site: coordinator._send_startup_details.
-                _send_startup_details(runtime_sock, head_response, client_version=client_version)
-            else:
-                # Production call site for dag-processing: the supervisor's
-                # ``send_msg`` (after ``self.client_version`` is pinned in
-                # ``DagFileProcessorProcess._on_child_started``). Replicate
-                # that by constructing a real supervisor whose ``stdin``
-                # is the comm socket the runtime is connected to.
-                sup = _new_supervisor(supervisor_cls, runtime_sock)
-                sup.client_version = client_version
-                sup.send_msg(head_response, request_id=0)
-            assert proc.wait(timeout=5) == 0, "fake runtime exited non-zero"
-        finally:
-            runtime_sock.close()
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-
-        bodies = json.loads(captured_out.read_text())
-        assert len(bodies) == 1, f"{channel}: runtime should have captured exactly one seed body"
-        body = bodies[0]
-        assert body["type"] == "_ResponseBody"
-        assert body["ti_id"] == "ti-resp"
-        for field, value in expected_fields.items():
-            assert body.get(field) == value, f"{channel}: field {field!r} missing or wrong"
-        for field in absent_fields:
-            assert field not in body, f"{channel}: field {field!r} must not appear on wire"
-
-
-# ---------------------------------------------------------------------------
-# Upgrade direction: runtime wire ``_RequestBody`` -> supervisor head.
-# Exercised end-to-end through a real subprocess launched by the coordinator.
-# ---------------------------------------------------------------------------
-
-
-class TestSupervisorReceivesUpgradedRequestFromCoordinatorSubprocess:
-    """
-    The supervisor of either channel receives a head-shape body even when
-    the runtime is pinned to an older version that omits later fields --
-    verified by reading the real wire bytes the subprocess sent and
-    pushing them through the supervisor's ``handle_requests`` pipeline.
-    """
-
-    @pytest.mark.parametrize(
-        ("client_version", "wire_body", "expected_head"),
-        [
-            pytest.param(
-                "3026-08-22",
-                {"type": "_RequestBody", "ti_id": "ti-head", "field_a": 11, "field_b": 22, "field_c": 33},
-                {"ti_id": "ti-head", "field_a": 11, "field_b": 22, "field_c": 33},
-                id="head",
-            ),
-            pytest.param(
-                "3026-05-10",
-                {"type": "_RequestBody", "ti_id": "ti-middle", "field_a": 11, "field_b": 22},
-                {"ti_id": "ti-middle", "field_a": 11, "field_b": 22, "field_c": 0},
-                id="middle",
-            ),
-            pytest.param(
-                "3026-02-15",
-                {"type": "_RequestBody", "ti_id": "ti-early", "field_a": 11},
-                {"ti_id": "ti-early", "field_a": 11, "field_b": 0, "field_c": 0},
-                id="early",
-            ),
-            pytest.param(
-                "3025-12-01",
-                {"type": "_RequestBody", "ti_id": "ti-baseline"},
-                {"ti_id": "ti-baseline", "field_a": 0, "field_b": 0, "field_c": 0},
-                id="baseline",
-            ),
-        ],
+    assert len(supervisor_capture["received"]) == 1, (
+        f"{mode} @ {client_version}: supervisor should have observed exactly one upgraded request"
     )
-    @_PARAMETRIZE_CHANNELS
-    def test_supervisor_decodes_upgraded_request(
-        self,
-        synthetic_migrator,
-        client_version,
-        wire_body,
-        expected_head,
-        supervisor_cls,
-        channel,
-        tmp_path,
-    ):
-        """
-        Push a real wire frame from a real subprocess through the supervisor.
-
-        The flow:
-
-        1. The stub coordinator launches the fake runtime with a
-           ``--send-frames`` payload describing one ``_RequestBody``
-           frame at the pinned client version.
-        2. The test reads the frame off the runtime <-> supervisor
-           TCP socket using the exact 4-byte length prefix protocol
-           the production selector loop uses.
-        3. The frame is pushed into a real ``handle_requests``
-           generator on a real ``WatchedSubprocess`` subclass. The
-           supervisor's ``client_version`` is pinned to the same date
-           the runtime was, mirroring the production wiring that
-           ``coordinator.target_schema_version`` produces.
-        4. The test reads the message ``_handle_request`` observed and
-           asserts every backfilled field has the right value.
-        """
-        send_frames_path = _write_send_frames(tmp_path, [[42, wire_body, None]])
-        captured_out = tmp_path / "captured.json"
-        coordinator = _StubCoordinator(
-            target_version=client_version,
-            extra_runtime_args=[
-                "--captured-out",
-                os.fspath(captured_out),
-                "--send-frames",
-                os.fspath(send_frames_path),
-                "--read-count",
-                "0",
-            ],
-        )
-        proc, runtime_sock = _spawn_runtime(coordinator, channel=channel)
-        try:
-            frame = _read_one_request_frame(runtime_sock)
-            assert proc.wait(timeout=5) == 0, "fake runtime exited non-zero"
-        finally:
-            runtime_sock.close()
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-
-        # The bytes that reached the supervisor must still be the
-        # pinned-version wire shape -- prove it before driving the
-        # upgrade pipeline, otherwise an accidental head-shape send
-        # would make the backfill assertions vacuous.
-        assert frame.body == wire_body
-
-        # Drive the production upgrade-and-decode pipeline on a real
-        # supervisor instance pinned to the runtime's version.
-        sup_stdin, _peer = socket.socketpair()
-        try:
-            sup = _new_supervisor(supervisor_cls, sup_stdin)
-            sup.client_version = coordinator.target_schema_version(None)
-            gen = sup.handle_requests(structlog.get_logger())
-            next(gen)
-            gen.send(frame)
-            gen.close()
-        finally:
-            sup_stdin.close()
-            _peer.close()
-
-        received = sup.__dict__.get("_received_msgs", [])
-        assert len(received) == 1, f"{channel}: supervisor's _handle_request never fired"
-        msg = received[0]
-        assert isinstance(msg, _RequestBody)
-        for field, value in expected_head.items():
-            assert getattr(msg, field) == value, f"{channel}: head field {field!r} mismatch"
-
-
-# ---------------------------------------------------------------------------
-# Coordinator-driven wiring: target_schema_version pins the supervisor.
-# ---------------------------------------------------------------------------
-
-
-class TestCoordinatorTargetSchemaVersionDrivesSupervisor:
-    """
-    Confirm the wiring contract: a coordinator's ``target_schema_version``
-    is what production code (:meth:`ActivitySubprocess._on_child_started`
-    /:meth:`DagFileProcessorProcess._on_child_started`) copies onto
-    :attr:`WatchedSubprocess.client_version`. Reproducing just that pin
-    step here keeps the assertion focused on the wiring without forking
-    a real task-runner child.
-    """
-
-    @pytest.mark.parametrize(
-        "pinned",
-        ["3025-12-01", "3026-02-15", "3026-03-01", "3026-05-10", "3026-06-15", "3026-08-22", "3026-09-30"],
+    assert supervisor_capture["received"][0] == expected_head_request, (
+        f"{mode} @ {client_version}: head fields after upgrade must be backfilled"
     )
-    @_PARAMETRIZE_CHANNELS
-    def test_target_schema_version_pins_client_version(self, pinned, supervisor_cls, channel):
-        coordinator = _StubCoordinator(target_version=pinned, extra_runtime_args=[])
-        sup_stdin, _peer = socket.socketpair()
-        try:
-            sup = _new_supervisor(supervisor_cls, sup_stdin)
-            sup.client_version = coordinator.target_schema_version(None)
-        finally:
-            sup_stdin.close()
-            _peer.close()
-        assert sup.client_version == pinned
 
-    def test_two_supervisors_can_pin_different_versions(self, synthetic_migrator, tmp_path):
-        # A task-execution supervisor and a dag-processing supervisor
-        # driven by two different coordinators must end up with
-        # independent ``client_version`` values -- confirms there is no
-        # shared global state across coordinator instances.
-        sup_a_stdin, _a = socket.socketpair()
-        sup_b_stdin, _b = socket.socketpair()
-        try:
-            sup_a = _new_supervisor(_StubTaskExecutionSupervisor, sup_a_stdin)
-            sup_b = _new_supervisor(_StubDagProcessingSupervisor, sup_b_stdin)
-            sup_a.client_version = _StubCoordinator(
-                target_version="3026-02-15", extra_runtime_args=[]
-            ).target_schema_version(None)
-            sup_b.client_version = _StubCoordinator(
-                target_version="3026-09-30", extra_runtime_args=[]
-            ).target_schema_version(None)
-        finally:
-            sup_a_stdin.close()
-            _a.close()
-            sup_b_stdin.close()
-            _b.close()
-        assert sup_a.client_version == "3026-02-15"
-        assert sup_b.client_version == "3026-09-30"
+
+@_PARAMETRIZE_MODE_AND_VERSION
+def test_multiple_responses_and_requests_round_trip(mode, tmp_path):
+    """
+    Cross a multi-frame exchange to confirm neither direction drops
+    state between frames.
+
+    Three responses are sent supervisor -> runtime; two requests are
+    sent runtime -> supervisor. Picking the middle pinned version
+    (``3026-05-10``) keeps both directions interesting -- at least one
+    response field is stripped on downgrade, and at least one request
+    field is backfilled on upgrade.
+    """
+    client_version = "3026-05-10"
+    responses = [
+        _HEAD_RESPONSE_BODY | {"ti_id": "ti-0"},
+        _HEAD_RESPONSE_BODY | {"ti_id": "ti-1", "response_x": "x1"},
+        _HEAD_RESPONSE_BODY | {"ti_id": "ti-2", "response_z": "z-only"},
+    ]
+    request_wires = [
+        _wire_request_for(client_version, ti_id="ti-up-0"),
+        _wire_request_for(client_version, ti_id="ti-up-1"),
+    ]
+    expected_head_requests = [
+        _expected_head_request_for(client_version, ti_id="ti-up-0"),
+        _expected_head_request_for(client_version, ti_id="ti-up-1"),
+    ]
+    expected_wire = _DOWNGRADE_EXPECTATIONS[client_version]
+
+    config = _make_config(
+        mode=mode,
+        client_version=client_version,
+        tmp_path=tmp_path,
+        send_response_bodies=responses,
+        runtime_send_frames=[[i + 1, body, None] for i, body in enumerate(request_wires)],
+    )
+    supervisor_capture, runtime_capture = _run_harness(config, tmp_path)
+
+    assert len(runtime_capture) == len(responses)
+    for wire_body, head_body in zip(runtime_capture, responses):
+        assert wire_body["ti_id"] == head_body["ti_id"]
+        for field in expected_wire["absent"]:
+            assert field not in wire_body, f"{mode}: field {field!r} must be trimmed"
+
+    assert len(supervisor_capture["received"]) == len(expected_head_requests)
+    assert supervisor_capture["received"] == expected_head_requests
+    assert [b["ti_id"] for b in supervisor_capture["sent"]] == [b["ti_id"] for b in responses]
+
+
+def test_harness_surfaces_non_zero_exit(tmp_path):
+    """
+    Smoke-test the harness wrapper: a malformed config must fail loud
+    enough that CI failures point at the misbehaving subprocess. The
+    JSON file points at a non-existent runtime script, so the harness
+    has nothing to spawn and exits non-zero.
+    """
+    bad_config = {
+        "mode": "task-execution",
+        "client_version": "3026-05-10",
+        "runtime_script": os.fspath(tmp_path / "does_not_exist.py"),
+        "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
+        "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),
+        "send_response_bodies": [_HEAD_RESPONSE_BODY],
+        "runtime_send_frames": [],
+        "runtime_read_count": 1,
+    }
+    with pytest.raises(AssertionError, match="supervisor harness exited"):
+        _run_harness(bad_config, tmp_path)
