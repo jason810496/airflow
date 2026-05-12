@@ -753,11 +753,7 @@ class WatchedSubprocess:
             del self._open_sockets[sock]
 
     def send_msg(
-        self,
-        msg: BaseModel | None,
-        request_id: int,
-        error: ErrorResponse | None = None,
-        **dump_opts,
+        self, msg: BaseModel | None, request_id: int, error: ErrorResponse | None = None, **dump_opts
     ):
         """
         Send the msg as a length-prefixed response frame.
@@ -1233,27 +1229,18 @@ class ActivitySubprocess(WatchedSubprocess):
         # (resolved from ``ti.queue`` / ``dag_rel_path``) so every subsequent
         # ``send_msg`` (responses to ``GetConnection`` etc.) and ``handle_requests``
         # decode is migrated through the supervisor IPC bundle.
-        log.debug("Sending", msg=msg)
+        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 
+        if (coordinator := get_coordinator_manager().for_queue(ti.queue)) is not None:
+            self.client_version = coordinator.target_schema_version(msg)
+
+        log.debug("Sending", msg=msg)
         try:
             self.send_msg(msg, request_id=0)
         except (BrokenPipeError, ConnectionResetError):
             # Debug is fine, the process will have shown _something_ in it's last_chance exception handler
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
             return
-
-        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
-
-        manager = get_coordinator_manager()
-        coordinator = manager.for_queue(ti.queue)
-        if coordinator is None:
-            for candidate in manager.all():
-                ext = getattr(type(candidate), "file_extension", None)
-                if ext and os.fspath(dag_rel_path).endswith(ext):
-                    coordinator = candidate
-                    break
-        if coordinator is not None:
-            self.client_version = coordinator.target_schema_version(msg)
 
     def wait(self) -> int:
         if self._exit_code is not None:

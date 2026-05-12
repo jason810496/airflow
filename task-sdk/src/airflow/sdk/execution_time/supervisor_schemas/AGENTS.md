@@ -118,14 +118,3 @@ Two hooks enforce the contract:
   file under `versions/` was touched.
 
 The check is per-commit; the file bump is per-release.
-
-## Why is there no HTTP route?
-
-This package replaces an earlier design that published the IPC
-schemas as a `/compat/...` POST route on the execution API so
-foreign-SDK codegen could read them from the OpenAPI document. The
-route was deleted because: (1) production callers never went over
-HTTP (migration is in-process via the migrator here); (2) tying the
-IPC schema to the HTTP `VersionBundle` conflated two unrelated
-contracts; (3) the head schema needed for codegen ships in
-`schema.json` instead, which is simpler and version-precise.

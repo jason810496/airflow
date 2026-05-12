@@ -326,9 +326,7 @@ def _execute_callbacks(
 
 
 def _execute_dag_callbacks(dagbag: DagBag, request: DagCallbackRequest, log: FilteringBoundLogger) -> None:
-    from airflow.sdk.api.datamodels._generated import (
-        TIRunContext,
-    )
+    from airflow.sdk.api.datamodels._generated import TIRunContext
 
     dag, _ = _get_dag_with_task(dagbag, request.dag_id)
     callbacks = dag.on_failure_callback if request.is_failure_callback else dag.on_success_callback
@@ -591,8 +589,7 @@ class DagFileProcessorProcess(WatchedSubprocess):
         """
         from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 
-        coordinator = get_coordinator_manager().for_dag_file(bundle_name, path)
-        if coordinator is None:
+        if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is None:
             log.debug("No runtime coordinator found for file %s, using default processor", path)
             return None
 
@@ -626,8 +623,7 @@ class DagFileProcessorProcess(WatchedSubprocess):
         # seed ``DagFileParseRequest`` below goes through the same
         # downgrade path -- the foreign runtime receives a payload its
         # decoder understands without an HTTP round-trip.
-        coordinator = get_coordinator_manager().for_dag_file(bundle_name, path)
-        if coordinator is not None:
+        if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
             self.client_version = coordinator.target_schema_version(msg)
         self.send_msg(msg, request_id=0)
 

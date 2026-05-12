@@ -491,14 +491,7 @@ class BaseCoordinator:
             # fd 0 is the bidirectional comms socket to the supervisor.
             supervisor_comm = socket.socket(fileno=os.dup(0))
 
-            _bridge(
-                supervisor_comm,
-                runtime_comm,
-                runtime_logs,
-                read_stderr,
-                proc,
-                log,
-            )
+            _bridge(supervisor_comm, runtime_comm, runtime_logs, read_stderr, proc, log)
 
 
 class CoordinatorManager:

@@ -67,11 +67,7 @@ from airflow.dag_processing.processor import (
 from airflow.models import DagRun
 from airflow.sdk import DAG, BaseOperator
 from airflow.sdk.api.client import Client
-from airflow.sdk.api.datamodels._generated import (
-    ConnectionResponse,
-    DagRunState,
-    VariableResponse,
-)
+from airflow.sdk.api.datamodels._generated import ConnectionResponse, DagRunState, VariableResponse
 from airflow.sdk.execution_time import comms
 from airflow.sdk.execution_time.comms import (
     GetConnection,

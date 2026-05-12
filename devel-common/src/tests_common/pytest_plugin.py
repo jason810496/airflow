@@ -2546,11 +2546,7 @@ def create_runtime_ti(mocked_parse):
                 TaskInstance as TaskInstanceDTO,
             )
 
-        from airflow.sdk.api.datamodels._generated import (
-            DagRun,
-            DagRunState,
-            TIRunContext,
-        )
+        from airflow.sdk.api.datamodels._generated import DagRun, DagRunState, TIRunContext
         from airflow.utils.types import DagRunType
 
         if isinstance(logical_date, str):
