@@ -269,7 +269,7 @@ class BaseCoordinator:
         """
         from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-        migrated = get_schema_version_migrator().migrate(schema, self.target_schema_version(schema))
+        migrated = get_schema_version_migrator().downgrade(schema, self.target_schema_version(schema))
         return MigratedStartupDetails(migrated)
 
     def migrate_dag_file_parse_request(self, schema: DagFileParseRequest) -> MigratedDagFileParseRequest:
@@ -287,7 +287,7 @@ class BaseCoordinator:
         """
         from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-        migrated = get_schema_version_migrator().migrate(schema, self.target_schema_version(schema))
+        migrated = get_schema_version_migrator().downgrade(schema, self.target_schema_version(schema))
         return MigratedDagFileParseRequest(migrated)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:

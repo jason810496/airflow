@@ -183,10 +183,10 @@ class TestBaseCoordinatorDefaults:
 
         schema = MagicMock()
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.migrate.return_value = {"type": "StartupDetails", "ti": {}}
+            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails", "ti": {}}
             result = _Coordinator().migrate_startup_details(schema)
 
-        mock_get.return_value.migrate.assert_called_once_with(schema, "2026-04-17")
+        mock_get.return_value.downgrade.assert_called_once_with(schema, "2026-04-17")
         # Result is wrapped in the dedicated dict-subclass so the call
         # site cannot mistake it for a latest-schema Pydantic model.
         assert isinstance(result, MigratedStartupDetails)
@@ -216,7 +216,7 @@ class TestBaseCoordinatorDefaults:
         )
 
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.migrate.return_value = {
+            mock_get.return_value.downgrade.return_value = {
                 "type": "DagFileParseRequest",
                 "file": "/b/dags/x.jar",
                 "bundle_path": "/b",
@@ -225,7 +225,7 @@ class TestBaseCoordinatorDefaults:
             result = _Coordinator().migrate_dag_file_parse_request(schema)
 
         # The migrator received the canonical ``DagFileParseRequest`` as-is.
-        mock_get.return_value.migrate.assert_called_once_with(schema, "2026-04-17")
+        mock_get.return_value.downgrade.assert_called_once_with(schema, "2026-04-17")
         assert isinstance(result, MigratedDagFileParseRequest)
 
     def test_dag_parsing_cmd_raises_not_implemented(self):
