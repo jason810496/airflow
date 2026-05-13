@@ -3939,3 +3939,40 @@ class TestSendsRawStartupDetails:
         assert isinstance(sent_body, StartupDetails)
         coordinator.target_msg_schema_version.assert_called_once_with(sent_body)
         assert proc.lang_sdk_msg_schema_version == "2026-04-17"
+
+    def test_supervisor_pins_lang_sdk_msg_schema_version_for_extension_fallback(
+        self, mocker, make_ti_context
+    ):
+        """When no queue mapping matches, extension-routed runtimes still pin subsequent IPC frames."""
+        from airflow.sdk.execution_time.comms import StartupDetails
+        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
+
+        ti = self._make_ti(queue="default")
+        bundle_info = BundleInfo(name="my-bundle", version="v1")
+
+        client = MagicMock(spec=sdk_client.Client)
+        client.task_instances.start.return_value = make_ti_context()
+
+        coordinator = MagicMock(spec=BaseCoordinator)
+        type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
+        coordinator.target_msg_schema_version.return_value = "2026-04-17"
+        mocker.patch(
+            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
+            return_value=CoordinatorManager({"java": coordinator}, {}),
+        )
+
+        mocker.patch.object(ActivitySubprocess, "kill")
+        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+
+        proc = self._make_proc(client, mocker)
+        proc._on_child_started(
+            ti=ti,
+            dag_rel_path="dags/example.jar",
+            bundle_info=bundle_info,
+            sentry_integration="",
+        )
+
+        sent_body = mock_send.call_args[0][1]
+        assert isinstance(sent_body, StartupDetails)
+        coordinator.target_msg_schema_version.assert_called_once_with(sent_body)
+        assert proc.lang_sdk_msg_schema_version == "2026-04-17"

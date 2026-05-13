@@ -1244,7 +1244,16 @@ class ActivitySubprocess(WatchedSubprocess):
         # through the supervisor IPC bundle.
         from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 
-        if (coordinator := get_coordinator_manager().for_queue(ti.queue)) is not None:
+        manager = get_coordinator_manager()
+        coordinator = manager.for_queue(ti.queue)
+        if coordinator is None:
+            dag_rel_path_str = os.fspath(dag_rel_path)
+            for candidate in manager.all():
+                ext = getattr(type(candidate), "file_extension", None)
+                if ext and dag_rel_path_str.endswith(ext):
+                    coordinator = candidate
+                    break
+        if coordinator is not None:
             self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
 
     def wait(self) -> int:

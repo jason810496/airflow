@@ -182,29 +182,40 @@ class JavaCoordinator(BaseCoordinator):
         the result per (process, jar_path) would mask the swap and pin
         the supervisor to the old schema version.
         """
-        jar_path = self._resolve_jar_path(schema)
-        if schema_version := read_schema_version(jar_path):
+        schema_version, jar_ref = self._resolve_schema_version(schema)
+        if schema_version:
             return schema_version
         raise ValueError(
-            f"JAR bundle {jar_path} is missing required manifest attribute "
+            f"JAR bundle {jar_ref} is missing required manifest attribute "
             f"{BundleScanner.SCHEMA_VERSION_MANIFEST_KEY!r}"
         )
 
-    def _resolve_jar_path(self, schema: StartupDetails | DagFileParseRequest) -> Path:
-        """Resolve the JAR path the manifest version should be read from for *schema*."""
+    def _resolve_schema_version(
+        self, schema: StartupDetails | DagFileParseRequest
+    ) -> tuple[str | None, Path | str]:
+        """Resolve the manifest schema version and source reference for *schema*."""
         # Local import to keep the module-level imports tidy and avoid a
         # circular ``airflow.dag_processing`` import at coordinator load time.
         from airflow.dag_processing.processor import DagFileParseRequest
 
         if isinstance(schema, DagFileParseRequest):
-            return Path(schema.file)
+            jar_path = Path(schema.file)
+            return read_schema_version(jar_path), jar_path
         if schema.dag_rel_path and str(schema.dag_rel_path).endswith(self.file_extension):
-            # Pure-Java task: ``dag_rel_path`` already points at the JAR.
-            return Path(schema.dag_rel_path)
+            jar_path = self._resolve_task_bundle_path(schema) / os.fspath(schema.dag_rel_path)
+            return read_schema_version(jar_path), jar_path
         if self.bundles_folder:
             # Python-stub task: resolve the real JAR via ``bundles_folder``.
             resolved = BundleScanner(Path(self.bundles_folder)).resolve(dag_id=schema.ti.dag_id)
-            # ``classpath`` lists every JAR; the first entry is the bundle JAR
-            # whose manifest carries the SDK metadata.
-            return Path(resolved.classpath.split(os.pathsep)[0])
+            return resolved.schema_version, f"for dag_id={schema.ti.dag_id!r}"
         raise ValueError(f"Unable to determine target schema version for {schema}")
+
+    @staticmethod
+    def _resolve_task_bundle_path(schema: StartupDetails) -> Path:
+        """Resolve the Dag bundle path for a task startup payload."""
+        # Local import avoids loading task-runner dependencies while the Java
+        # coordinator package is imported for Dag parsing and source-code reads.
+        from airflow.sdk.execution_time.task_runner import log, resolve_bundle
+
+        bundle_instance = resolve_bundle(schema.bundle_info, log)
+        return Path(bundle_instance.path)

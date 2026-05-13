@@ -41,7 +41,7 @@ scenario for each channel.
 from __future__ import annotations
 
 from typing import Any, ClassVar
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import msgspec
 import psutil
@@ -124,75 +124,69 @@ def _new_supervisor(mode: str, pinned_version: str) -> WatchedSubprocess:
     return ws
 
 
-def _decode_response_frame(raw: bytes) -> dict[str, Any]:
-    """Pull the body dict out of the on-wire ``_ResponseFrame`` bytes."""
-    # 4-byte big-endian length prefix, then a msgpack-encoded ``_ResponseFrame``
-    # tuple (id, body, error). Production framing -- exactly what the
-    # foreign-language runtime decodes against.
-    length = int.from_bytes(raw[:4], "big")
-    payload = raw[4 : 4 + length]
-    frame = msgspec.msgpack.Decoder(_ResponseFrame).decode(payload)
-    assert frame.body is not None, "downgraded frame must carry a body"
-    return frame.body
+class _WireFrameBody:
+    """
+    Mock argument matcher that decodes a ``sendall(bytes)`` payload and
+    compares the embedded ``_ResponseFrame`` body to *expected_body*.
+
+    Using a matcher (rather than reaching into ``mock.call_args``) lets the
+    test stay on the high-level ``assert_called_once_with`` /
+    ``assert_has_calls`` API while still asserting on the decoded wire
+    dict rather than raw msgpack bytes. ``__eq__`` is invoked by mock
+    when comparing recorded call arguments against the expectation.
+    """
+
+    def __init__(self, expected_body: dict[str, Any]) -> None:
+        self.expected_body = expected_body
+
+    __hash__ = None  # type: ignore[assignment]  # matcher is value-compared, never hashed
+
+    def __eq__(self, raw: object) -> bool:
+        if not isinstance(raw, (bytes, bytearray)):
+            return NotImplemented
+        length = int.from_bytes(raw[:4], "big")
+        payload = raw[4 : 4 + length]
+        frame = msgspec.msgpack.Decoder(_ResponseFrame).decode(bytes(payload))
+        return frame.body == self.expected_body
+
+    def __repr__(self) -> str:
+        return f"_WireFrameBody({self.expected_body!r})"
 
 
-_DOWNGRADE_EXPECTATIONS: dict[str, dict[str, Any]] = {
-    # For each pinned client version, the wire shape the runtime must
-    # see (every key present + value) and the head fields it must NOT
-    # see (later additions, trimmed by the downgrade walk).
-    "3025-12-01": {
-        "present": {"type": "_ResponseBody", "ti_id": "ti-resp"},
-        "absent": ("response_x", "response_y", "response_z"),
-    },
-    "3026-02-15": {
-        "present": {"type": "_ResponseBody", "ti_id": "ti-resp"},
-        "absent": ("response_x", "response_y", "response_z"),
-    },
-    "3026-03-01": {
-        "present": {
-            "type": "_ResponseBody",
-            "ti_id": "ti-resp",
-            "response_x": "x-value",
-        },
-        "absent": ("response_y", "response_z"),
-    },
-    "3026-05-10": {
-        "present": {
-            "type": "_ResponseBody",
-            "ti_id": "ti-resp",
-            "response_x": "x-value",
-        },
-        "absent": ("response_y", "response_z"),
-    },
+# Full expected wire-body dict per pinned runtime version. Fields
+# introduced after the pinned version are absent (trimmed by the
+# downgrade walk); fields at-or-before are present with their value
+# from ``_HEAD_RESPONSE_BODY``.
+_EXPECTED_WIRE_BY_VERSION: dict[str, dict[str, Any]] = {
+    "3025-12-01": {"type": "_ResponseBody", "ti_id": "ti-resp"},
+    "3026-02-15": {"type": "_ResponseBody", "ti_id": "ti-resp"},
+    "3026-03-01": {"type": "_ResponseBody", "ti_id": "ti-resp", "response_x": "x-value"},
+    "3026-05-10": {"type": "_ResponseBody", "ti_id": "ti-resp", "response_x": "x-value"},
     "3026-06-15": {
-        "present": {
-            "type": "_ResponseBody",
-            "ti_id": "ti-resp",
-            "response_x": "x-value",
-            "response_y": "y-value",
-        },
-        "absent": ("response_z",),
+        "type": "_ResponseBody",
+        "ti_id": "ti-resp",
+        "response_x": "x-value",
+        "response_y": "y-value",
     },
     "3026-08-22": {
-        "present": {
-            "type": "_ResponseBody",
-            "ti_id": "ti-resp",
-            "response_x": "x-value",
-            "response_y": "y-value",
-        },
-        "absent": ("response_z",),
+        "type": "_ResponseBody",
+        "ti_id": "ti-resp",
+        "response_x": "x-value",
+        "response_y": "y-value",
     },
     "3026-09-30": {
-        "present": {
-            "type": "_ResponseBody",
-            "ti_id": "ti-resp",
-            "response_x": "x-value",
-            "response_y": "y-value",
-            "response_z": "z-value",
-        },
-        "absent": (),
+        "type": "_ResponseBody",
+        "ti_id": "ti-resp",
+        "response_x": "x-value",
+        "response_y": "y-value",
+        "response_z": "z-value",
     },
 }
+
+
+def _expected_wire_body(pinned_version: str, ti_id: str) -> dict[str, Any]:
+    """Return the wire body the runtime must observe, with *ti_id* substituted in."""
+    return {**_EXPECTED_WIRE_BY_VERSION[pinned_version], "ti_id": ti_id}
 
 
 _HEAD_RESPONSE_BODY = _ResponseBody(
@@ -250,19 +244,8 @@ def test_send_msg_downgrades_to_pinned_wire_shape(synthetic_migrator, mode, pinn
     ws = _new_supervisor(mode, pinned_version)
     ws.send_msg(_HEAD_RESPONSE_BODY, request_id=0)
 
-    ws.stdin.sendall.assert_called_once()
-    raw = ws.stdin.sendall.call_args[0][0]
-    wire_body = _decode_response_frame(bytes(raw))
-
-    expectations = _DOWNGRADE_EXPECTATIONS[pinned_version]
-    for field, value in expectations["present"].items():
-        assert wire_body.get(field) == value, (
-            f"{mode} @ {pinned_version}: wire field {field!r} mismatch -- got {wire_body!r}"
-        )
-    for field in expectations["absent"]:
-        assert field not in wire_body, (
-            f"{mode} @ {pinned_version}: wire field {field!r} must be stripped by downgrade"
-        )
+    expected = _expected_wire_body(pinned_version, ti_id="ti-resp")
+    ws.stdin.sendall.assert_called_once_with(_WireFrameBody(expected))
 
 
 @pytest.mark.parametrize("pinned_version", ALL_VERSIONS)
@@ -276,19 +259,8 @@ def test_send_startup_details_downgrades_seed_frame(synthetic_migrator, pinned_v
     sock = MagicMock()
     _send_startup_details(sock, _HEAD_RESPONSE_BODY, lang_sdk_msg_schema_version=pinned_version)  # type: ignore[arg-type]
 
-    sock.sendall.assert_called_once()
-    raw = sock.sendall.call_args[0][0]
-    wire_body = _decode_response_frame(bytes(raw))
-
-    expectations = _DOWNGRADE_EXPECTATIONS[pinned_version]
-    for field, value in expectations["present"].items():
-        assert wire_body.get(field) == value, (
-            f"seed @ {pinned_version}: wire field {field!r} mismatch -- got {wire_body!r}"
-        )
-    for field in expectations["absent"]:
-        assert field not in wire_body, (
-            f"seed @ {pinned_version}: wire field {field!r} must be stripped by downgrade"
-        )
+    expected = _expected_wire_body(pinned_version, ti_id="ti-resp")
+    sock.sendall.assert_called_once_with(_WireFrameBody(expected))
 
 
 @_PARAMETRIZE_MODE
@@ -334,14 +306,10 @@ def test_round_trip_preserves_state_across_multiple_frames(synthetic_migrator):
     for index, response in enumerate(responses):
         ws.send_msg(response, request_id=index)
 
-    wire_bodies = [_decode_response_frame(bytes(call.args[0])) for call in ws.stdin.sendall.call_args_list]
-    assert [b["ti_id"] for b in wire_bodies] == ["ti-0", "ti-1", "ti-2"]
-    for body in wire_bodies:
-        # 3026-05-10 trims response_y and response_z (both introduced later)
-        # while keeping response_x (introduced at 3026-03-01).
-        assert body.get("response_x") == "x-value"
-        assert "response_y" not in body
-        assert "response_z" not in body
+    ws.stdin.sendall.assert_has_calls(
+        [call(_WireFrameBody(_expected_wire_body(pinned_version, ti_id=f"ti-{i}"))) for i in range(3)]
+    )
+    assert ws.stdin.sendall.call_count == 3
 
     request_wires = [_wire_request_for(pinned_version, ti_id=f"ti-up-{i}") for i in range(2)]
     expected_heads = [_expected_head_request_for(pinned_version, ti_id=f"ti-up-{i}") for i in range(2)]
