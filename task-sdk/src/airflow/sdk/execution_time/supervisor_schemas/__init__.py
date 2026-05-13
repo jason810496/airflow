@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Cadwyn versioning and in-process migration for the supervisor IPC contract.
+Cadwyn versioning and in-process migration for the supervisor schemas.
 
 Two distinct Cadwyn ``VersionBundle`` instances coexist in the codebase:
 
@@ -30,19 +30,14 @@ Two distinct Cadwyn ``VersionBundle`` instances coexist in the codebase:
   the HTTP contract between Task SDK clients and the API server.
   Unaffected by this package.
 
-:func:`registered_models` returns every Pydantic class on the supervisor
-IPC wire. It is computed dynamically from the four discriminated
-unions ``ToTask``, ``ToSupervisor`` (task-execution channel) and
-``ToManager``, ``ToDagProcessor`` (dag-processing channel) so the
-registry is always in sync with the actual unions ``CommsDecoder``
-decodes against -- no hand-maintained list to drift. Triggerer unions
-are intentionally excluded (the Triggerer IPC channel is not handled
-by lang-SDK coordinators today).
-
-The ``generate-supervisor-schemas-snapshot`` prek hook walks
-:func:`registered_models` to write ``supervisor_schemas/schema.json``,
-which is the head-version JSON Schema artefact lang-SDK builders
-consume for codegen.
+:func:`registered_models_by_name` resolves a wire-shape ``type``
+discriminator to the head Pydantic class. It is computed dynamically
+from the four discriminated unions ``ToTask``, ``ToSupervisor``
+(task-execution channel) and ``ToManager``, ``ToDagProcessor``
+(dag-processing channel) so the registry is always in sync with the
+actual unions ``CommsDecoder`` decodes against -- no hand-maintained
+list to drift. Triggerer unions are intentionally excluded (the
+Triggerer channel is not handled by lang-SDK coordinators today).
 """
 
 from __future__ import annotations
@@ -72,15 +67,14 @@ def _members_of_discriminated_union(union_type: object) -> tuple[type, ...]:
 @functools.cache
 def registered_models_by_name() -> dict[str, type[BaseModel]]:
     """
-    Map every supervisor-IPC body's class name to the head Pydantic class.
+    Map every supervisor schema body's class name to the head Pydantic class.
 
     Single source of truth for the registry. Built once by walking the
     four discriminated unions the supervisor decodes against; cached
     per-process because the registry only changes when a union member
     is added in ``comms.py`` or ``processor.py`` (which needs a
-    restart anyway). :func:`registered_models` derives its sorted
-    tuple from this dict, and :func:`resolve_body_class` looks up the
-    wire-shape ``type`` discriminator against it.
+    restart anyway). :func:`resolve_body_class` looks up the wire-shape
+    ``type`` discriminator against it.
 
     Imports are deferred so this package stays cheap to import for
     callers that only need the bundle or migrator (e.g. the migrator
@@ -101,13 +95,16 @@ def registered_models_by_name() -> dict[str, type[BaseModel]]:
     for union in (ToTask, ToSupervisor, ToManager, ToDagProcessor):
         for member in _members_of_discriminated_union(union):
             if not issubclass(member, BaseModel):
-                continue
+                raise RuntimeError(
+                    f"Invalid supervisor schema body {member!r}: "
+                    f"union member {member!r} is not a Pydantic model class"
+                )
             existing = by_name.get(member.__name__)
             if existing is None:
                 by_name[member.__name__] = member
             elif existing is not member:
                 raise RuntimeError(
-                    f"Duplicate supervisor IPC body name {member.__name__!r}: "
+                    f"Duplicate supervisor schema body name {member.__name__!r}: "
                     f"both {existing!r} and {member!r} register the same wire type"
                 )
     return by_name
@@ -123,24 +120,10 @@ def resolve_body_class(body: Any) -> type[BaseModel] | None:
     return registered_models_by_name().get(name)
 
 
-def registered_models() -> tuple[type[BaseModel], ...]:
-    """
-    Return every Pydantic class on the supervisor IPC wire, sorted by class name.
-
-    Thin view over :func:`registered_models_by_name`. The
-    ``generate-supervisor-schemas-snapshot`` prek hook walks this tuple
-    to emit ``supervisor_schemas/schema.json`` in a deterministic
-    order so the artefact diffs cleanly across runs.
-    """
-    by_name = registered_models_by_name()
-    return tuple(by_name[name] for name in sorted(by_name))
-
-
 __all__ = [
     "SchemaVersionMigrator",
     "bundle",
     "get_schema_version_migrator",
-    "registered_models",
     "registered_models_by_name",
     "resolve_body_class",
 ]

@@ -255,7 +255,7 @@ class TestConcurrentBindsDoNotStomp:
 class TestUnregisteredFallThroughIsConsistentWithMigrator:
     """
     The same "unregistered body passes through" contract the migrator
-    advertises: a body whose ``type`` is not in ``registered_models``
+    advertises: a body whose ``type`` is not in ``registered_models_by_name``
     must reach the underlying ``TypeAdapter`` unmodified.
     """
 

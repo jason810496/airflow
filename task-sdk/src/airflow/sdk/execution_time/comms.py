@@ -345,7 +345,7 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
             return resp, fds or []
         return resp
 
-    def _from_frame(self, frame) -> ReceiveMsgType | None:
+    def _from_frame(self, frame: _ResponseFrame) -> ReceiveMsgType | None:
         from airflow.sdk.exceptions import AirflowRuntimeError
 
         if frame.error is not None:

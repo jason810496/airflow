@@ -18,13 +18,13 @@ models stay in their semantic homes:
   `ToManager` and `ToDagProcessor` discriminated unions in
   `airflow.dag_processing.processor`.
 
-`registered_models()` introspects those four unions at import time, so
-the snapshot the prek hook commits to `schema.json` always matches the
-exact set of classes `CommsDecoder` actually decodes against — there
-is no hand-maintained list to keep in sync. The Triggerer's
-unions (`ToTriggerRunner`, `ToTriggerSupervisor`) **are intentionally excluded**;
-lang-SDK coordinators do not handle the Triggerer channel
-today.
+`registered_models_by_name()` introspects those four unions on first
+call, so the snapshot the prek hook commits to `schema.json` always
+matches the exact set of classes `CommsDecoder` actually decodes
+against — there is no hand-maintained list to keep in sync. The
+Triggerer's unions (`ToTriggerRunner`, `ToTriggerSupervisor`) **are
+intentionally excluded**; lang-SDK coordinators do not handle the
+Triggerer channel today.
 
 The bundle references registered classes via `schema(...)` instructions
 in `versions/v<date>.py` files.
@@ -38,8 +38,8 @@ version bump, and vice versa.
 
 ## Files in this folder
 
-- `__init__.py` — re-exports `bundle`, the migrator, and the
-  `registered_models()` introspector.
+- `__init__.py` — re-exports `bundle`, the migrator, the
+  `registered_models_by_name()` registry, and `resolve_body_class()`.
 - `migrator.py` — `SchemaVersionMigrator` + `get_schema_version_migrator()`.
 - `versions/__init__.py` — the `VersionBundle` itself
   (`HeadVersion()` + dated `Version(...)` entries).
@@ -47,7 +47,9 @@ version bump, and vice versa.
   file is the **in-progress** version; PRs append to it.
 - `schema.json` — generated head-version JSON Schema snapshot for
   lang-SDK codegen. Managed by the
-  `generate-supervisor-schemas-snapshot` prek hook; do not edit by
+  `generate-supervisor-schemas-snapshot` prek hook (which lives at
+  `scripts/ci/prek/dump_supervisor_schemas.py` and walks
+  `registered_models_by_name()` in sorted-name order); do not edit by
   hand.
 
 ## When making changes
@@ -57,8 +59,8 @@ version bump, and vice versa.
 Append the class to the relevant discriminated union in its semantic
 home — `ToTask` / `ToSupervisor` in `comms.py`, or `ToManager` /
 `ToDagProcessor` in `processor.py`. That is the *only* registration
-step; `registered_models()` picks it up automatically the next time
-the snapshot hook runs.
+step; `registered_models_by_name()` picks it up automatically the next
+time the snapshot hook runs.
 
 No `VersionChange` entry is required on the first introduction — the
 head shape *is* the schema for the new body.
