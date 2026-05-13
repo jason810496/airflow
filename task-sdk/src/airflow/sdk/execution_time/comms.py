@@ -216,11 +216,11 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
     # framed, and every incoming body is ``upgrade``d back to the head
     # shape before validation. ``None`` means head shape on both sides
     # (the default for the Python-runtime task case).
-    lang_sdk_version: str | None = attrs.field(default=None)
+    lang_sdk_msg_schema_version: str | None = attrs.field(default=None)
 
-    def bind(self, *, lang_sdk_version: str | None) -> CommsDecoder[ReceiveMsgType, SendMsgType]:
+    def bind(self, *, lang_sdk_msg_schema_version: str | None) -> CommsDecoder[ReceiveMsgType, SendMsgType]:
         """
-        Return a new decoder pinned to *lang_sdk_version*, structlog-style.
+        Return a new decoder pinned to *lang_sdk_msg_schema_version*, structlog-style.
 
         The returned instance shares this instance's ``socket``,
         ``id_counter`` and both locks **by reference**. That is safe
@@ -228,19 +228,19 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
         unbound original (so nothing else holds a reference to the
         shared mutable state). The expected pattern is::
 
-            comms = comms.bind(lang_sdk_version=coordinator.target_schema_version(...))
+            comms = comms.bind(lang_sdk_msg_schema_version=coordinator.target_msg_schema_version(...))
 
-        Pass ``lang_sdk_version=None`` to drop the pin.
+        Pass ``lang_sdk_msg_schema_version=None`` to drop the pin.
         """
-        return attrs.evolve(self, lang_sdk_version=lang_sdk_version)
+        return attrs.evolve(self, lang_sdk_msg_schema_version=lang_sdk_msg_schema_version)
 
     def _make_frame(self, msg: SendMsgType) -> _RequestFrame:
         carrier: dict[str, str] = {}
         _trace_propagator.inject(carrier)
-        if self.lang_sdk_version is not None:
+        if self.lang_sdk_msg_schema_version is not None:
             from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-            body = get_schema_version_migrator().downgrade(msg, self.lang_sdk_version)
+            body = get_schema_version_migrator().downgrade(msg, self.lang_sdk_msg_schema_version)
         else:
             # ``mode="json"`` so ``datetime`` / ``UUID`` / ``Path`` / ``Decimal``
             # cross the wire as JSON-safe primitives a non-Python decoder can
@@ -356,10 +356,13 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
             return None
 
         body = frame.body
-        if self.lang_sdk_version is not None and (body_type := resolve_body_class(body)) is not None:
+        if (
+            self.lang_sdk_msg_schema_version is not None
+            and (body_type := resolve_body_class(body)) is not None
+        ):
             from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-            body = get_schema_version_migrator().upgrade(body, body_type, self.lang_sdk_version)
+            body = get_schema_version_migrator().upgrade(body, body_type, self.lang_sdk_msg_schema_version)
 
         try:
             return self.body_decoder.validate_python(body)

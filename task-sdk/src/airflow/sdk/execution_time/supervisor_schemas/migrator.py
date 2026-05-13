@@ -41,7 +41,7 @@ that only reads/writes ``info.body``, so a body-only ``_BodyInfo``
 duck-type lets us skip the HTTP plumbing entirely.
 
 The downgrade path additionally validates the walked body against
-the cadwyn-generated versioned class for *lang_sdk_version*. That is
+the cadwyn-generated versioned class for *lang_sdk_msg_schema_version*. That is
 how a declarative ``schema(X).field(Y).didnt_exist`` (no companion
 ``convert_response_to_previous_version_for``) actually drops the
 field on the wire -- the field is removed from the class shape, not
@@ -133,12 +133,12 @@ class SchemaVersionMigrator:
     def downgrade(
         self,
         body: BaseModel,
-        lang_sdk_version: str | date,
+        lang_sdk_msg_schema_version: str | date,
         *,
         dump_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Migrate *body* from the server (head) shape down to *lang_sdk_version*.
+        Migrate *body* from the server (head) shape down to *lang_sdk_msg_schema_version*.
 
         Used on the supervisor -> foreign-runtime path: *body* is a
         head-shape Pydantic instance, and the returned dict matches
@@ -146,7 +146,7 @@ class SchemaVersionMigrator:
 
         :param body: A Pydantic instance shaped according to the head
             (latest) version of the bundle.
-        :param lang_sdk_version: Either an ISO-format date string (e.g.
+        :param lang_sdk_msg_schema_version: Either an ISO-format date string (e.g.
             ``"2026-04-17"``) or a :class:`datetime.date`. Cadwyn maps
             a ``date`` to the closest lesser defined version.
         :param dump_kwargs: Optional keyword arguments forwarded to
@@ -160,7 +160,7 @@ class SchemaVersionMigrator:
             instructions (keyed by Python field name) will not match.
             Safe for models without registered field-level migrations
             today; revisit if an aliased model ever ships migrations.
-        :returns: A plain dict shaped for *lang_sdk_version*. Returning
+        :returns: A plain dict shaped for *lang_sdk_msg_schema_version*. Returning
             a dict (rather than a versioned Pydantic instance) is
             deliberate: call sites forward the result straight onto an
             IPC frame.
@@ -169,7 +169,7 @@ class SchemaVersionMigrator:
             raise TypeError(
                 f"SchemaVersionMigrator.downgrade expects a pydantic BaseModel instance, got {type(body)!r}"
             )
-        lang_sdk_value = self._resolve(lang_sdk_version)
+        lang_sdk_value = self._resolve(lang_sdk_msg_schema_version)
         body_type = type(body)
         merged_dump_kwargs: dict[str, Any] = {**(dump_kwargs or {}), "mode": "json"}
         # ``mode="json"`` so datetime/UUID/Path serialise to primitives
@@ -194,10 +194,10 @@ class SchemaVersionMigrator:
         self,
         body: dict[str, Any],
         body_type: type[BaseModel],
-        lang_sdk_version: str | date,
+        lang_sdk_msg_schema_version: str | date,
     ) -> dict[str, Any]:
         """
-        Migrate *body* from *lang_sdk_version* up to the server (head) shape.
+        Migrate *body* from *lang_sdk_msg_schema_version* up to the server (head) shape.
 
         Used on the foreign-runtime -> supervisor path: *body* is the
         already-deserialised payload off the wire (still in the
@@ -213,13 +213,13 @@ class SchemaVersionMigrator:
         :param body: The wire payload as a dict.
         :param body_type: The head Pydantic class *body* should
             validate against once migrated.
-        :param lang_sdk_version: Either an ISO-format date string or a
+        :param lang_sdk_msg_schema_version: Either an ISO-format date string or a
             :class:`datetime.date` (mapped to the closest lesser
             defined version).
         """
         if not isinstance(body, dict):
             raise TypeError(f"SchemaVersionMigrator.upgrade expects a dict payload, got {type(body)!r}")
-        lang_sdk_value = self._resolve(lang_sdk_version)
+        lang_sdk_value = self._resolve(lang_sdk_msg_schema_version)
         info = _BodyInfo(body)
         for version in self._bundle.reversed_versions:
             if version.value <= lang_sdk_value:

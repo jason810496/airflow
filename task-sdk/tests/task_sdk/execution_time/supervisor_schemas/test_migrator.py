@@ -240,7 +240,7 @@ class TestSchemaVersionMigratorRespectsExplicitSupervisorVersion:
 
     Only the upgrade direction is asserted here: the downgrade walk
     delegates the final field-shape to ``generate_versioned_models``
-    keyed by *lang_sdk_version*, which is independent of the supervisor
+    keyed by *lang_sdk_msg_schema_version*, which is independent of the supervisor
     anchor, so the anchor has no observable effect when the inbound
     body is already shaped for *supervisor_version*.
     """

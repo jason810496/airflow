@@ -89,7 +89,7 @@ class TestSendStartupDetails:
 
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
-            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
+            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
 
         mock_socket.sendall.assert_called_once()
         sent_bytes = mock_socket.sendall.call_args[0][0]
@@ -105,7 +105,7 @@ class TestSendStartupDetails:
 
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
-            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
+            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
 
         sent_bytes = mock_socket.sendall.call_args[0][0]
         frame = msgpack.unpackb(sent_bytes[4:])
@@ -120,7 +120,7 @@ class TestSendStartupDetails:
 
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             mock_get.return_value.downgrade.return_value = downgraded
-            _send_startup_details(mock_socket, msg, lang_sdk_version="2026-04-17")
+            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
 
         # The seed StartupDetails is always downgraded through the
         # migrator (json mode forced) before being framed.
@@ -141,13 +141,13 @@ class TestBaseCoordinatorDefaults:
         with pytest.raises(NotImplementedError):
             BaseCoordinator().get_code_from_file("/path/to/dag.jar")
 
-    def test_target_schema_version_is_abstract(self):
+    def test_target_msg_schema_version_is_abstract(self):
         # The base class refuses to guess: concrete coordinators
         # (JavaCoordinator, etc.) must read their bundle artifact's
         # pinned schema version. Any default would silently migrate
         # every foreign-runtime payload to the wrong version.
         with pytest.raises(NotImplementedError):
-            BaseCoordinator().target_schema_version(MagicMock())
+            BaseCoordinator().target_msg_schema_version(MagicMock())
 
     def test_dag_parsing_cmd_raises_not_implemented(self):
         with pytest.raises(NotImplementedError):
@@ -192,12 +192,12 @@ class TestCoordinatorNamedTuples:
             dag_rel_path="dags/example.jar",
             bundle_info=mock_bundle,
             startup_details=mock_startup,
-            lang_sdk_version="2026-04-17",
+            lang_sdk_msg_schema_version="2026-04-17",
         )
         assert info.mode == "task-execution"
         assert info.what is mock_ti
         assert info.dag_rel_path == "dags/example.jar"
-        assert info.lang_sdk_version == "2026-04-17"
+        assert info.lang_sdk_msg_schema_version == "2026-04-17"
 
 
 class TestBridge:
@@ -334,7 +334,7 @@ class TestRunTaskExecution:
             dag_rel_path="dags/example.jar",
             bundle_info=mock_bundle_info,
             startup_details=mock_startup,
-            lang_sdk_version="2026-04-17",
+            lang_sdk_msg_schema_version="2026-04-17",
         )
 
         mock_entrypoint.assert_called_once()
@@ -344,7 +344,7 @@ class TestRunTaskExecution:
         assert info.dag_rel_path == "dags/example.jar"
         assert info.bundle_info is mock_bundle_info
         assert info.startup_details is mock_startup
-        assert info.lang_sdk_version == "2026-04-17"
+        assert info.lang_sdk_msg_schema_version == "2026-04-17"
         assert info.mode == "task-execution"
 
 
@@ -474,7 +474,7 @@ class TestRuntimeSubprocessEntrypoint:
             dag_rel_path="dags/example.test",
             bundle_info=mock_bundle_info,
             startup_details=mock_startup,
-            lang_sdk_version="2026-04-17",
+            lang_sdk_msg_schema_version="2026-04-17",
         )
 
         supervisor_comm = MagicMock(spec=socket.socket)
@@ -494,7 +494,7 @@ class TestRuntimeSubprocessEntrypoint:
 
         # Seed StartupDetails is downgraded once before being written to
         # the runtime socket. The head Pydantic model and the resolved
-        # lang_sdk_version both reach ``_send_startup_details``.
+        # lang_sdk_msg_schema_version both reach ``_send_startup_details``.
         mock_send_startup.assert_called_once_with(runtime_comm, mock_startup, "2026-04-17")
         mock_bridge.assert_called_once()
 

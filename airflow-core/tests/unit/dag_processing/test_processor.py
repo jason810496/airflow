@@ -2154,7 +2154,7 @@ class TestDagFileParseRequestCoordinatorMigration:
     Foreign-language SDK parsers decode IPC frames against a schema
     version frozen at SDK build time. The parser-supervisor's
     interception point is ``DagFileProcessorProcess._on_child_started``,
-    which pins ``self.lang_sdk_version`` to the coordinator's schema
+    which pins ``self.lang_sdk_msg_schema_version`` to the coordinator's schema
     version when a coordinator says it can handle the file. The
     supervisor IPC migrator then downgrades every outgoing body
     (including the seed ``DagFileParseRequest``) through ``send_msg``
@@ -2189,7 +2189,7 @@ class TestDagFileParseRequestCoordinatorMigration:
         from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
 
         coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_schema_version.return_value = "2026-04-17"
+        coordinator.target_msg_schema_version.return_value = "2026-04-17"
         manager = CoordinatorManager({"java": coordinator}, {})
         manager_mock = MagicMock(wraps=manager)
         manager_mock.for_dag_file.return_value = coordinator
@@ -2208,14 +2208,14 @@ class TestDagFileParseRequestCoordinatorMigration:
                 bundle_name="mybundle",
             )
 
-        # ``target_schema_version`` is the only coordinator call --
-        # the processor pins ``lang_sdk_version`` and lets the
+        # ``target_msg_schema_version`` is the only coordinator call --
+        # the processor pins ``lang_sdk_msg_schema_version`` and lets the
         # supervisor IPC migrator downgrade the seed frame on the
         # ``send_msg`` path.
-        coordinator.target_schema_version.assert_called_once()
-        real_msg = coordinator.target_schema_version.call_args[0][0]
+        coordinator.target_msg_schema_version.assert_called_once()
+        real_msg = coordinator.target_msg_schema_version.call_args[0][0]
         assert isinstance(real_msg, DagFileParseRequest)
-        assert proc.lang_sdk_version == "2026-04-17"
+        assert proc.lang_sdk_msg_schema_version == "2026-04-17"
         _, args, kwargs = mock_send.mock_calls[0]
         sent_body = args[1]
         assert sent_body is real_msg
@@ -2258,5 +2258,5 @@ class TestDagFileParseRequestCoordinatorMigration:
         assert isinstance(sent_body, DagFileParseRequest)
         # Python parser path keeps callback_requests intact.
         assert sent_body.callback_requests == callbacks
-        # No coordinator -> lang_sdk_version stays unset.
-        assert proc.lang_sdk_version is None
+        # No coordinator -> lang_sdk_msg_schema_version stays unset.
+        assert proc.lang_sdk_msg_schema_version is None

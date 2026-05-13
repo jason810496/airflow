@@ -108,7 +108,7 @@ def _run_harness(config: dict[str, Any], tmp_path: Path) -> tuple[dict[str, Any]
 def _make_config(
     *,
     mode: str,
-    lang_sdk_version: str,
+    lang_sdk_msg_schema_version: str,
     tmp_path: Path,
     send_response_bodies: list[dict],
     runtime_send_frames: list[list],
@@ -117,7 +117,7 @@ def _make_config(
     """Materialise a JSON-serialisable harness config under *tmp_path*."""
     return {
         "mode": mode,
-        "lang_sdk_version": lang_sdk_version,
+        "lang_sdk_msg_schema_version": lang_sdk_msg_schema_version,
         "runtime_script": os.fspath(FAKE_RUNTIME_SCRIPT),
         "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
         "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),
@@ -194,33 +194,33 @@ _HEAD_RESPONSE_BODY: dict[str, Any] = {
 }
 
 
-def _wire_request_for(lang_sdk_version: str, ti_id: str) -> dict[str, Any]:
+def _wire_request_for(lang_sdk_msg_schema_version: str, ti_id: str) -> dict[str, Any]:
     """
     Build a wire-shape ``_RequestBody`` dict containing exactly the
-    fields a runtime pinned to *lang_sdk_version* was built to send.
+    fields a runtime pinned to *lang_sdk_msg_schema_version* was built to send.
     """
     wire: dict[str, Any] = {"type": "_RequestBody", "ti_id": ti_id}
-    if lang_sdk_version >= "3026-02-15":
+    if lang_sdk_msg_schema_version >= "3026-02-15":
         wire["field_a"] = 11
-    if lang_sdk_version >= "3026-05-10":
+    if lang_sdk_msg_schema_version >= "3026-05-10":
         wire["field_b"] = 22
-    if lang_sdk_version >= "3026-08-22":
+    if lang_sdk_msg_schema_version >= "3026-08-22":
         wire["field_c"] = 33
     return wire
 
 
-def _expected_head_request_for(lang_sdk_version: str, ti_id: str) -> dict[str, Any]:
+def _expected_head_request_for(lang_sdk_msg_schema_version: str, ti_id: str) -> dict[str, Any]:
     """
     Build the head Pydantic shape the supervisor must see after upgrade,
-    for a runtime pinned to *lang_sdk_version*. Fields the runtime did
+    for a runtime pinned to *lang_sdk_msg_schema_version*. Fields the runtime did
     not send are backfilled by the request transformers to ``0``.
     """
     return {
         "type": "_RequestBody",
         "ti_id": ti_id,
-        "field_a": 11 if lang_sdk_version >= "3026-02-15" else 0,
-        "field_b": 22 if lang_sdk_version >= "3026-05-10" else 0,
-        "field_c": 33 if lang_sdk_version >= "3026-08-22" else 0,
+        "field_a": 11 if lang_sdk_msg_schema_version >= "3026-02-15" else 0,
+        "field_b": 22 if lang_sdk_msg_schema_version >= "3026-05-10" else 0,
+        "field_c": 33 if lang_sdk_msg_schema_version >= "3026-08-22" else 0,
     }
 
 
@@ -234,8 +234,8 @@ _PARAMETRIZE_MODE_AND_VERSION = pytest.mark.parametrize(
 
 
 @_PARAMETRIZE_MODE_AND_VERSION
-@pytest.mark.parametrize("lang_sdk_version", ALL_VERSIONS)
-def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_version, tmp_path):
+@pytest.mark.parametrize("lang_sdk_msg_schema_version", ALL_VERSIONS)
+def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_msg_schema_version, tmp_path):
     """
     Drive a full request/response round-trip across two real subprocesses.
 
@@ -248,7 +248,7 @@ def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_version, 
        runtime captures the wire body it received and writes it to
        its capture file.
     2. The runtime then sends one wire-shape ``_RequestBody`` upstream
-       at *lang_sdk_version*'s wire shape. The supervisor harness reads
+       at *lang_sdk_msg_schema_version*'s wire shape. The supervisor harness reads
        the bytes, runs them through ``handle_requests`` (which calls
        upgrade), and records the head Pydantic model the decoder
        produced.
@@ -258,13 +258,13 @@ def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_version, 
     and the supervisor's capture proves the upgrade direction
     backfills every later-version field.
     """
-    wire_request = _wire_request_for(lang_sdk_version, ti_id="ti-up")
-    expected_head_request = _expected_head_request_for(lang_sdk_version, ti_id="ti-up")
-    expected_wire_response = _DOWNGRADE_EXPECTATIONS[lang_sdk_version]
+    wire_request = _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up")
+    expected_head_request = _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up")
+    expected_wire_response = _DOWNGRADE_EXPECTATIONS[lang_sdk_msg_schema_version]
 
     config = _make_config(
         mode=mode,
-        lang_sdk_version=lang_sdk_version,
+        lang_sdk_msg_schema_version=lang_sdk_msg_schema_version,
         tmp_path=tmp_path,
         send_response_bodies=[_HEAD_RESPONSE_BODY],
         runtime_send_frames=[[1, wire_request, None]],
@@ -278,26 +278,26 @@ def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_version, 
     wire_body = runtime_capture[0]
     for field, value in expected_wire_response["present"].items():
         assert wire_body.get(field) == value, (
-            f"{mode} @ {lang_sdk_version}: wire field {field!r} mismatch -- got {wire_body!r}"
+            f"{mode} @ {lang_sdk_msg_schema_version}: wire field {field!r} mismatch -- got {wire_body!r}"
         )
     for field in expected_wire_response["absent"]:
         assert field not in wire_body, (
-            f"{mode} @ {lang_sdk_version}: wire field {field!r} must be stripped by downgrade"
+            f"{mode} @ {lang_sdk_msg_schema_version}: wire field {field!r} must be stripped by downgrade"
         )
 
     # -----------------------------------------------------------------
     # Upgrade direction -- the supervisor's capture is the source of truth.
     # -----------------------------------------------------------------
     assert supervisor_capture["mode"] == mode
-    assert supervisor_capture["lang_sdk_version"] == lang_sdk_version
+    assert supervisor_capture["lang_sdk_msg_schema_version"] == lang_sdk_msg_schema_version
     assert supervisor_capture["sent"] == [_HEAD_RESPONSE_BODY | {"type": "_ResponseBody"}], (
         "supervisor harness must record what it fed into send_msg in head shape"
     )
     assert len(supervisor_capture["received"]) == 1, (
-        f"{mode} @ {lang_sdk_version}: supervisor should have observed exactly one upgraded request"
+        f"{mode} @ {lang_sdk_msg_schema_version}: supervisor should have observed exactly one upgraded request"
     )
     assert supervisor_capture["received"][0] == expected_head_request, (
-        f"{mode} @ {lang_sdk_version}: head fields after upgrade must be backfilled"
+        f"{mode} @ {lang_sdk_msg_schema_version}: head fields after upgrade must be backfilled"
     )
 
 
@@ -313,25 +313,25 @@ def test_multiple_responses_and_requests_round_trip(mode, tmp_path):
     response field is stripped on downgrade, and at least one request
     field is backfilled on upgrade.
     """
-    lang_sdk_version = "3026-05-10"
+    lang_sdk_msg_schema_version = "3026-05-10"
     responses = [
         _HEAD_RESPONSE_BODY | {"ti_id": "ti-0"},
         _HEAD_RESPONSE_BODY | {"ti_id": "ti-1", "response_x": "x1"},
         _HEAD_RESPONSE_BODY | {"ti_id": "ti-2", "response_z": "z-only"},
     ]
     request_wires = [
-        _wire_request_for(lang_sdk_version, ti_id="ti-up-0"),
-        _wire_request_for(lang_sdk_version, ti_id="ti-up-1"),
+        _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-0"),
+        _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-1"),
     ]
     expected_head_requests = [
-        _expected_head_request_for(lang_sdk_version, ti_id="ti-up-0"),
-        _expected_head_request_for(lang_sdk_version, ti_id="ti-up-1"),
+        _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-0"),
+        _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-1"),
     ]
-    expected_wire = _DOWNGRADE_EXPECTATIONS[lang_sdk_version]
+    expected_wire = _DOWNGRADE_EXPECTATIONS[lang_sdk_msg_schema_version]
 
     config = _make_config(
         mode=mode,
-        lang_sdk_version=lang_sdk_version,
+        lang_sdk_msg_schema_version=lang_sdk_msg_schema_version,
         tmp_path=tmp_path,
         send_response_bodies=responses,
         runtime_send_frames=[[i + 1, body, None] for i, body in enumerate(request_wires)],
@@ -358,7 +358,7 @@ def test_harness_surfaces_non_zero_exit(tmp_path):
     """
     bad_config = {
         "mode": "task-execution",
-        "lang_sdk_version": "3026-05-10",
+        "lang_sdk_msg_schema_version": "3026-05-10",
         "runtime_script": os.fspath(tmp_path / "does_not_exist.py"),
         "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
         "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),

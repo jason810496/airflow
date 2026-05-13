@@ -568,7 +568,7 @@ class WatchedSubprocess:
     start_time: float = attrs.field(factory=time.monotonic)
     """The start time of the child process."""
 
-    lang_sdk_version: str | None = attrs.field(default=None, init=False)
+    lang_sdk_msg_schema_version: str | None = attrs.field(default=None, init=False)
     """
     Pinned client schema version for the child process, when the child
     is a foreign-language runtime launched by a coordinator. When set,
@@ -763,11 +763,11 @@ class WatchedSubprocess:
 
         """
         if isinstance(msg, BaseModel):
-            if self.lang_sdk_version is not None:
+            if self.lang_sdk_msg_schema_version is not None:
                 from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
                 body = get_schema_version_migrator().downgrade(
-                    msg, self.lang_sdk_version, dump_kwargs=dump_opts or None
+                    msg, self.lang_sdk_msg_schema_version, dump_kwargs=dump_opts or None
                 )
             else:
                 body = msg.model_dump(**dump_opts)
@@ -785,13 +785,15 @@ class WatchedSubprocess:
 
             body = request.body
             if (
-                self.lang_sdk_version is not None
+                self.lang_sdk_msg_schema_version is not None
                 and isinstance(body, dict)
                 and (body_type := resolve_body_class(body)) is not None
             ):
                 from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
-                body = get_schema_version_migrator().upgrade(body, body_type, self.lang_sdk_version)
+                body = get_schema_version_migrator().upgrade(
+                    body, body_type, self.lang_sdk_msg_schema_version
+                )
             try:
                 msg = self.decoder.validate_python(body)
             except Exception:
@@ -1235,7 +1237,7 @@ class ActivitySubprocess(WatchedSubprocess):
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
             return
 
-        # After the seed is sent, pin ``self.lang_sdk_version`` to the
+        # After the seed is sent, pin ``self.lang_sdk_msg_schema_version`` to the
         # coordinator's pinned schema version (resolved from ``ti.queue`` /
         # ``dag_rel_path``) so every subsequent ``send_msg`` (responses to
         # ``GetConnection`` etc.) and ``handle_requests`` decode is migrated
@@ -1243,7 +1245,7 @@ class ActivitySubprocess(WatchedSubprocess):
         from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 
         if (coordinator := get_coordinator_manager().for_queue(ti.queue)) is not None:
-            self.lang_sdk_version = coordinator.target_schema_version(msg)
+            self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
 
     def wait(self) -> int:
         if self._exit_code is not None:

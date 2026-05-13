@@ -21,9 +21,9 @@ paths in :mod:`airflow.sdk.execution_time.comms`.
 Pin three contracts:
 
 1. ``bind`` is logger-style immutable -- the original instance keeps
-   ``lang_sdk_version is None`` and the returned copy shares the same
+   ``lang_sdk_msg_schema_version is None`` and the returned copy shares the same
    socket / lock / counter identity.
-2. When ``lang_sdk_version`` is set, ``_make_frame`` routes the body
+2. When ``lang_sdk_msg_schema_version`` is set, ``_make_frame`` routes the body
    through ``SchemaVersionMigrator.downgrade`` and ``_from_frame``
    routes through ``.upgrade``. When ``None`` (unbound), ``_make_frame``
    uses ``model_dump(mode="json")`` -- the wire shape must be stable
@@ -65,21 +65,21 @@ class _NoTypeBody(BaseModel):
 class TestBindReturnsNewInstance:
     """``.bind`` is logger-style: returns a new instance, leaves the original alone."""
 
-    def test_unbound_decoder_has_no_lang_sdk_version(self):
+    def test_unbound_decoder_has_no_lang_sdk_msg_schema_version(self):
         c = _new_decoder()
-        assert c.lang_sdk_version is None
+        assert c.lang_sdk_msg_schema_version is None
 
     def test_bind_does_not_mutate_original(self):
         c = _new_decoder()
-        bound = c.bind(lang_sdk_version="2026-04-17")
-        assert c.lang_sdk_version is None
-        assert bound.lang_sdk_version == "2026-04-17"
+        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
+        assert c.lang_sdk_msg_schema_version is None
+        assert bound.lang_sdk_msg_schema_version == "2026-04-17"
         assert bound is not c
 
     def test_bind_to_none_drops_the_pin(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
-        cleared = c.bind(lang_sdk_version=None)
-        assert cleared.lang_sdk_version is None
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
+        cleared = c.bind(lang_sdk_msg_schema_version=None)
+        assert cleared.lang_sdk_msg_schema_version is None
 
 
 class TestBoundDecoderSharesMutableState:
@@ -93,23 +93,23 @@ class TestBoundDecoderSharesMutableState:
 
     def test_socket_is_shared(self):
         c = _new_decoder()
-        bound = c.bind(lang_sdk_version="2026-04-17")
+        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
         assert bound.socket is c.socket
 
     def test_locks_are_shared(self):
         c = _new_decoder()
-        bound = c.bind(lang_sdk_version="2026-04-17")
+        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
         assert bound._thread_lock is c._thread_lock
         assert bound._async_lock is c._async_lock
 
     def test_id_counter_is_shared(self):
         c = _new_decoder()
-        bound = c.bind(lang_sdk_version="2026-04-17")
+        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
         assert bound.id_counter is c.id_counter
 
     def test_decoders_are_shared(self):
         c = _new_decoder()
-        bound = c.bind(lang_sdk_version="2026-04-17")
+        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
         assert bound.body_decoder is c.body_decoder
         assert bound.resp_decoder is c.resp_decoder
         assert bound.err_decoder is c.err_decoder
@@ -139,10 +139,10 @@ class TestResolveBodyClass:
 
 
 class TestMakeFrameDowngradesWhenBound:
-    """When ``lang_sdk_version`` is set, ``_make_frame`` routes through the migrator."""
+    """When ``lang_sdk_msg_schema_version`` is set, ``_make_frame`` routes through the migrator."""
 
     def test_downgrade_called_with_pinned_version(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         msg = MagicMock(spec=BaseModel)
         wire = {"type": "Whatever", "payload": "downgraded"}
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
@@ -164,10 +164,10 @@ class TestMakeFrameDowngradesWhenBound:
 
 
 class TestFromFrameUpgradesWhenBound:
-    """When ``lang_sdk_version`` is set, ``_from_frame`` routes through the migrator."""
+    """When ``lang_sdk_msg_schema_version`` is set, ``_from_frame`` routes through the migrator."""
 
     def test_upgrade_called_for_known_body_type(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         c.body_decoder = MagicMock(spec=TypeAdapter)
         c.body_decoder.validate_python.return_value = "validated"
         wire = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"}
@@ -187,7 +187,7 @@ class TestFromFrameUpgradesWhenBound:
         assert result == "validated"
 
     def test_unknown_type_falls_through_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         c.body_decoder = MagicMock(spec=TypeAdapter)
         c.body_decoder.validate_python.return_value = "validated"
         wire = {"type": "Bogus", "x": 1}
@@ -199,7 +199,7 @@ class TestFromFrameUpgradesWhenBound:
         c.body_decoder.validate_python.assert_called_once_with(wire)
 
     def test_missing_type_falls_through_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         c.body_decoder = MagicMock(spec=TypeAdapter)
         c.body_decoder.validate_python.return_value = "validated"
         wire = {"x": 1}
@@ -210,7 +210,7 @@ class TestFromFrameUpgradesWhenBound:
         c.body_decoder.validate_python.assert_called_once_with(wire)
 
     def test_unbound_decoder_does_not_call_upgrade(self):
-        c = _new_decoder()  # lang_sdk_version is None
+        c = _new_decoder()  # lang_sdk_msg_schema_version is None
         c.body_decoder = MagicMock(spec=TypeAdapter)
         c.body_decoder.validate_python.return_value = "validated"
         wire = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"}
@@ -221,7 +221,7 @@ class TestFromFrameUpgradesWhenBound:
         c.body_decoder.validate_python.assert_called_once_with(wire)
 
     def test_none_body_returns_none_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         frame = _ResponseFrame(id=1, body=None)
         with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
             result = c._from_frame(frame)
@@ -232,24 +232,24 @@ class TestFromFrameUpgradesWhenBound:
 class TestConcurrentBindsDoNotStomp:
     """
     Two independent ``CommsDecoder`` instances with different bindings
-    are fully isolated -- ``lang_sdk_version`` is per-instance, not class-level.
+    are fully isolated -- ``lang_sdk_msg_schema_version`` is per-instance, not class-level.
     """
 
     def test_two_instances_with_different_versions(self):
-        a = _new_decoder().bind(lang_sdk_version="2026-04-17")
-        b = _new_decoder().bind(lang_sdk_version="2026-06-16")
-        assert a.lang_sdk_version == "2026-04-17"
-        assert b.lang_sdk_version == "2026-06-16"
+        a = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
+        b = _new_decoder().bind(lang_sdk_msg_schema_version="2026-06-16")
+        assert a.lang_sdk_msg_schema_version == "2026-04-17"
+        assert b.lang_sdk_msg_schema_version == "2026-06-16"
         # They also do not share sockets (each was constructed with its own MagicMock).
         assert a.socket is not b.socket
 
     def test_rebinding_one_does_not_affect_the_other(self):
-        a = _new_decoder().bind(lang_sdk_version="2026-04-17")
-        b = _new_decoder().bind(lang_sdk_version="2026-06-16")
-        a2 = a.bind(lang_sdk_version=None)
-        assert a2.lang_sdk_version is None
-        assert a.lang_sdk_version == "2026-04-17"  # original untouched
-        assert b.lang_sdk_version == "2026-06-16"  # other instance untouched
+        a = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
+        b = _new_decoder().bind(lang_sdk_msg_schema_version="2026-06-16")
+        a2 = a.bind(lang_sdk_msg_schema_version=None)
+        assert a2.lang_sdk_msg_schema_version is None
+        assert a.lang_sdk_msg_schema_version == "2026-04-17"  # original untouched
+        assert b.lang_sdk_msg_schema_version == "2026-06-16"  # other instance untouched
 
 
 class TestUnregisteredFallThroughIsConsistentWithMigrator:
@@ -260,7 +260,7 @@ class TestUnregisteredFallThroughIsConsistentWithMigrator:
     """
 
     def test_unregistered_body_class_unmodified(self):
-        c = _new_decoder().bind(lang_sdk_version="2026-04-17")
+        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
         c.body_decoder = MagicMock(spec=TypeAdapter)
         c.body_decoder.validate_python.return_value = "validated"
         frame = _ResponseFrame(id=1, body={"type": "_NoTypeBody", "payload": "x"})
@@ -276,10 +276,13 @@ class TestUnregisteredFallThroughIsConsistentWithMigrator:
 def test_bind_round_trips_through_attrs_evolve(version):
     """``.bind`` accepts any string or None and round-trips identity correctly."""
     c = _new_decoder()
-    bound = c.bind(lang_sdk_version=version)
-    assert bound.lang_sdk_version == version
+    bound = c.bind(lang_sdk_msg_schema_version=version)
+    assert bound.lang_sdk_msg_schema_version == version
     # The chain ``c.bind(None).bind("X").bind(None)`` ends with no pin.
     assert (
-        c.bind(lang_sdk_version=None).bind(lang_sdk_version="X").bind(lang_sdk_version=None).lang_sdk_version
+        c.bind(lang_sdk_msg_schema_version=None)
+        .bind(lang_sdk_msg_schema_version="X")
+        .bind(lang_sdk_msg_schema_version=None)
+        .lang_sdk_msg_schema_version
         is None
     )

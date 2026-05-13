@@ -46,7 +46,7 @@ parameter the test wants to vary lives in the JSON, so the subprocess's
 argv is identical across scenarios. Required keys:
 
   mode                          "dag-processing" | "task-execution"
-  lang_sdk_version                pinned schema version (ISO date)
+  lang_sdk_msg_schema_version                pinned schema version (ISO date)
   runtime_script                absolute path to ``_fake_runtime.py``
   runtime_capture_out           where the runtime writes captures
   supervisor_capture_out        where this harness writes captures
@@ -64,7 +64,7 @@ The subprocess records its observations as a JSON object::
     {
         "sent": [body_dict, ...],  # head-shape values fed into send_msg
         "received": [body_dict, ...],  # head-shape values after handle_requests upgrade
-        "lang_sdk_version": "3026-...",
+        "lang_sdk_msg_schema_version": "3026-...",
     }
 """
 
@@ -138,7 +138,7 @@ _SUPERVISOR_FOR_MODE: dict[str, type[WatchedSubprocess]] = {
 class _StubCoordinator(BaseCoordinator):
     """
     Coordinator that returns the fake-runtime invocation for both
-    channels and pins its ``target_schema_version`` to a constant.
+    channels and pins its ``target_msg_schema_version`` to a constant.
     """
 
     sdk = "test"
@@ -148,7 +148,7 @@ class _StubCoordinator(BaseCoordinator):
         self._target_version = target_version
         self._runtime_cmd = list(runtime_cmd)
 
-    def target_schema_version(self, _body: Any) -> str:
+    def target_msg_schema_version(self, _body: Any) -> str:
         return self._target_version
 
     def task_execution_cmd(self, *, comm_addr: str, **_unused) -> list[str]:
@@ -200,7 +200,7 @@ def _run(config: dict) -> int:
     if mode not in _SUPERVISOR_FOR_MODE:
         raise ValueError(f"unknown mode {mode!r}")
 
-    lang_sdk_version: str = config["lang_sdk_version"]
+    lang_sdk_msg_schema_version: str = config["lang_sdk_msg_schema_version"]
     runtime_script: str = config["runtime_script"]
     runtime_capture_out: str = config["runtime_capture_out"]
     supervisor_capture_out: str = config["supervisor_capture_out"]
@@ -230,7 +230,7 @@ def _run(config: dict) -> int:
         os.fspath(runtime_send_frames_path),
     ]
 
-    coordinator = _StubCoordinator(target_version=lang_sdk_version, runtime_cmd=runtime_cmd)
+    coordinator = _StubCoordinator(target_version=lang_sdk_msg_schema_version, runtime_cmd=runtime_cmd)
 
     comm_server = _start_server()
     host, port = comm_server.getsockname()
@@ -253,7 +253,7 @@ def _run(config: dict) -> int:
 
     try:
         supervisor = _build_supervisor(mode, runtime_sock)
-        supervisor.lang_sdk_version = coordinator.target_schema_version(None)
+        supervisor.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(None)
 
         # Phase 1 -- supervisor -> runtime. The task-execution mode
         # starts with the special one-shot ``_send_startup_details``
@@ -265,7 +265,9 @@ def _run(config: dict) -> int:
             response_body = _ResponseBody(**body_dict)
             captured_sent.append(response_body.model_dump(mode="json"))
             if mode == "task-execution" and index == 0:
-                _send_startup_details(runtime_sock, response_body, lang_sdk_version=lang_sdk_version)
+                _send_startup_details(
+                    runtime_sock, response_body, lang_sdk_msg_schema_version=lang_sdk_msg_schema_version
+                )
             else:
                 supervisor.send_msg(response_body, request_id=index)
 
@@ -298,7 +300,7 @@ def _run(config: dict) -> int:
         json.dumps(
             {
                 "mode": mode,
-                "lang_sdk_version": lang_sdk_version,
+                "lang_sdk_msg_schema_version": lang_sdk_msg_schema_version,
                 "sent": captured_sent,
                 "received": captured_received,
             }

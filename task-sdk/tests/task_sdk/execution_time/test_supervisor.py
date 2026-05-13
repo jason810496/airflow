@@ -3830,7 +3830,7 @@ class TestSendsRawStartupDetails:
     runtime, the seed-frame downgrade to the runtime's wire shape
     happens once inside ``_send_startup_details`` in the coordinator
     child; every subsequent IPC frame is migrated by the supervisor
-    parent through ``WatchedSubprocess.lang_sdk_version`` set right
+    parent through ``WatchedSubprocess.lang_sdk_msg_schema_version`` set right
     here, after the seed message has been sent.
     """
 
@@ -3881,7 +3881,7 @@ class TestSendsRawStartupDetails:
         mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
         # Empty coordinator registry: no foreign-runtime resolution
         # path is exercised here -- the seed message is sent in head
-        # shape and ``lang_sdk_version`` stays unset.
+        # shape and ``lang_sdk_msg_schema_version`` stays unset.
         from airflow.sdk.execution_time.coordinator import CoordinatorManager
 
         mocker.patch(
@@ -3901,11 +3901,11 @@ class TestSendsRawStartupDetails:
         assert isinstance(sent_body, StartupDetails)
         assert sent_body.ti.task_id == "t1"
         assert sent_body.ti.queue == queue
-        assert proc.lang_sdk_version is None
+        assert proc.lang_sdk_msg_schema_version is None
 
-    def test_supervisor_pins_lang_sdk_version_after_seed_send(self, mocker, make_ti_context):
+    def test_supervisor_pins_lang_sdk_msg_schema_version_after_seed_send(self, mocker, make_ti_context):
         """When a coordinator matches the queue, the seed message is sent
-        first in head shape, then ``lang_sdk_version`` is pinned so
+        first in head shape, then ``lang_sdk_msg_schema_version`` is pinned so
         subsequent IPC frames are migrated through the supervisor IPC
         bundle."""
         from airflow.sdk.execution_time.comms import StartupDetails
@@ -3918,7 +3918,7 @@ class TestSendsRawStartupDetails:
         client.task_instances.start.return_value = make_ti_context()
 
         coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_schema_version.return_value = "2026-04-17"
+        coordinator.target_msg_schema_version.return_value = "2026-04-17"
         mocker.patch(
             "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
             return_value=CoordinatorManager({"java": coordinator}, {"java-queue": "java"}),
@@ -3937,5 +3937,5 @@ class TestSendsRawStartupDetails:
 
         sent_body = mock_send.call_args[0][1]
         assert isinstance(sent_body, StartupDetails)
-        coordinator.target_schema_version.assert_called_once_with(sent_body)
-        assert proc.lang_sdk_version == "2026-04-17"
+        coordinator.target_msg_schema_version.assert_called_once_with(sent_body)
+        assert proc.lang_sdk_msg_schema_version == "2026-04-17"

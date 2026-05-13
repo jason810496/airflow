@@ -75,7 +75,7 @@ def _start_server() -> socket.socket:
 def _send_startup_details(
     runtime_comm: socket.socket,
     startup_details: StartupDetails,
-    lang_sdk_version: str,
+    lang_sdk_msg_schema_version: str,
 ) -> None:
     """
     Send the seed ``StartupDetails`` frame to the runtime subprocess.
@@ -89,7 +89,7 @@ def _send_startup_details(
     from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
     body = get_schema_version_migrator().downgrade(
-        startup_details, lang_sdk_version, dump_kwargs={"mode": "json"}
+        startup_details, lang_sdk_msg_schema_version, dump_kwargs={"mode": "json"}
     )
     frame = _ResponseFrame(id=0, body=body)
     runtime_comm.sendall(frame.as_bytes())
@@ -114,7 +114,7 @@ def _bridge(
 
     The comm channels are raw-byte forwarded by the selector loop in
     both directions. End-to-end schema migration is the supervisor
-    parent's responsibility: it sets ``WatchedSubprocess.lang_sdk_version``
+    parent's responsibility: it sets ``WatchedSubprocess.lang_sdk_msg_schema_version``
     so ``send_msg`` downgrades head-shape bodies to the runtime's
     pinned version and ``handle_requests`` upgrades incoming bodies
     back to head shape. The bridge stays out of the migration loop.
@@ -215,19 +215,19 @@ class BaseCoordinator:
         dag_rel_path: str | os.PathLike[str]
         bundle_info: BundleInfo
         # Head-shape ``StartupDetails`` from ``task_runner``; the
-        # coordinator downgrades this once to ``lang_sdk_version`` before
+        # coordinator downgrades this once to ``lang_sdk_msg_schema_version`` before
         # writing it to the runtime IPC socket.
         startup_details: StartupDetails
         # The foreign runtime's pinned lang SDK schema version. Used by
         # ``_send_startup_details`` to downgrade the seed frame. The
         # ongoing supervisor <-> runtime migration is handled by the
-        # supervisor parent via ``WatchedSubprocess.lang_sdk_version``
+        # supervisor parent via ``WatchedSubprocess.lang_sdk_msg_schema_version``
         # (set in ``ActivitySubprocess._on_child_started``), so the
         # bridge raw-forwards every subsequent frame.
-        lang_sdk_version: str
+        lang_sdk_msg_schema_version: str
         mode: str = "task-execution"
 
-    def target_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
+    def target_msg_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
         """
         Return the ``Airflow-SDK-Schema-Version`` the foreign runtime expects for *schema*.
 
@@ -329,17 +329,17 @@ class BaseCoordinator:
         dag_rel_path: str | os.PathLike[str],
         bundle_info: BundleInfo,
         startup_details: StartupDetails,
-        lang_sdk_version: str,
+        lang_sdk_msg_schema_version: str,
     ) -> None:
         """
         Spawn the runtime subprocess and forward *startup_details* over IPC.
 
         *startup_details* is the head-shape Pydantic model the supervisor
         sent to ``task_runner``. The seed frame to the runtime is
-        downgraded to *lang_sdk_version* in :func:`_send_startup_details`
+        downgraded to *lang_sdk_msg_schema_version* in :func:`_send_startup_details`
         (a one-shot migration). Every subsequent frame between the
         supervisor and the runtime is migrated by the supervisor parent
-        via ``WatchedSubprocess.lang_sdk_version`` -- the bridge in this
+        via ``WatchedSubprocess.lang_sdk_msg_schema_version`` -- the bridge in this
         process raw-forwards bytes only.
         """
         self._runtime_subprocess_entrypoint(
@@ -348,7 +348,7 @@ class BaseCoordinator:
                 dag_rel_path=dag_rel_path,
                 bundle_info=bundle_info,
                 startup_details=startup_details,
-                lang_sdk_version=lang_sdk_version,
+                lang_sdk_msg_schema_version=lang_sdk_msg_schema_version,
             )
         )
 
@@ -476,7 +476,7 @@ class BaseCoordinator:
                 _send_startup_details(
                     runtime_comm,
                     entrypoint_info.startup_details,
-                    entrypoint_info.lang_sdk_version,
+                    entrypoint_info.lang_sdk_msg_schema_version,
                 )
 
             # fd 0 is the bidirectional comms socket to the supervisor.

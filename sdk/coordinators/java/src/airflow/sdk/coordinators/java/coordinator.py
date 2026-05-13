@@ -166,7 +166,7 @@ class JavaCoordinator(BaseCoordinator):
             f"--logs={logs_addr}",
         ]
 
-    def target_schema_version(
+    def target_msg_schema_version(
         self,
         schema: StartupDetails | DagFileParseRequest,
     ) -> str:

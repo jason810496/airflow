@@ -2004,17 +2004,17 @@ def _resolve_runtime_entrypoint(startup_details: StartupDetails, log: Logger) ->
         # before the frame is written to the runtime IPC socket). Every
         # subsequent frame between the supervisor and the runtime is
         # migrated by the supervisor parent via
-        # ``WatchedSubprocess.lang_sdk_version`` (set in
+        # ``WatchedSubprocess.lang_sdk_msg_schema_version`` (set in
         # ``ActivitySubprocess._on_child_started``), so the bridge in
         # the python child stays raw-forwarding.
-        target_version = coordinator.target_schema_version(startup_details)
+        target_version = coordinator.target_msg_schema_version(startup_details)
         return functools.partial(
             coordinator.run_task_execution,
             what=startup_details.ti,
             dag_rel_path=startup_details.dag_rel_path,
             bundle_info=startup_details.bundle_info,
             startup_details=startup_details,
-            lang_sdk_version=target_version,
+            lang_sdk_msg_schema_version=target_version,
         )
 
     # Step 1: queue-to-coordinator mapping.
