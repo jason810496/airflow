@@ -19,7 +19,7 @@
 Dump the supervisor schema snapshot. Prints JSON to stdout.
 
 Mirrors :mod:`scripts.ci.prek.generate_execution_api_schema` but for
-the supervisor IPC ``VersionBundle``: walks
+the supervisor schema ``VersionBundle``: walks
 :func:`airflow.sdk.execution_time.supervisor_schemas.registered_models`
 and emits the head-version ``model_json_schema()`` for every wire body.
 

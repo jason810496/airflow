@@ -26,10 +26,8 @@ Regenerate the supervisor schema snapshot at
 ``task-sdk/src/airflow/sdk/execution_time/supervisor_schemas/schema.json``.
 
 The snapshot is the head-version JSON Schema for every Pydantic class
-on the supervisor IPC wire (the union members of ``ToTask``,
-``ToSupervisor``, ``ToManager``, ``ToDagProcessor``). Lang-SDK builders
-consume this file for codegen in place of the (removed) execution-API
-OpenAPI compat publication.
+on the supervisor schema wire (the union members of ``ToTask``,
+``ToSupervisor``, ``ToManager``, ``ToDagProcessor``).
 
 The actual dump is delegated to ``dump_supervisor_schemas.py`` (the
 sibling stdout-only script). If the committed snapshot differs from

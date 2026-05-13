@@ -28,7 +28,7 @@ Fail when a supervisor schema has changed without a matching
 
 Mirrors :mod:`scripts.ci.prek.check_execution_api_versions` for the
 supervisor bundle. The check is per-commit: every PR that mutates a
-registered IPC schema must add an instruction to the in-progress head
+registered supervisor schema must add an instruction to the in-progress head
 ``v<YYYY>_<MM>_<DD>.py`` file. The release-time version-file bump itself
 is one-per-release; this hook is what keeps the in-progress file
 honest between releases.
@@ -51,10 +51,13 @@ from common_prek_utils import console, get_remote_for_main
 
 SUPERVISOR_SCHEMAS_PREFIX = "task-sdk/src/airflow/sdk/execution_time/supervisor_schemas/"
 VERSIONS_PREFIX = SUPERVISOR_SCHEMAS_PREFIX + "versions/"
+TASK_SDK_COMMS_PATH = "task-sdk/src/airflow/sdk/execution_time/comms.py"
+CORE_PROCESSOR_PATH = "airflow-core/src/airflow/dag_processing/processor.py"
 
 DUMP_SCRIPT = Path(__file__).parent / "dump_supervisor_schemas.py"
 
 
+# TODO: We should consolidte the common logic with check_execution_api_versions.py into common_prek_utils
 def get_target_branch() -> str:
     """Branch to compare against. GITHUB_BASE_REF for PRs, DEFAULT_BRANCH in CI, else main."""
     return os.environ.get("GITHUB_BASE_REF") or os.environ.get("DEFAULT_BRANCH") or "main"
@@ -140,9 +143,7 @@ def main() -> int:
     schema_source_files = [
         f
         for f in changed_files
-        if f.startswith(SUPERVISOR_SCHEMAS_PREFIX)
-        or f == "task-sdk/src/airflow/sdk/execution_time/comms.py"
-        or f == "airflow-core/src/airflow/dag_processing/processor.py"
+        if f.startswith(SUPERVISOR_SCHEMAS_PREFIX) or f == TASK_SDK_COMMS_PATH or f == CORE_PROCESSOR_PATH
     ]
     version_files = [f for f in changed_files if f.startswith(VERSIONS_PREFIX)]
 
@@ -176,9 +177,7 @@ def main() -> int:
         return 1
 
     if current_snapshot != main_snapshot:
-        console.print(
-            "[bold red]ERROR:[/] Supervisor IPC schema has changed but no version file was updated."
-        )
+        console.print("[bold red]ERROR:[/] Supervisor schema has changed but no version file was updated.")
         console.print("")
         console.print("The following files were changed:")
         for f in schema_source_files:
@@ -196,7 +195,7 @@ def main() -> int:
             "See [cyan]task-sdk/src/airflow/sdk/execution_time/supervisor_schemas/AGENTS.md[/]."
         )
         return 1
-    console.print("[green]Snapshot unchanged:[/] Source changes do not affect the IPC contract.")
+    console.print("[green]Snapshot unchanged:[/] Source changes do not affect the supervisor schema.")
 
     return 0
 

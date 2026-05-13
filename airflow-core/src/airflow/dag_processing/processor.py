@@ -616,13 +616,10 @@ class DagFileProcessorProcess(WatchedSubprocess):
             bundle_name=bundle_name,
             callback_requests=callbacks,
         )
-        # When a runtime coordinator handles this file, pin the supervisor
-        # to the coordinator's schema version so ``send_msg`` downgrades
-        # outgoing head-shape bodies and ``handle_requests`` upgrades
-        # incoming bodies through the in-process Cadwyn migrator. The
-        # seed ``DagFileParseRequest`` below goes through the same
-        # downgrade path -- the foreign runtime receives a payload its
-        # decoder understands without an HTTP round-trip.
+        # When a coordinator handles this file, pin the supervisor
+        # to the lang-SDK's message schema version so ``WatchedSubprocess.send_msg`` downgrades
+        # outgoing head-shape bodies and ``WatchedSubprocess.handle_requests`` upgrades
+        # incoming bodies through the in-process Cadwyn migrator.
         if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
             self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
         self.send_msg(msg, request_id=0)

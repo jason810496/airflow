@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0
      https://www.apache.org/licenses/LICENSE-2.0 -->
 
-# Supervisor IPC Schemas — Agent Instructions
+# Supervisor Schemas — Agent Instructions
 
 ## What this package owns
 
@@ -21,9 +21,9 @@ models stay in their semantic homes:
 `registered_models()` introspects those four unions at import time, so
 the snapshot the prek hook commits to `schema.json` always matches the
 exact set of classes `CommsDecoder` actually decodes against — there
-is no hand-maintained list to keep in sync. The Triggerer's IPC
-unions (`ToTriggerRunner`, `ToTriggerSupervisor`) are intentionally
-excluded; lang-SDK coordinators do not handle the Triggerer channel
+is no hand-maintained list to keep in sync. The Triggerer's
+unions (`ToTriggerRunner`, `ToTriggerSupervisor`) **are intentionally excluded**;
+lang-SDK coordinators do not handle the Triggerer channel
 today.
 
 The bundle references registered classes via `schema(...)` instructions
@@ -52,7 +52,7 @@ version bump, and vice versa.
 
 ## When making changes
 
-### Adding a new IPC body to the versioned contract
+### Adding a new body to the versioned contract
 
 Append the class to the relevant discriminated union in its semantic
 home — `ToTask` / `ToSupervisor` in `comms.py`, or `ToManager` /
