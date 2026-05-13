@@ -74,13 +74,43 @@ def registered_models_by_name() -> dict[str, type[BaseModel]]:
     """
     Map every supervisor-IPC body's class name to the head Pydantic class.
 
-    Used by :func:`resolve_body_class` to resolve a wire-shape
-    discriminator (``body["type"]``) to the head class the migrator's
-    ``upgrade`` path needs. Cached per-process; the registry only
-    changes when a union member is added in ``comms.py`` or
-    ``processor.py``, which requires a restart anyway.
+    Single source of truth for the registry. Built once by walking the
+    four discriminated unions the supervisor decodes against; cached
+    per-process because the registry only changes when a union member
+    is added in ``comms.py`` or ``processor.py`` (which needs a
+    restart anyway). :func:`registered_models` derives its sorted
+    tuple from this dict, and :func:`resolve_body_class` looks up the
+    wire-shape ``type`` discriminator against it.
+
+    Imports are deferred so this package stays cheap to import for
+    callers that only need the bundle or migrator (e.g. the migrator
+    singleton factory); pulling in ``processor`` eagerly would drag the
+    whole DAG-processor import graph into every consumer.
+
+    Raises ``RuntimeError`` if two distinct classes register under the
+    same ``__name__`` -- the wire discriminator must round-trip to a
+    single head class, so a name clash is a programmer error that must
+    surface immediately rather than silently picking a winner.
     """
-    return {cls.__name__: cls for cls in registered_models()}
+    from pydantic import BaseModel
+
+    from airflow.dag_processing.processor import ToDagProcessor, ToManager
+    from airflow.sdk.execution_time.comms import ToSupervisor, ToTask
+
+    by_name: dict[str, type[BaseModel]] = {}
+    for union in (ToTask, ToSupervisor, ToManager, ToDagProcessor):
+        for member in _members_of_discriminated_union(union):
+            if not issubclass(member, BaseModel):
+                continue
+            existing = by_name.get(member.__name__)
+            if existing is None:
+                by_name[member.__name__] = member
+            elif existing is not member:
+                raise RuntimeError(
+                    f"Duplicate supervisor IPC body name {member.__name__!r}: "
+                    f"both {existing!r} and {member!r} register the same wire type"
+                )
+    return by_name
 
 
 def resolve_body_class(body: Any) -> type[BaseModel] | None:
@@ -95,30 +125,15 @@ def resolve_body_class(body: Any) -> type[BaseModel] | None:
 
 def registered_models() -> tuple[type[BaseModel], ...]:
     """
-    Return every Pydantic class on the supervisor IPC wire, deduplicated by name.
+    Return every Pydantic class on the supervisor IPC wire, sorted by class name.
 
-    Derived live from the four discriminated unions the supervisor
-    actually decodes against. Adding a new message type to any of those
-    unions automatically pulls it into the snapshot the next time the
-    ``generate-supervisor-schemas-snapshot`` prek hook runs.
-
-    Imports are deferred so this package stays cheap to import for
-    callers that only need the bundle or migrator (e.g. the migrator
-    singleton factory); pulling in ``processor`` eagerly would drag the
-    whole DAG-processor import graph into every consumer.
+    Thin view over :func:`registered_models_by_name`. The
+    ``generate-supervisor-schemas-snapshot`` prek hook walks this tuple
+    to emit ``supervisor_schemas/schema.json`` in a deterministic
+    order so the artefact diffs cleanly across runs.
     """
-    from pydantic import BaseModel
-
-    from airflow.dag_processing.processor import ToDagProcessor, ToManager
-    from airflow.sdk.execution_time.comms import ToSupervisor, ToTask
-
-    seen: dict[str, type[BaseModel]] = {}
-    for union in (ToTask, ToSupervisor, ToManager, ToDagProcessor):
-        for member in _members_of_discriminated_union(union):
-            if not issubclass(member, BaseModel):
-                continue
-            seen.setdefault(member.__name__, member)
-    return tuple(seen[name] for name in sorted(seen))
+    by_name = registered_models_by_name()
+    return tuple(by_name[name] for name in sorted(by_name))
 
 
 __all__ = [

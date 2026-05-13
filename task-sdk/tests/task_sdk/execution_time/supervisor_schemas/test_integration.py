@@ -15,117 +15,125 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-End-to-end integration tests for supervisor IPC schema migration.
+In-process integration tests for supervisor IPC schema migration.
 
-Three OS processes participate in every test:
+What is being verified -- the wiring between the supervisor and the
+schema-version migrator -- is independent of OS-level IPC. So these
+tests drive the production seams (``WatchedSubprocess.send_msg``,
+``WatchedSubprocess.handle_requests``, ``_send_startup_details``)
+directly with a ``MagicMock`` socket, then decode the bytes the
+production code wrote and assert on the wire shape.
 
-- The test parent (pytest) -- orchestrator.
-- :file:`_supervisor_subprocess.py` -- a real Python subprocess that
-  plays the role ``airflow dag-processor`` and ``airflow worker``
-  play in production. It constructs the same
-  :class:`WatchedSubprocess` subclass the CLIs do and drives
-  :meth:`send_msg` / :meth:`handle_requests` against the runtime
-  process. (The actual CLIs need a full Airflow deployment to run --
-  database, DAG bundles, queue broker -- which is out of scope for a
-  task-sdk unit test; the harness exercises the same Python code
-  paths those CLIs ultimately execute.)
-- :file:`_fake_runtime.py` -- a real Python subprocess that plays the
-  foreign-language runtime (Java, Go, Rust). Spawned by the
-  supervisor harness through the stub coordinator's
-  ``task_execution_cmd`` / ``dag_parsing_cmd``, just as a production
-  coordinator spawns its runtime.
+The migrator runs for real against a synthetic Cadwyn bundle defined
+in :mod:`_synthetic_bundle`. The ``synthetic_migrator`` fixture swaps
+in that bundle via ``monkeypatch`` for the duration of one test, so
+the real ``supervisor_schemas`` registry is restored automatically on
+teardown -- no module-level mutation outlives the test.
 
-Bytes flow over real TCP sockets between the supervisor harness and
-the runtime. Both subprocesses record every wire body they observe
-to a JSON tempfile, and the test parent validates *both* files: the
-downgrade direction (supervisor -> runtime) is checked against the
-runtime's capture; the upgrade direction (runtime -> supervisor) is
-checked against the supervisor harness's capture.
-
-The synthetic bundle the harnesses share has **six** dated
-:class:`~cadwyn.VersionChange` entries -- three on ``_RequestBody``
-(runtime -> supervisor) and three on ``_ResponseBody`` (supervisor
--> runtime). Tests parameterise the runtime's pinned client version
-across all seven defined dates plus the baseline, so every transformer
-in the chain runs in at least one scenario for each channel.
+The synthetic bundle has six dated :class:`~cadwyn.VersionChange`
+entries -- three on ``_RequestBody`` (runtime -> supervisor) and three
+on ``_ResponseBody`` (supervisor -> runtime). Tests parameterise the
+pinned client version across all seven defined dates plus the
+baseline, so every transformer in the chain runs in at least one
+scenario for each channel.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
+from unittest.mock import MagicMock
 
+import msgspec
+import psutil
 import pytest
-from task_sdk.execution_time.supervisor_schemas._synthetic_bundle import ALL_VERSIONS
+import structlog
+from pydantic import TypeAdapter
+from task_sdk.execution_time.supervisor_schemas._synthetic_bundle import (
+    ALL_VERSIONS,
+    SYNTHETIC_BUNDLE,
+    SYNTHETIC_REGISTRY,
+    _RequestBody,
+    _ResponseBody,
+)
+from uuid6 import uuid7
 
-HERE = Path(__file__).resolve().parent
-SUPERVISOR_SUBPROCESS = HERE / "_supervisor_subprocess.py"
-FAKE_RUNTIME_SCRIPT = HERE / "_fake_runtime.py"
+from airflow.sdk.execution_time.comms import _RequestFrame, _ResponseFrame
+from airflow.sdk.execution_time.coordinator import _send_startup_details
+from airflow.sdk.execution_time.supervisor import WatchedSubprocess
+from airflow.sdk.execution_time.supervisor_schemas import SchemaVersionMigrator
 
 
-def _run_harness(config: dict[str, Any], tmp_path: Path) -> tuple[dict[str, Any], list[Any]]:
+@pytest.fixture
+def synthetic_migrator(monkeypatch) -> SchemaVersionMigrator:
     """
-    Spawn the supervisor harness as a real subprocess and return both
-    sides' captures.
+    Bind the production migrator factory and registry to :data:`SYNTHETIC_BUNDLE`.
 
-    The harness writes its own observations to ``supervisor_capture_out``
-    and the runtime (spawned in turn by the harness through the stub
-    coordinator) writes its observations to ``runtime_capture_out``.
-    Returning both lets the test assert on the downgrade direction
-    (runtime capture) and the upgrade direction (supervisor capture)
-    in the same parameterisation.
-
-    Surfaces the harness's stdout / stderr on non-zero exit so a CI
-    failure points straight at the misbehaving subprocess rather than
-    at a silent ``pytest.fail``.
+    Production call sites do a deferred ``from airflow.sdk.execution_time.supervisor_schemas
+    import get_schema_version_migrator`` per call, so swapping the
+    module attribute via ``monkeypatch.setattr`` redirects every
+    downgrade and upgrade through the synthetic bundle until pytest
+    tears the fixture down.
     """
-    config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(config))
-
-    proc = subprocess.run(
-        [sys.executable, os.fspath(SUPERVISOR_SUBPROCESS), "--config", os.fspath(config_path)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+    migrator = SchemaVersionMigrator(SYNTHETIC_BUNDLE)
+    monkeypatch.setattr(
+        "airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator",
+        lambda: migrator,
     )
-    if proc.returncode != 0:
-        raise AssertionError(
-            f"supervisor harness exited {proc.returncode}\n"
-            f"--- stdout ---\n{proc.stdout}\n"
-            f"--- stderr ---\n{proc.stderr}\n"
-        )
-
-    supervisor_capture = json.loads(Path(config["supervisor_capture_out"]).read_text())
-    runtime_capture = json.loads(Path(config["runtime_capture_out"]).read_text())
-    return supervisor_capture, runtime_capture
+    monkeypatch.setattr(
+        "airflow.sdk.execution_time.supervisor_schemas.registered_models_by_name",
+        lambda: SYNTHETIC_REGISTRY,
+    )
+    return migrator
 
 
-def _make_config(
-    *,
-    mode: str,
-    lang_sdk_msg_schema_version: str,
-    tmp_path: Path,
-    send_response_bodies: list[dict],
-    runtime_send_frames: list[list],
-    runtime_final_read_count: int = 0,
-) -> dict[str, Any]:
-    """Materialise a JSON-serialisable harness config under *tmp_path*."""
-    return {
-        "mode": mode,
-        "lang_sdk_msg_schema_version": lang_sdk_msg_schema_version,
-        "runtime_script": os.fspath(FAKE_RUNTIME_SCRIPT),
-        "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
-        "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),
-        "send_response_bodies": send_response_bodies,
-        "runtime_send_frames": runtime_send_frames,
-        "runtime_read_count": len(send_response_bodies),
-        "runtime_final_read_count": runtime_final_read_count,
-    }
+class _StubTaskExecutionSupervisor(WatchedSubprocess):
+    """``ActivitySubprocess`` analogue pinned to the synthetic ``_RequestBody`` decoder."""
+
+    decoder: ClassVar[TypeAdapter] = TypeAdapter(_RequestBody)
+
+    def _handle_request(self, msg, log, req_id):
+        self.__dict__.setdefault("_received_msgs", []).append(msg)
+
+
+class _StubDagProcessingSupervisor(WatchedSubprocess):
+    """``DagFileProcessorProcess`` analogue pinned to the synthetic ``_RequestBody`` decoder."""
+
+    decoder: ClassVar[TypeAdapter] = TypeAdapter(_RequestBody)
+
+    def _handle_request(self, msg, log, req_id):
+        self.__dict__.setdefault("_received_msgs", []).append(msg)
+
+
+_SUPERVISOR_BY_MODE: dict[str, type[WatchedSubprocess]] = {
+    "task-execution": _StubTaskExecutionSupervisor,
+    "dag-processing": _StubDagProcessingSupervisor,
+}
+
+
+def _new_supervisor(mode: str, pinned_version: str) -> WatchedSubprocess:
+    """Build a :class:`WatchedSubprocess` with a mock stdin and a pinned migrator version."""
+    cls = _SUPERVISOR_BY_MODE[mode]
+    ws = cls(
+        id=uuid7(),
+        pid=1,
+        stdin=MagicMock(),
+        process=MagicMock(spec=psutil.Process),
+        process_log=structlog.get_logger(),
+    )
+    ws.lang_sdk_msg_schema_version = pinned_version
+    return ws
+
+
+def _decode_response_frame(raw: bytes) -> dict[str, Any]:
+    """Pull the body dict out of the on-wire ``_ResponseFrame`` bytes."""
+    # 4-byte big-endian length prefix, then a msgpack-encoded ``_ResponseFrame``
+    # tuple (id, body, error). Production framing -- exactly what the
+    # foreign-language runtime decodes against.
+    length = int.from_bytes(raw[:4], "big")
+    payload = raw[4 : 4 + length]
+    frame = msgspec.msgpack.Decoder(_ResponseFrame).decode(payload)
+    assert frame.body is not None, "downgraded frame must carry a body"
+    return frame.body
 
 
 _DOWNGRADE_EXPECTATIONS: dict[str, dict[str, Any]] = {
@@ -186,45 +194,44 @@ _DOWNGRADE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     },
 }
 
-_HEAD_RESPONSE_BODY: dict[str, Any] = {
-    "ti_id": "ti-resp",
-    "response_x": "x-value",
-    "response_y": "y-value",
-    "response_z": "z-value",
-}
+
+_HEAD_RESPONSE_BODY = _ResponseBody(
+    ti_id="ti-resp",
+    response_x="x-value",
+    response_y="y-value",
+    response_z="z-value",
+)
 
 
-def _wire_request_for(lang_sdk_msg_schema_version: str, ti_id: str) -> dict[str, Any]:
+def _wire_request_for(pinned_version: str, ti_id: str) -> dict[str, Any]:
     """
-    Build a wire-shape ``_RequestBody`` dict containing exactly the
-    fields a runtime pinned to *lang_sdk_msg_schema_version* was built to send.
+    Build a wire-shape ``_RequestBody`` dict containing exactly the fields a
+    runtime pinned to *pinned_version* was built to send.
     """
     wire: dict[str, Any] = {"type": "_RequestBody", "ti_id": ti_id}
-    if lang_sdk_msg_schema_version >= "3026-02-15":
+    if pinned_version >= "3026-02-15":
         wire["field_a"] = 11
-    if lang_sdk_msg_schema_version >= "3026-05-10":
+    if pinned_version >= "3026-05-10":
         wire["field_b"] = 22
-    if lang_sdk_msg_schema_version >= "3026-08-22":
+    if pinned_version >= "3026-08-22":
         wire["field_c"] = 33
     return wire
 
 
-def _expected_head_request_for(lang_sdk_msg_schema_version: str, ti_id: str) -> dict[str, Any]:
+def _expected_head_request_for(pinned_version: str, ti_id: str) -> _RequestBody:
     """
-    Build the head Pydantic shape the supervisor must see after upgrade,
-    for a runtime pinned to *lang_sdk_msg_schema_version*. Fields the runtime did
-    not send are backfilled by the request transformers to ``0``.
+    Build the head Pydantic shape the supervisor must see after upgrade for a runtime
+    pinned to *pinned_version*. Fields the runtime did not send are backfilled to ``0``.
     """
-    return {
-        "type": "_RequestBody",
-        "ti_id": ti_id,
-        "field_a": 11 if lang_sdk_msg_schema_version >= "3026-02-15" else 0,
-        "field_b": 22 if lang_sdk_msg_schema_version >= "3026-05-10" else 0,
-        "field_c": 33 if lang_sdk_msg_schema_version >= "3026-08-22" else 0,
-    }
+    return _RequestBody(
+        ti_id=ti_id,
+        field_a=11 if pinned_version >= "3026-02-15" else 0,
+        field_b=22 if pinned_version >= "3026-05-10" else 0,
+        field_c=33 if pinned_version >= "3026-08-22" else 0,
+    )
 
 
-_PARAMETRIZE_MODE_AND_VERSION = pytest.mark.parametrize(
+_PARAMETRIZE_MODE = pytest.mark.parametrize(
     "mode",
     [
         pytest.param("task-execution", id="task-execution"),
@@ -233,138 +240,119 @@ _PARAMETRIZE_MODE_AND_VERSION = pytest.mark.parametrize(
 )
 
 
-@_PARAMETRIZE_MODE_AND_VERSION
-@pytest.mark.parametrize("lang_sdk_msg_schema_version", ALL_VERSIONS)
-def test_supervisor_and_runtime_subprocesses_round_trip(mode, lang_sdk_msg_schema_version, tmp_path):
+@_PARAMETRIZE_MODE
+@pytest.mark.parametrize("pinned_version", ALL_VERSIONS)
+def test_send_msg_downgrades_to_pinned_wire_shape(synthetic_migrator, mode, pinned_version):
     """
-    Drive a full request/response round-trip across two real subprocesses.
-
-    Sequence -- mirrors what production does for the channel under test:
-
-    1. The supervisor harness sends one head-shape ``_ResponseBody`` to
-       the runtime through the production code path
-       (``_send_startup_details`` for the task-execution seed, then
-       ``send_msg``; ``send_msg`` only for dag-processing). The
-       runtime captures the wire body it received and writes it to
-       its capture file.
-    2. The runtime then sends one wire-shape ``_RequestBody`` upstream
-       at *lang_sdk_msg_schema_version*'s wire shape. The supervisor harness reads
-       the bytes, runs them through ``handle_requests`` (which calls
-       upgrade), and records the head Pydantic model the decoder
-       produced.
-
-    The test then validates **both** capture files: the runtime's
-    capture proves the downgrade direction matches the pinned version,
-    and the supervisor's capture proves the upgrade direction
-    backfills every later-version field.
+    Drive ``send_msg`` with the synthetic migrator bound and confirm the bytes that hit
+    stdin decode to the expected wire-version dict.
     """
-    wire_request = _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up")
-    expected_head_request = _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up")
-    expected_wire_response = _DOWNGRADE_EXPECTATIONS[lang_sdk_msg_schema_version]
+    ws = _new_supervisor(mode, pinned_version)
+    ws.send_msg(_HEAD_RESPONSE_BODY, request_id=0)
 
-    config = _make_config(
-        mode=mode,
-        lang_sdk_msg_schema_version=lang_sdk_msg_schema_version,
-        tmp_path=tmp_path,
-        send_response_bodies=[_HEAD_RESPONSE_BODY],
-        runtime_send_frames=[[1, wire_request, None]],
-    )
-    supervisor_capture, runtime_capture = _run_harness(config, tmp_path)
+    ws.stdin.sendall.assert_called_once()
+    raw = ws.stdin.sendall.call_args[0][0]
+    wire_body = _decode_response_frame(bytes(raw))
 
-    # -----------------------------------------------------------------
-    # Downgrade direction -- the runtime's capture is the source of truth.
-    # -----------------------------------------------------------------
-    assert len(runtime_capture) == 1, "runtime should have captured exactly one frame"
-    wire_body = runtime_capture[0]
-    for field, value in expected_wire_response["present"].items():
+    expectations = _DOWNGRADE_EXPECTATIONS[pinned_version]
+    for field, value in expectations["present"].items():
         assert wire_body.get(field) == value, (
-            f"{mode} @ {lang_sdk_msg_schema_version}: wire field {field!r} mismatch -- got {wire_body!r}"
+            f"{mode} @ {pinned_version}: wire field {field!r} mismatch -- got {wire_body!r}"
         )
-    for field in expected_wire_response["absent"]:
+    for field in expectations["absent"]:
         assert field not in wire_body, (
-            f"{mode} @ {lang_sdk_msg_schema_version}: wire field {field!r} must be stripped by downgrade"
+            f"{mode} @ {pinned_version}: wire field {field!r} must be stripped by downgrade"
         )
 
-    # -----------------------------------------------------------------
-    # Upgrade direction -- the supervisor's capture is the source of truth.
-    # -----------------------------------------------------------------
-    assert supervisor_capture["mode"] == mode
-    assert supervisor_capture["lang_sdk_msg_schema_version"] == lang_sdk_msg_schema_version
-    assert supervisor_capture["sent"] == [_HEAD_RESPONSE_BODY | {"type": "_ResponseBody"}], (
-        "supervisor harness must record what it fed into send_msg in head shape"
-    )
-    assert len(supervisor_capture["received"]) == 1, (
-        f"{mode} @ {lang_sdk_msg_schema_version}: supervisor should have observed exactly one upgraded request"
-    )
-    assert supervisor_capture["received"][0] == expected_head_request, (
-        f"{mode} @ {lang_sdk_msg_schema_version}: head fields after upgrade must be backfilled"
-    )
 
-
-@_PARAMETRIZE_MODE_AND_VERSION
-def test_multiple_responses_and_requests_round_trip(mode, tmp_path):
+@pytest.mark.parametrize("pinned_version", ALL_VERSIONS)
+def test_send_startup_details_downgrades_seed_frame(synthetic_migrator, pinned_version):
     """
-    Cross a multi-frame exchange to confirm neither direction drops
-    state between frames.
+    The task-execution seed handoff goes through ``_send_startup_details``, not ``send_msg``.
 
-    Three responses are sent supervisor -> runtime; two requests are
-    sent runtime -> supervisor. Picking the middle pinned version
-    (``3026-05-10``) keeps both directions interesting -- at least one
-    response field is stripped on downgrade, and at least one request
-    field is backfilled on upgrade.
+    Same downgrade contract though: the bytes written to the runtime
+    socket must carry the wire shape the runtime was built against.
     """
-    lang_sdk_msg_schema_version = "3026-05-10"
+    sock = MagicMock()
+    _send_startup_details(sock, _HEAD_RESPONSE_BODY, lang_sdk_msg_schema_version=pinned_version)  # type: ignore[arg-type]
+
+    sock.sendall.assert_called_once()
+    raw = sock.sendall.call_args[0][0]
+    wire_body = _decode_response_frame(bytes(raw))
+
+    expectations = _DOWNGRADE_EXPECTATIONS[pinned_version]
+    for field, value in expectations["present"].items():
+        assert wire_body.get(field) == value, (
+            f"seed @ {pinned_version}: wire field {field!r} mismatch -- got {wire_body!r}"
+        )
+    for field in expectations["absent"]:
+        assert field not in wire_body, (
+            f"seed @ {pinned_version}: wire field {field!r} must be stripped by downgrade"
+        )
+
+
+@_PARAMETRIZE_MODE
+@pytest.mark.parametrize("pinned_version", ALL_VERSIONS)
+def test_handle_requests_upgrades_wire_to_head_shape(synthetic_migrator, mode, pinned_version):
+    """
+    Hand-build a ``_RequestFrame`` at *pinned_version*'s wire shape, drive ``handle_requests``,
+    and confirm the head Pydantic body the decoder produced has every later-version field
+    backfilled.
+    """
+    ws = _new_supervisor(mode, pinned_version)
+    wire = _wire_request_for(pinned_version, ti_id="ti-up")
+
+    gen = ws.handle_requests(structlog.get_logger())
+    next(gen)
+    try:
+        gen.send(_RequestFrame(id=1, body=wire))
+    finally:
+        gen.close()
+
+    received = ws.__dict__.get("_received_msgs", [])
+    assert len(received) == 1, f"{mode} @ {pinned_version}: expected exactly one upgraded message"
+    assert received[0] == _expected_head_request_for(pinned_version, ti_id="ti-up")
+
+
+def test_round_trip_preserves_state_across_multiple_frames(synthetic_migrator):
+    """
+    Send three responses and two requests at the middle pinned version to confirm neither
+    direction drops state between frames.
+    """
+    pinned_version = "3026-05-10"
+    ws = _new_supervisor("task-execution", pinned_version)
+
     responses = [
-        _HEAD_RESPONSE_BODY | {"ti_id": "ti-0"},
-        _HEAD_RESPONSE_BODY | {"ti_id": "ti-1", "response_x": "x1"},
-        _HEAD_RESPONSE_BODY | {"ti_id": "ti-2", "response_z": "z-only"},
+        _ResponseBody(
+            ti_id=f"ti-{i}",
+            response_x="x-value",
+            response_y="y-value",
+            response_z="z-value",
+        )
+        for i in range(3)
     ]
-    request_wires = [
-        _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-0"),
-        _wire_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-1"),
-    ]
-    expected_head_requests = [
-        _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-0"),
-        _expected_head_request_for(lang_sdk_msg_schema_version, ti_id="ti-up-1"),
-    ]
-    expected_wire = _DOWNGRADE_EXPECTATIONS[lang_sdk_msg_schema_version]
+    for index, response in enumerate(responses):
+        ws.send_msg(response, request_id=index)
 
-    config = _make_config(
-        mode=mode,
-        lang_sdk_msg_schema_version=lang_sdk_msg_schema_version,
-        tmp_path=tmp_path,
-        send_response_bodies=responses,
-        runtime_send_frames=[[i + 1, body, None] for i, body in enumerate(request_wires)],
-    )
-    supervisor_capture, runtime_capture = _run_harness(config, tmp_path)
+    wire_bodies = [_decode_response_frame(bytes(call.args[0])) for call in ws.stdin.sendall.call_args_list]
+    assert [b["ti_id"] for b in wire_bodies] == ["ti-0", "ti-1", "ti-2"]
+    for body in wire_bodies:
+        # 3026-05-10 trims response_y and response_z (both introduced later)
+        # while keeping response_x (introduced at 3026-03-01).
+        assert body.get("response_x") == "x-value"
+        assert "response_y" not in body
+        assert "response_z" not in body
 
-    assert len(runtime_capture) == len(responses)
-    for wire_body, head_body in zip(runtime_capture, responses):
-        assert wire_body["ti_id"] == head_body["ti_id"]
-        for field in expected_wire["absent"]:
-            assert field not in wire_body, f"{mode}: field {field!r} must be trimmed"
+    request_wires = [_wire_request_for(pinned_version, ti_id=f"ti-up-{i}") for i in range(2)]
+    expected_heads = [_expected_head_request_for(pinned_version, ti_id=f"ti-up-{i}") for i in range(2)]
 
-    assert len(supervisor_capture["received"]) == len(expected_head_requests)
-    assert supervisor_capture["received"] == expected_head_requests
-    assert [b["ti_id"] for b in supervisor_capture["sent"]] == [b["ti_id"] for b in responses]
+    gen = ws.handle_requests(structlog.get_logger())
+    next(gen)
+    try:
+        for index, wire in enumerate(request_wires):
+            gen.send(_RequestFrame(id=index + 1, body=wire))
+    finally:
+        gen.close()
 
-
-def test_harness_surfaces_non_zero_exit(tmp_path):
-    """
-    Smoke-test the harness wrapper: a malformed config must fail loud
-    enough that CI failures point at the misbehaving subprocess. The
-    JSON file points at a non-existent runtime script, so the harness
-    has nothing to spawn and exits non-zero.
-    """
-    bad_config = {
-        "mode": "task-execution",
-        "lang_sdk_msg_schema_version": "3026-05-10",
-        "runtime_script": os.fspath(tmp_path / "does_not_exist.py"),
-        "runtime_capture_out": os.fspath(tmp_path / "runtime_capture.json"),
-        "supervisor_capture_out": os.fspath(tmp_path / "supervisor_capture.json"),
-        "send_response_bodies": [_HEAD_RESPONSE_BODY],
-        "runtime_send_frames": [],
-        "runtime_read_count": 1,
-    }
-    with pytest.raises(AssertionError, match="supervisor harness exited"):
-        _run_harness(bad_config, tmp_path)
+    received = ws.__dict__.get("_received_msgs", [])
+    assert received == expected_heads

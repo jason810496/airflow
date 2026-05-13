@@ -17,10 +17,12 @@
 """
 Shared synthetic IPC bundle for the supervisor-schemas integration tests.
 
-Lives next to the test, the supervisor harness, and the runtime
-harness so all three processes see identical body classes,
-version-change registrations and bundle layout when the test parent
-spawns the harnesses as real OS subprocesses.
+The bundle and its body classes live in their own module (rather than
+inline in the test file) so that any helper or fixture that needs them
+imports a single canonical definition. The integration test installs
+them via the ``synthetic_migrator`` pytest fixture, which uses
+``monkeypatch`` to swap the production registry for the duration of a
+single test and tears down automatically.
 
 Two body classes mirror the production split between channels:
 
@@ -34,13 +36,6 @@ Two body classes mirror the production split between channels:
   three dated breaking changes; each entry carries only
   ``schema(...).didnt_exist`` (responses never flow upstream, so no
   upgrade transformer is needed).
-
-:func:`install_synthetic_migrator` re-binds the production migrator
-factory and the cached registered-bodies index to the synthetic
-bundle. It is the single seam every process (test parent and both
-harnesses) calls so the migration plumbing routes through this
-bundle without mutating the real ``ToSupervisor`` / ``ToManager`` /
-``ToTask`` / ``ToDagProcessor`` discriminated unions.
 """
 
 from __future__ import annotations
@@ -175,23 +170,16 @@ ALL_VERSIONS: tuple[str, ...] = (
 )
 
 
-def install_synthetic_migrator() -> None:
-    """
-    Replace the production migrator factory and registered-body
-    registry with ones backed by :data:`SYNTHETIC_BUNDLE`.
+SYNTHETIC_REGISTRY: dict[str, type] = {
+    "_RequestBody": _RequestBody,
+    "_ResponseBody": _ResponseBody,
+}
+"""
+Wire-discriminator -> head class map for the synthetic bundle.
 
-    Every production call site re-imports
-    ``get_schema_version_migrator`` and ``registered_models_by_name``
-    per call, so re-binding the module-level attributes is enough to
-    redirect every downgrade and upgrade through the synthetic bundle.
-    Idempotent: calling twice leaves the rebound state unchanged.
-    """
-    from airflow.sdk.execution_time import supervisor_schemas as ss_mod
-    from airflow.sdk.execution_time.supervisor_schemas import SchemaVersionMigrator
-
-    migrator = SchemaVersionMigrator(SYNTHETIC_BUNDLE)
-    ss_mod.get_schema_version_migrator = lambda: migrator  # type: ignore[assignment]
-    ss_mod.registered_models_by_name = lambda: {  # type: ignore[assignment]
-        "_RequestBody": _RequestBody,
-        "_ResponseBody": _ResponseBody,
-    }
+Production lookups in ``resolve_body_class`` go through
+``supervisor_schemas.registered_models_by_name``. The ``synthetic_migrator``
+fixture swaps that lookup for this dict so the upgrade path can resolve
+``_RequestBody`` / ``_ResponseBody`` discriminators against the synthetic
+classes without touching the real registry.
+"""
