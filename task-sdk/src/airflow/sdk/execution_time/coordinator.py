@@ -50,6 +50,7 @@ import selectors
 import socket
 import subprocess
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, NamedTuple
 
 from airflow.sdk._shared.module_loading import import_string
@@ -229,12 +230,29 @@ class BaseCoordinator:
 
     def target_msg_schema_version(self, schema: StartupDetails | DagFileParseRequest) -> str:
         """
-        Return the ``Airflow-SDK-Schema-Version`` the foreign runtime expects for *schema*.
+        Return the ``Airflow-SDK-Supervisor-Schema-Version`` the foreign runtime expects for *schema*.
 
         Subclasses override this to read the version from their bundle
         artifact (e.g. a JAR manifest entry).
         """
         raise NotImplementedError
+
+    @staticmethod
+    def _resolve_task_bundle_path(schema: StartupDetails) -> Path:
+        """
+        Resolve the on-disk Dag bundle path for a task startup payload.
+
+        Shared utility for foreign-language coordinators that need to locate
+        the bundle root (e.g. to read a manifest from the JAR) for a task
+        that has already been scheduled. Imports
+        :func:`~airflow.sdk.execution_time.task_runner.resolve_bundle` lazily
+        so the task-runner module is not pulled into the coordinator import
+        graph at parse time.
+        """
+        from airflow.sdk.execution_time.task_runner import log, resolve_bundle
+
+        bundle_instance = resolve_bundle(schema.bundle_info, log)
+        return Path(bundle_instance.path)
 
     def can_handle_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> bool:
         """

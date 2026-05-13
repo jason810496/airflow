@@ -36,7 +36,7 @@ import yaml
 MANIFEST_PATH = "META-INF/MANIFEST.MF"
 METADATA_MANIFEST_KEY = "Airflow-Java-SDK-Metadata"
 SDK_VERSION_MANIFEST_KEY = "Airflow-Java-SDK-Version"
-SCHEMA_VERSION_MANIFEST_KEY = "Airflow-SDK-Schema-Version"
+SCHEMA_VERSION_MANIFEST_KEY = "Airflow-SDK-Supervisor-Schema-Version"
 DAG_CODE_MANIFEST_KEY = "Airflow-Java-SDK-Dag-Code"
 MAIN_CLASS_MANIFEST_KEY = "Main-Class"
 
@@ -46,8 +46,12 @@ class ResolvedJarBundle(NamedTuple):
 
     main_class: str
     classpath: str
-    schema_version: str | None
-    """``Airflow-SDK-Schema-Version`` from the bundle's manifest, or ``None`` when absent."""
+    schema_version: str
+    """``Airflow-SDK-Supervisor-Schema-Version`` from the bundle's manifest.
+
+    Required: a JAR without this attribute is not a valid Airflow Java SDK
+    bundle and is skipped by :func:`_read_bundle_jar`.
+    """
 
 
 class BundleScanner:
@@ -148,15 +152,16 @@ def _normalize_bundle_home(path: Path) -> Path:
     return normalized
 
 
-def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str], str | None] | None:
+def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str], str] | None:
     """
     Read ``Main-Class``, dag IDs, and schema version from a JAR's manifest.
 
     Returns ``(main_class, dag_ids, schema_version)`` when the JAR carries
-    valid ``Airflow-Java-SDK-Metadata`` and ``Main-Class`` manifest attributes
-    and the referenced metadata YAML contains at least one dag ID.
-    ``schema_version`` is the ``Airflow-SDK-Schema-Version`` manifest
-    attribute or ``None`` when absent. Returns ``None`` otherwise.
+    valid ``Airflow-Java-SDK-Metadata``, ``Main-Class`` and
+    ``Airflow-SDK-Supervisor-Schema-Version`` manifest attributes and the
+    referenced metadata YAML contains at least one dag ID. Returns ``None``
+    when any of those are absent -- such a JAR is not a valid Airflow Java
+    SDK bundle.
     """
     try:
         with zipfile.ZipFile(jar_path) as zf:
@@ -175,6 +180,8 @@ def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str], str | None] | None:
                 return None
 
             schema_version = manifest.get(SCHEMA_VERSION_MANIFEST_KEY)
+            if not schema_version:
+                return None
 
             try:
                 with zf.open(metadata_file) as f:
@@ -191,13 +198,18 @@ def _read_bundle_jar(jar_path: Path) -> tuple[str, set[str], str | None] | None:
     return main_class, dag_ids, schema_version
 
 
-def read_schema_version(jar_path: Path) -> str | None:
+def read_schema_version(jar_path: Path) -> str:
     """
-    Read the ``Airflow-SDK-Schema-Version`` manifest attribute from a JAR.
+    Read the ``Airflow-SDK-Supervisor-Schema-Version`` manifest attribute from a JAR.
 
-    Returns the version string when present, otherwise ``None``. Used by
-    the coordinator to decide which Cadwyn version to migrate IPC payloads
-    to before forwarding them to the foreign-language runtime.
+    Used by the coordinator to decide which Cadwyn version to migrate the supervisor schema
+    payloads to before forwarding them to the foreign-language runtime. The
+    attribute is required: a JAR without it cannot be served by the
+    coordinator, so missing-attribute, missing-manifest and bad-zip all
+    raise rather than degrading to ``None``.
+
+    :raises ValueError: if the JAR is unreadable, has no manifest, or
+        omits the ``Airflow-SDK-Supervisor-Schema-Version`` attribute.
     """
     try:
         with zipfile.ZipFile(jar_path) as zf:
@@ -205,10 +217,16 @@ def read_schema_version(jar_path: Path) -> str | None:
                 with zf.open(MANIFEST_PATH) as f:
                     manifest = email.message_from_binary_file(f)
             except KeyError:
-                return None
-            return manifest.get(SCHEMA_VERSION_MANIFEST_KEY)
-    except zipfile.BadZipFile:
-        return None
+                raise ValueError(f"JAR bundle {jar_path} has no manifest at {MANIFEST_PATH!r}") from None
+            schema_version = manifest.get(SCHEMA_VERSION_MANIFEST_KEY)
+            if not schema_version:
+                raise ValueError(
+                    f"JAR bundle {jar_path} is missing required manifest attribute "
+                    f"{SCHEMA_VERSION_MANIFEST_KEY!r}"
+                )
+            return schema_version
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"JAR bundle {jar_path} is not a valid zip archive") from exc
 
 
 def read_dag_code(jar_path: Path) -> str | None:

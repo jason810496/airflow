@@ -45,6 +45,13 @@ METADATA_YAML_PATH = "META-INF/airflow-metadata.yaml"
 DAG_CODE_PATH = "JavaExample.java"
 TEST_MAIN_CLASS = "com.example.MyDag"
 TEST_SDK_VERSION = "1.0.0"
+TEST_SCHEMA_VERSION = "2026-04-06"
+"""Default Airflow-SDK-Supervisor-Schema-Version stamped onto bundle JARs.
+
+The attribute is required, so the helper produces a valid bundle by default.
+Tests that need to exercise the missing-attribute failure path pass
+``schema_version=None`` explicitly.
+"""
 
 
 def _make_manifest(
@@ -52,7 +59,7 @@ def _make_manifest(
     main_class: str | None = TEST_MAIN_CLASS,
     metadata_path: str | None = METADATA_YAML_PATH,
     sdk_version: str | None = TEST_SDK_VERSION,
-    schema_version: str | None = None,
+    schema_version: str | None = TEST_SCHEMA_VERSION,
     dag_code_path: str | None = None,
 ) -> str:
     lines = ["Manifest-Version: 1.0"]
@@ -81,7 +88,7 @@ def _create_bundle_jar(
     include_metadata: bool = True,
     include_manifest: bool = True,
     dag_code: str | None = None,
-    schema_version: str | None = None,
+    schema_version: str | None = TEST_SCHEMA_VERSION,
 ) -> Path:
     """Create a minimal JAR (zip) file with Airflow Java SDK manifest attributes."""
     with zipfile.ZipFile(jar_path, "w") as zf:
@@ -161,6 +168,28 @@ class TestParseDagIdsFromMetadata:
         assert _parse_dag_ids_from_metadata(yaml_content) == set()
 
 
+def _write_bad_zip(tmp_path: Path, name: str = "bad.jar") -> Path:
+    """Create a non-zip file with a ``.jar`` suffix to exercise the bad-archive path."""
+    jar = tmp_path / name
+    jar.write_text("not a zip")
+    return jar
+
+
+def _write_jar_with_missing_internal_file(
+    tmp_path: Path,
+    name: str,
+    *,
+    metadata_path: str | None = None,
+    dag_code_path: str | None = None,
+) -> Path:
+    """Create a JAR whose manifest points at an internal file that does not exist."""
+    jar = tmp_path / name
+    with zipfile.ZipFile(jar, "w") as zf:
+        manifest = _make_manifest(metadata_path=metadata_path, dag_code_path=dag_code_path)
+        zf.writestr(MANIFEST_PATH, manifest)
+    return jar
+
+
 class TestReadBundleJar:
     def test_valid_jar(self, tmp_path: Path):
         jar = _create_bundle_jar(tmp_path / "valid.jar", dag_ids=["my_dag"])
@@ -169,36 +198,7 @@ class TestReadBundleJar:
         main_class, dag_ids, schema_version = result
         assert main_class == TEST_MAIN_CLASS
         assert dag_ids == {"my_dag"}
-        assert schema_version is None
-
-    def test_returns_none_for_missing_manifest(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_manifest.jar", include_manifest=False)
-        assert _read_bundle_jar(jar) is None
-
-    def test_returns_none_for_missing_metadata_key(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_meta.jar", include_metadata=False)
-        assert _read_bundle_jar(jar) is None
-
-    def test_returns_none_for_missing_main_class(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_main.jar", dag_ids=["d"], main_class=None)
-        assert _read_bundle_jar(jar) is None
-
-    def test_returns_none_for_missing_metadata_file(self, tmp_path: Path):
-        """Manifest references a metadata file that does not exist inside the JAR."""
-        jar = tmp_path / "missing_meta_file.jar"
-        with zipfile.ZipFile(jar, "w") as zf:
-            manifest = _make_manifest(metadata_path="nonexistent.yaml")
-            zf.writestr(MANIFEST_PATH, manifest)
-        assert _read_bundle_jar(jar) is None
-
-    def test_returns_none_for_bad_zip(self, tmp_path: Path):
-        bad = tmp_path / "bad.jar"
-        bad.write_text("not a zip file")
-        assert _read_bundle_jar(bad) is None
-
-    def test_returns_none_for_empty_dag_ids(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "empty_dags.jar", dag_ids=[])
-        assert _read_bundle_jar(jar) is None
+        assert schema_version == TEST_SCHEMA_VERSION
 
     def test_multiple_dag_ids(self, tmp_path: Path):
         jar = _create_bundle_jar(tmp_path / "multi.jar", dag_ids=["dag_1", "dag_2", "dag_3"])
@@ -207,12 +207,40 @@ class TestReadBundleJar:
         _, dag_ids, _ = result
         assert dag_ids == {"dag_1", "dag_2", "dag_3"}
 
-    def test_returns_schema_version_when_present(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "with_schema.jar", dag_ids=["d"], schema_version="2026-04-06")
-        result = _read_bundle_jar(jar)
-        assert result is not None
-        _, _, schema_version = result
-        assert schema_version == "2026-04-06"
+    @pytest.mark.parametrize(
+        "make_jar",
+        [
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_manifest.jar", include_manifest=False),
+                id="missing-manifest",
+            ),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_meta.jar", include_metadata=False),
+                id="missing-metadata-attribute",
+            ),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_main.jar", dag_ids=["d"], main_class=None),
+                id="missing-main-class",
+            ),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_schema.jar", dag_ids=["d"], schema_version=None),
+                id="missing-schema-version",
+            ),
+            pytest.param(
+                lambda p: _write_jar_with_missing_internal_file(
+                    p, "missing_meta_file.jar", metadata_path="nonexistent.yaml"
+                ),
+                id="metadata-file-missing-inside-jar",
+            ),
+            pytest.param(_write_bad_zip, id="bad-zip"),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "empty_dags.jar", dag_ids=[]),
+                id="empty-dag-ids",
+            ),
+        ],
+    )
+    def test_returns_none_when_jar_is_not_a_valid_bundle(self, tmp_path: Path, make_jar):
+        assert _read_bundle_jar(make_jar(tmp_path)) is None
 
 
 class TestReadSchemaVersion:
@@ -220,18 +248,25 @@ class TestReadSchemaVersion:
         jar = _create_bundle_jar(tmp_path / "with_schema.jar", dag_ids=["d"], schema_version="2026-04-06")
         assert read_schema_version(jar) == "2026-04-06"
 
-    def test_returns_none_when_absent(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_schema.jar", dag_ids=["d"])
-        assert read_schema_version(jar) is None
-
-    def test_returns_none_for_missing_manifest(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_manifest.jar", include_manifest=False)
-        assert read_schema_version(jar) is None
-
-    def test_returns_none_for_bad_zip(self, tmp_path: Path):
-        bad = tmp_path / "bad.jar"
-        bad.write_text("not a zip")
-        assert read_schema_version(bad) is None
+    @pytest.mark.parametrize(
+        ("make_jar", "match"),
+        [
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_schema.jar", dag_ids=["d"], schema_version=None),
+                "missing required manifest attribute",
+                id="missing-schema-version-attribute",
+            ),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_manifest.jar", include_manifest=False),
+                "has no manifest",
+                id="missing-manifest",
+            ),
+            pytest.param(_write_bad_zip, "not a valid zip archive", id="bad-zip"),
+        ],
+    )
+    def test_raises_when_schema_version_unavailable(self, tmp_path: Path, make_jar, match):
+        with pytest.raises(ValueError, match=match):
+            read_schema_version(make_jar(tmp_path))
 
 
 class TestReadDagCode:
@@ -240,26 +275,28 @@ class TestReadDagCode:
         jar = _create_bundle_jar(tmp_path / "with_code.jar", dag_ids=["d"], dag_code=code)
         assert read_dag_code(jar) == code
 
-    def test_returns_none_for_missing_dag_code_key(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_code.jar", dag_ids=["d"])
-        assert read_dag_code(jar) is None
-
-    def test_returns_none_for_missing_manifest(self, tmp_path: Path):
-        jar = _create_bundle_jar(tmp_path / "no_manifest.jar", include_manifest=False)
-        assert read_dag_code(jar) is None
-
-    def test_returns_none_for_bad_zip(self, tmp_path: Path):
-        bad = tmp_path / "bad.jar"
-        bad.write_text("not a zip")
-        assert read_dag_code(bad) is None
-
-    def test_returns_none_when_code_file_missing(self, tmp_path: Path):
-        """Manifest references a dag code file that does not exist inside the JAR."""
-        jar = tmp_path / "broken_code.jar"
-        with zipfile.ZipFile(jar, "w") as zf:
-            manifest = _make_manifest(dag_code_path="missing_source.py")
-            zf.writestr(MANIFEST_PATH, manifest)
-        assert read_dag_code(jar) is None
+    @pytest.mark.parametrize(
+        "make_jar",
+        [
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_code.jar", dag_ids=["d"]),
+                id="missing-dag-code-attribute",
+            ),
+            pytest.param(
+                lambda p: _create_bundle_jar(p / "no_manifest.jar", include_manifest=False),
+                id="missing-manifest",
+            ),
+            pytest.param(_write_bad_zip, id="bad-zip"),
+            pytest.param(
+                lambda p: _write_jar_with_missing_internal_file(
+                    p, "broken_code.jar", dag_code_path="missing_source.py"
+                ),
+                id="dag-code-file-missing-inside-jar",
+            ),
+        ],
+    )
+    def test_returns_none_when_dag_code_unavailable(self, tmp_path: Path, make_jar):
+        assert read_dag_code(make_jar(tmp_path)) is None
 
 
 class TestBundleScannerResolveJar:
@@ -374,11 +411,14 @@ class TestBundleScannerResolve:
         result = scanner.resolve("versioned_dag")
         assert result.schema_version == "2026-04-06"
 
-    def test_schema_version_none_when_absent(self, tmp_path: Path):
+    def test_jar_without_schema_version_is_not_a_valid_bundle(self, tmp_path: Path):
+        # The supervisor needs to know which message-schema version to migrate to
+        # before it can talk to the runtime, so a JAR missing the manifest
+        # attribute is treated as not-a-bundle and skipped during resolve.
         bundle_dir = tmp_path / "my_bundle"
         bundle_dir.mkdir()
-        _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["plain_dag"])
+        _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["plain_dag"], schema_version=None)
 
         scanner = BundleScanner(tmp_path)
-        result = scanner.resolve("plain_dag")
-        assert result.schema_version is None
+        with pytest.raises(FileNotFoundError, match="No JAR bundle containing dag_id='plain_dag'"):
+            scanner.resolve("plain_dag")

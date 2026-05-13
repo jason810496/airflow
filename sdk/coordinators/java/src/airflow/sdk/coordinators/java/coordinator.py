@@ -171,51 +171,38 @@ class JavaCoordinator(BaseCoordinator):
         schema: StartupDetails | DagFileParseRequest,
     ) -> str:
         """
-        Return the ``Airflow-SDK-Schema-Version`` declared by the bundle JAR.
+        Return the ``Airflow-SDK-Supervisor-Schema-Version`` declared by the bundle JAR.
 
-        For pure-Java DAGs the JAR path is the entrypoint; for Python stub DAGs
-        the actual JAR is resolved from ``bundles_folder`` via the ``dag_id``.
-        Raises ``ValueError`` when the JAR has no manifest stamp.
+        Three resolution paths, all converging on a JAR whose manifest
+        carries the schema version:
+
+        - **Dag parsing** -- ``schema.file`` is already the JAR path.
+        - **Pure-Java task** -- ``schema.dag_rel_path`` ends in ``.jar``,
+          resolved relative to the task's Dag bundle root.
+        - **Python stub task** -- the actual JAR lives in
+          ``bundles_folder`` and is found by matching ``schema.ti.dag_id``
+          against each candidate bundle's ``airflow-metadata.yaml``.
 
         The JAR manifest is re-read on every call so that operators can
-        swap a JAR on disk without restarting the coordinator -- caching
-        the result per (process, jar_path) would mask the swap and pin
-        the supervisor to the old schema version.
-        """
-        schema_version, jar_ref = self._resolve_schema_version(schema)
-        if schema_version:
-            return schema_version
-        raise ValueError(
-            f"JAR bundle {jar_ref} is missing required manifest attribute "
-            f"{BundleScanner.SCHEMA_VERSION_MANIFEST_KEY!r}"
-        )
+        swap a JAR on disk without restarting the Dag-processor or worker.
 
-    def _resolve_schema_version(
-        self, schema: StartupDetails | DagFileParseRequest
-    ) -> tuple[str | None, Path | str]:
-        """Resolve the manifest schema version and source reference for *schema*."""
+        :raises ValueError: when no JAR can be located for *schema* (e.g.
+            a Python-stub task with no ``bundles_folder`` configured), or
+            when the located JAR's manifest omits the schema-version
+            attribute. ``read_schema_version`` / ``BundleScanner.resolve``
+            raise on the JAR-side failures.
+        """
         # Local import to keep the module-level imports tidy and avoid a
         # circular ``airflow.dag_processing`` import at coordinator load time.
         from airflow.dag_processing.processor import DagFileParseRequest
 
         if isinstance(schema, DagFileParseRequest):
-            jar_path = Path(schema.file)
-            return read_schema_version(jar_path), jar_path
+            return read_schema_version(Path(schema.file))
         if schema.dag_rel_path and str(schema.dag_rel_path).endswith(self.file_extension):
+            # Pure-Java Dag case -- resolve the JAR path relative to the bundle root
             jar_path = self._resolve_task_bundle_path(schema) / os.fspath(schema.dag_rel_path)
-            return read_schema_version(jar_path), jar_path
+            return read_schema_version(jar_path)
         if self.bundles_folder:
-            # Python-stub task: resolve the real JAR via ``bundles_folder``.
-            resolved = BundleScanner(Path(self.bundles_folder)).resolve(dag_id=schema.ti.dag_id)
-            return resolved.schema_version, f"for dag_id={schema.ti.dag_id!r}"
+            # Python stub Dag case -- look up the JARs in bundles_folder by dag_id
+            return BundleScanner(Path(self.bundles_folder)).resolve(dag_id=schema.ti.dag_id).schema_version
         raise ValueError(f"Unable to determine target schema version for {schema}")
-
-    @staticmethod
-    def _resolve_task_bundle_path(schema: StartupDetails) -> Path:
-        """Resolve the Dag bundle path for a task startup payload."""
-        # Local import avoids loading task-runner dependencies while the Java
-        # coordinator package is imported for Dag parsing and source-code reads.
-        from airflow.sdk.execution_time.task_runner import log, resolve_bundle
-
-        bundle_instance = resolve_bundle(schema.bundle_info, log)
-        return Path(bundle_instance.path)

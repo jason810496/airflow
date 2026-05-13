@@ -45,6 +45,7 @@ if not AIRFLOW_V_3_3_PLUS:
 METADATA_YAML_PATH = "META-INF/airflow-metadata.yaml"
 DAG_CODE_PATH = "dag_source.py"
 TEST_MAIN_CLASS = "com.example.MyBundle"
+TEST_SCHEMA_VERSION = "2026-04-06"
 
 
 def _make_manifest(
@@ -52,7 +53,7 @@ def _make_manifest(
     main_class: str | None = TEST_MAIN_CLASS,
     metadata_path: str | None = METADATA_YAML_PATH,
     dag_code_path: str | None = None,
-    schema_version: str | None = None,
+    schema_version: str | None = TEST_SCHEMA_VERSION,
 ) -> str:
     lines = ["Manifest-Version: 1.0"]
     if main_class:
@@ -72,7 +73,7 @@ def _create_bundle_jar(
     *,
     dag_ids: list[str] | None = None,
     dag_code: str | None = None,
-    schema_version: str | None = None,
+    schema_version: str | None = TEST_SCHEMA_VERSION,
 ) -> Path:
     with zipfile.ZipFile(jar_path, "w") as zf:
         dag_code_path = DAG_CODE_PATH if dag_code else None
@@ -321,3 +322,25 @@ class TestTargetMsgSchemaVersion:
             JavaCoordinator(bundles_folder=str(bundles_folder)).target_msg_schema_version(startup_details)
             == "2026-04-17"
         )
+
+    def test_python_stub_task_picks_bundle_matching_startup_details_dag_id(self, tmp_path: Path):
+        # Two valid bundles live side by side under ``bundles_folder``;
+        # the coordinator must pick the one whose airflow-metadata.yaml
+        # lists the dag_id from ``StartupDetails.ti.dag_id`` and return
+        # *its* schema version, not the other bundle's. Guards against
+        # cross-contamination when one foreign-runtime install serves
+        # multiple unrelated DAG bundles at different schema versions.
+        bundles_folder = tmp_path / "java_bundles"
+        bundle_a = bundles_folder / "bundle_a"
+        bundle_b = bundles_folder / "bundle_b"
+        bundle_a.mkdir(parents=True)
+        bundle_b.mkdir(parents=True)
+        _create_bundle_jar(bundle_a / "app.jar", dag_ids=["dag_a"], schema_version="2026-04-17")
+        _create_bundle_jar(bundle_b / "app.jar", dag_ids=["dag_b"], schema_version="2026-06-16")
+
+        startup_b = _make_startup_details(dag_id="dag_b", dag_rel_path="dags/stub.py")
+        startup_a = _make_startup_details(dag_id="dag_a", dag_rel_path="dags/stub.py")
+
+        coordinator = JavaCoordinator(bundles_folder=str(bundles_folder))
+        assert coordinator.target_msg_schema_version(startup_b) == "2026-06-16"
+        assert coordinator.target_msg_schema_version(startup_a) == "2026-04-17"
