@@ -23,10 +23,13 @@ import os
 import socket
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import ANY, MagicMock, patch
 
+import msgpack
 import pytest
 
+from airflow.sdk.execution_time.comms import StartupDetails
 from airflow.sdk.execution_time.coordinator import (
     BaseCoordinator,
     CoordinatorManager,
@@ -36,6 +39,9 @@ from airflow.sdk.execution_time.coordinator import (
     get_coordinator_manager,
     reset_coordinator_manager,
 )
+
+MIGRATOR_PATH = "airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator"
+VERSION = "2026-04-17"
 
 
 class TestStartServer:
@@ -74,63 +80,79 @@ class TestStartServer:
             server.close()
 
 
-class TestSendStartupDetails:
-    @staticmethod
-    def _make_startup(payload: dict | None = None):
-        from airflow.sdk.execution_time.comms import StartupDetails
+class _WireFrame:
+    """
+    Mock argument matcher for the length-prefixed msgpack frame bytes
+    that :func:`_send_startup_details` hands to ``socket.sendall``.
 
+    Using a matcher (rather than reaching into ``mock.call_args``) lets
+    the tests stay on the high-level ``assert_called_once_with`` API
+    while still asserting on the decoded ``(response_id, body)`` pair
+    rather than the opaque on-wire bytes. ``__eq__`` is invoked by mock
+    when comparing recorded call arguments against the expectation.
+    """
+
+    def __init__(self, *, response_id: Any = ANY, body: Any = ANY) -> None:
+        self.response_id = response_id
+        self.body = body
+
+    __hash__ = None  # type: ignore[assignment]  # matcher is value-compared, never hashed
+
+    def __eq__(self, raw: object) -> bool:
+        if not isinstance(raw, (bytes, bytearray)):
+            return NotImplemented
+        length = int.from_bytes(raw[:4], "big")
+        if length != len(raw) - 4:
+            return False
+        frame = msgpack.unpackb(bytes(raw[4:]))
+        return frame[0] == self.response_id and frame[1] == self.body
+
+    def __repr__(self) -> str:
+        return f"_WireFrame(response_id={self.response_id!r}, body={self.body!r})"
+
+
+class TestSendStartupDetails:
+    @pytest.fixture
+    def startup_msg(self):
         msg = MagicMock(spec=StartupDetails)
-        msg.model_dump.return_value = payload or {"type": "StartupDetails", "ti": {}}
+        msg.model_dump.return_value = {"type": "StartupDetails", "ti": {}}
         return msg
 
-    def test_sends_frame_bytes_to_socket(self):
-        msg = self._make_startup()
-        mock_socket = MagicMock(spec=socket.socket)
+    @pytest.fixture
+    def mock_socket(self):
+        return MagicMock(spec=socket.socket)
 
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
-            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
+    @pytest.fixture
+    def mock_migrator(self, mocker):
+        return mocker.patch(MIGRATOR_PATH).return_value
 
-        mock_socket.sendall.assert_called_once()
-        sent_bytes = mock_socket.sendall.call_args[0][0]
-        assert len(sent_bytes) > 4
-        length = int.from_bytes(sent_bytes[:4], "big")
-        assert length == len(sent_bytes) - 4
+    def test_sends_length_prefixed_frame_bytes(self, startup_msg, mock_socket, mock_migrator):
+        mock_migrator.downgrade.return_value = {"type": "StartupDetails"}
 
-    def test_frame_contains_response_id_zero(self):
-        import msgpack
+        _send_startup_details(mock_socket, startup_msg, lang_sdk_msg_schema_version=VERSION)
 
-        msg = self._make_startup()
-        mock_socket = MagicMock(spec=socket.socket)
+        # The matcher's ``__eq__`` verifies the 4-byte big-endian length
+        # prefix matches the msgpack payload length.
+        mock_socket.sendall.assert_called_once_with(_WireFrame())
 
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = {"type": "StartupDetails"}
-            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
+    def test_frame_carries_response_id_zero(self, startup_msg, mock_socket, mock_migrator):
+        mock_migrator.downgrade.return_value = {"type": "StartupDetails"}
 
-        sent_bytes = mock_socket.sendall.call_args[0][0]
-        frame = msgpack.unpackb(sent_bytes[4:])
-        assert frame[0] == 0
+        _send_startup_details(mock_socket, startup_msg, lang_sdk_msg_schema_version=VERSION)
 
-    def test_routes_through_migrator(self):
-        import msgpack
+        mock_socket.sendall.assert_called_once_with(_WireFrame(response_id=0))
 
-        msg = self._make_startup({"head-only": True})
+    def test_routes_through_migrator_with_json_mode(self, startup_msg, mock_socket, mock_migrator):
         downgraded = {"type": "StartupDetails", "ti": {"task_id": "t1"}}
-        mock_socket = MagicMock(spec=socket.socket)
+        mock_migrator.downgrade.return_value = downgraded
 
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = downgraded
-            _send_startup_details(mock_socket, msg, lang_sdk_msg_schema_version="2026-04-17")
+        _send_startup_details(mock_socket, startup_msg, lang_sdk_msg_schema_version=VERSION)
 
         # The seed StartupDetails is always downgraded through the
         # migrator (json mode forced) before being framed.
-        mock_get.return_value.downgrade.assert_called_once_with(
-            msg, "2026-04-17", dump_kwargs={"mode": "json"}
-        )
-        msg.model_dump.assert_not_called()
-        sent_bytes = mock_socket.sendall.call_args[0][0]
-        frame = msgpack.unpackb(sent_bytes[4:])
-        assert frame[1] == downgraded
+        mock_migrator.downgrade.assert_called_once_with(startup_msg, VERSION, dump_kwargs={"mode": "json"})
+        startup_msg.model_dump.assert_not_called()
+        mock_socket.sendall.assert_called_once_with(_WireFrame(response_id=0, body=downgraded))
 
 
 class TestBaseCoordinatorDefaults:

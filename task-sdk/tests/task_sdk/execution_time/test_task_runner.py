@@ -149,6 +149,7 @@ from airflow.sdk.execution_time.context import (
     TriggeringAssetEventsAccessor,
     VariableAccessor,
 )
+from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
 from airflow.sdk.execution_time.task_runner import (
     RuntimeTaskInstance,
     TaskRunnerMarker,
@@ -156,6 +157,7 @@ from airflow.sdk.execution_time.task_runner import (
     _execute_task,
     _make_task_span,
     _push_xcom_if_needed,
+    _resolve_runtime_entrypoint,
     _xcom_push,
     finalize,
     get_startup_details,
@@ -5171,31 +5173,50 @@ class TestResolveRuntimeEntrypoint:
     pin.
     """
 
-    @staticmethod
-    def _make_startup_details():
-        from airflow.sdk.execution_time.comms import StartupDetails
+    SCHEMA_VERSION = "2026-04-17"
 
+    @staticmethod
+    def _make_startup_details(*, queue: str = "java-queue", dag_rel_path: str = "dags/example.jar"):
         return StartupDetails.model_construct(
-            ti=MagicMock(queue="java-queue", task_id="t1"),
-            dag_rel_path="dags/example.jar",
+            ti=MagicMock(queue=queue, task_id="t1"),
+            dag_rel_path=dag_rel_path,
             bundle_info=MagicMock(name="b", version="v1"),
             ti_context=MagicMock(),
             start_date=datetime(2024, 12, 1, tzinfo=dt_timezone.utc),
             sentry_integration="",
         )
 
-    def test_queue_mapped_path_forwards_head_startup_details(self, mocker):
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
-        from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
+    @pytest.fixture
+    def patch_manager(self, mocker):
+        def _patch(manager: CoordinatorManager) -> None:
+            mocker.patch(
+                "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
+                return_value=manager,
+            )
 
+        return _patch
+
+    @pytest.mark.parametrize(
+        "build_manager",
+        [
+            pytest.param(
+                lambda c: CoordinatorManager({"java": c}, {"java-queue": "java"}),
+                id="queue-mapped",
+            ),
+            pytest.param(
+                # No queue mapping forces the extension fallback (.jar).
+                lambda c: CoordinatorManager({"java": c}, {}),
+                id="extension-fallback",
+            ),
+        ],
+    )
+    def test_resolved_entrypoint_forwards_head_startup_details(self, patch_manager, build_manager):
         coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_msg_schema_version.return_value = "2026-04-17"
-
-        manager = CoordinatorManager({"java": coordinator}, {"java-queue": "java"})
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=manager,
-        )
+        # ``file_extension`` is set unconditionally so the extension-fallback
+        # branch has a value to match against; the queue-mapped branch ignores it.
+        type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
+        coordinator.target_msg_schema_version.return_value = self.SCHEMA_VERSION
+        patch_manager(build_manager(coordinator))
 
         startup = self._make_startup_details()
         entrypoint = _resolve_runtime_entrypoint(startup, log=MagicMock())
@@ -5206,49 +5227,15 @@ class TestResolveRuntimeEntrypoint:
         # resolved ``lang_sdk_msg_schema_version``.
         assert entrypoint is not None
         assert entrypoint.keywords["startup_details"] is startup
-        assert entrypoint.keywords["lang_sdk_msg_schema_version"] == "2026-04-17"
+        assert entrypoint.keywords["lang_sdk_msg_schema_version"] == self.SCHEMA_VERSION
         coordinator.target_msg_schema_version.assert_called_once_with(startup)
 
-    def test_extension_fallback_path_forwards_head_startup_details(self, mocker):
-        # Pure-runtime DAGs (no queue mapping) resolve the coordinator by
-        # file extension. The seed body is still the head model -- only
-        # the resolved ``lang_sdk_msg_schema_version`` changes.
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
-        from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
-
-        coordinator = MagicMock(spec=BaseCoordinator)
-        type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
-        coordinator.target_msg_schema_version.return_value = "2026-04-17"
-
-        # No queue mapping -- forces the extension fallback.
-        manager = CoordinatorManager({"java": coordinator}, {})
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=manager,
-        )
-
-        startup = self._make_startup_details()
-        entrypoint = _resolve_runtime_entrypoint(startup, log=MagicMock())
-
-        assert entrypoint is not None
-        assert entrypoint.keywords["startup_details"] is startup
-        assert entrypoint.keywords["lang_sdk_msg_schema_version"] == "2026-04-17"
-
-    def test_no_coordinator_skips_migration_entirely(self, mocker):
+    def test_no_coordinator_skips_migration_entirely(self, patch_manager):
         # The Python worker path must not pay for a migration: nothing
         # is mapped, nothing is invoked, no foreign runtime is involved.
-        from airflow.sdk.execution_time.coordinator import CoordinatorManager
-        from airflow.sdk.execution_time.task_runner import _resolve_runtime_entrypoint
+        patch_manager(CoordinatorManager({}, {}))
 
-        manager = CoordinatorManager({}, {})
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=manager,
-        )
-
-        startup = self._make_startup_details()
-        startup.ti.queue = "default"
-        startup.dag_rel_path = "dags/example.py"
+        startup = self._make_startup_details(queue="default", dag_rel_path="dags/example.py")
         entrypoint = _resolve_runtime_entrypoint(startup, log=MagicMock())
 
         assert entrypoint is None

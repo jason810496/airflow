@@ -135,6 +135,7 @@ from airflow.sdk.execution_time.comms import (
     SetTaskState,
     SetXCom,
     SkipDownstreamTasks,
+    StartupDetails,
     SucceedTask,
     TaskBreadcrumbsResult,
     TaskRescheduleStartDate,
@@ -154,6 +155,7 @@ from airflow.sdk.execution_time.comms import (
     _RequestFrame,
     _ResponseFrame,
 )
+from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
 from airflow.sdk.execution_time.supervisor import (
     ActivitySubprocess,
     InProcessSupervisorComms,
@@ -3822,6 +3824,31 @@ def test_ipc_trace_context_propagation(mocker):
     assert get_current_span().get_span_context().span_id != expected_span_id
 
 
+class _StartupDetailsLike:
+    """
+    Mock argument matcher for a head ``StartupDetails`` instance.
+
+    Lets ``assert_called_*_with`` assert on the relevant ``ti`` fields
+    of the seed message without reaching into ``mock.call_args``.
+    ``__eq__`` is invoked by mock when comparing recorded call
+    arguments against the expectation.
+    """
+
+    def __init__(self, *, task_id=mock.ANY, queue=mock.ANY) -> None:
+        self.task_id = task_id
+        self.queue = queue
+
+    __hash__ = None  # type: ignore[assignment]  # matcher is value-compared, never hashed
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, StartupDetails):
+            return NotImplemented
+        return other.ti.task_id == self.task_id and other.ti.queue == self.queue
+
+    def __repr__(self) -> str:
+        return f"_StartupDetailsLike(task_id={self.task_id!r}, queue={self.queue!r})"
+
+
 class TestSendsRawStartupDetails:
     """
     The supervisor -> task_runner channel always carries the head
@@ -3834,8 +3861,11 @@ class TestSendsRawStartupDetails:
     here, after the seed message has been sent.
     """
 
+    BUNDLE_INFO = BundleInfo(name="my-bundle", version="v1")
+    SCHEMA_VERSION = "2026-04-17"
+
     @staticmethod
-    def _make_ti(queue: str):
+    def _make_ti(queue: str) -> TaskInstanceDTO:
         return TaskInstanceDTO(
             id=uuid7(),
             task_id="t1",
@@ -3848,8 +3878,11 @@ class TestSendsRawStartupDetails:
             priority_weight=1,
         )
 
-    @staticmethod
-    def _make_proc(client, mocker):
+    @pytest.fixture
+    def proc(self, mocker, make_ti_context):
+        client = MagicMock(spec=sdk_client.Client)
+        client.task_instances.start.return_value = make_ti_context()
+        mocker.patch.object(ActivitySubprocess, "kill")
         return ActivitySubprocess(
             process_log=mocker.MagicMock(),
             id=TI_ID,
@@ -3859,6 +3892,20 @@ class TestSendsRawStartupDetails:
             process=mocker.MagicMock(),
         )
 
+    @pytest.fixture
+    def mock_send(self, mocker):
+        return mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+
+    @pytest.fixture
+    def patch_manager(self, mocker):
+        def _patch(manager: CoordinatorManager) -> None:
+            mocker.patch(
+                "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
+                return_value=manager,
+            )
+
+        return _patch
+
     @pytest.mark.parametrize(
         ("queue", "dag_rel_path"),
         [
@@ -3867,112 +3914,63 @@ class TestSendsRawStartupDetails:
         ],
     )
     def test_supervisor_sends_raw_head_shape_regardless_of_queue(
-        self, mocker, make_ti_context, queue, dag_rel_path
+        self, proc, mock_send, patch_manager, queue, dag_rel_path
     ):
-        from airflow.sdk.execution_time.comms import StartupDetails
-
-        ti = self._make_ti(queue=queue)
-        bundle_info = BundleInfo(name="my-bundle", version="v1")
-
-        client = MagicMock(spec=sdk_client.Client)
-        client.task_instances.start.return_value = make_ti_context()
-
-        mocker.patch.object(ActivitySubprocess, "kill")
-        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
         # Empty coordinator registry: no foreign-runtime resolution
         # path is exercised here -- the seed message is sent in head
         # shape and ``lang_sdk_msg_schema_version`` stays unset.
-        from airflow.sdk.execution_time.coordinator import CoordinatorManager
+        patch_manager(CoordinatorManager({}, {}))
 
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=CoordinatorManager({}, {}),
-        )
-
-        proc = self._make_proc(client, mocker)
         proc._on_child_started(
-            ti=ti,
+            ti=self._make_ti(queue),
             dag_rel_path=dag_rel_path,
-            bundle_info=bundle_info,
+            bundle_info=self.BUNDLE_INFO,
             sentry_integration="",
         )
 
-        sent_body = mock_send.call_args[0][1]
-        assert isinstance(sent_body, StartupDetails)
-        assert sent_body.ti.task_id == "t1"
-        assert sent_body.ti.queue == queue
+        mock_send.assert_called_once_with(proc, _StartupDetailsLike(task_id="t1", queue=queue), request_id=0)
         assert proc.lang_sdk_msg_schema_version is None
 
-    def test_supervisor_pins_lang_sdk_msg_schema_version_after_seed_send(self, mocker, make_ti_context):
-        """When a coordinator matches the queue, the seed message is sent
-        first in head shape, then ``lang_sdk_msg_schema_version`` is pinned so
-        subsequent IPC frames are migrated through the supervisor IPC
-        bundle."""
-        from airflow.sdk.execution_time.comms import StartupDetails
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
-
-        ti = self._make_ti(queue="java-queue")
-        bundle_info = BundleInfo(name="my-bundle", version="v1")
-
-        client = MagicMock(spec=sdk_client.Client)
-        client.task_instances.start.return_value = make_ti_context()
-
-        coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_msg_schema_version.return_value = "2026-04-17"
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=CoordinatorManager({"java": coordinator}, {"java-queue": "java"}),
-        )
-
-        mocker.patch.object(ActivitySubprocess, "kill")
-        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
-
-        proc = self._make_proc(client, mocker)
-        proc._on_child_started(
-            ti=ti,
-            dag_rel_path="dags/example.jar",
-            bundle_info=bundle_info,
-            sentry_integration="",
-        )
-
-        sent_body = mock_send.call_args[0][1]
-        assert isinstance(sent_body, StartupDetails)
-        coordinator.target_msg_schema_version.assert_called_once_with(sent_body)
-        assert proc.lang_sdk_msg_schema_version == "2026-04-17"
-
-    def test_supervisor_pins_lang_sdk_msg_schema_version_for_extension_fallback(
-        self, mocker, make_ti_context
+    @pytest.mark.parametrize(
+        ("queue", "build_manager"),
+        [
+            pytest.param(
+                "java-queue",
+                lambda c: CoordinatorManager({"java": c}, {"java-queue": "java"}),
+                id="queue-mapped",
+            ),
+            pytest.param(
+                "default",
+                lambda c: CoordinatorManager({"java": c}, {}),
+                id="extension-fallback",
+            ),
+        ],
+    )
+    def test_supervisor_pins_lang_sdk_msg_schema_version_after_seed_send(
+        self, proc, mock_send, patch_manager, queue, build_manager
     ):
-        """When no queue mapping matches, extension-routed runtimes still pin subsequent IPC frames."""
-        from airflow.sdk.execution_time.comms import StartupDetails
-        from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
-
-        ti = self._make_ti(queue="default")
-        bundle_info = BundleInfo(name="my-bundle", version="v1")
-
-        client = MagicMock(spec=sdk_client.Client)
-        client.task_instances.start.return_value = make_ti_context()
-
+        """When a coordinator matches (by queue or extension fallback) the seed
+        message is sent first in head shape, then ``lang_sdk_msg_schema_version``
+        is pinned so subsequent IPC frames are migrated through the supervisor
+        IPC bundle."""
         coordinator = MagicMock(spec=BaseCoordinator)
+        # ``file_extension`` is set unconditionally so the extension-fallback
+        # branch has a value to match against; the queue-mapped branch ignores it.
         type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
-        coordinator.target_msg_schema_version.return_value = "2026-04-17"
-        mocker.patch(
-            "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-            return_value=CoordinatorManager({"java": coordinator}, {}),
-        )
+        coordinator.target_msg_schema_version.return_value = self.SCHEMA_VERSION
+        patch_manager(build_manager(coordinator))
 
-        mocker.patch.object(ActivitySubprocess, "kill")
-        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
-
-        proc = self._make_proc(client, mocker)
         proc._on_child_started(
-            ti=ti,
+            ti=self._make_ti(queue),
             dag_rel_path="dags/example.jar",
-            bundle_info=bundle_info,
+            bundle_info=self.BUNDLE_INFO,
             sentry_integration="",
         )
 
-        sent_body = mock_send.call_args[0][1]
-        assert isinstance(sent_body, StartupDetails)
-        coordinator.target_msg_schema_version.assert_called_once_with(sent_body)
-        assert proc.lang_sdk_msg_schema_version == "2026-04-17"
+        # Both ``send_msg`` and ``target_msg_schema_version`` receive the
+        # same head ``StartupDetails`` instance; the matcher asserts each
+        # call carried a body matching ``ti.task_id`` / ``ti.queue``.
+        expected_body = _StartupDetailsLike(task_id="t1", queue=queue)
+        mock_send.assert_called_once_with(proc, expected_body, request_id=0)
+        coordinator.target_msg_schema_version.assert_called_once_with(expected_body)
+        assert proc.lang_sdk_msg_schema_version == self.SCHEMA_VERSION

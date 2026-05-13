@@ -36,13 +36,15 @@ Pin three contracts:
 from __future__ import annotations
 
 from socket import socket as _sock
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from airflow.sdk.execution_time.comms import (
     CommsDecoder,
+    ConnectionResult,
+    StartupDetails,
     ToSupervisor,
     ToTask,
     _RequestFrame,
@@ -50,35 +52,46 @@ from airflow.sdk.execution_time.comms import (
 )
 from airflow.sdk.execution_time.supervisor_schemas import resolve_body_class
 
+VERSION = "2026-04-17"
+OTHER_VERSION = "2026-06-16"
+MIGRATOR_PATH = "airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator"
 
-def _new_decoder() -> CommsDecoder[ToTask, ToSupervisor]:
+
+def _make_decoder() -> CommsDecoder[ToTask, ToSupervisor]:
     """Build a decoder with a mock socket so attrs.evolve has something to copy by reference."""
     return CommsDecoder[ToTask, ToSupervisor](socket=MagicMock(spec=_sock))
 
 
-class _NoTypeBody(BaseModel):
-    """Plain body with no ``type`` discriminator -- exercises the unregistered fall-through."""
+@pytest.fixture
+def decoder() -> CommsDecoder[ToTask, ToSupervisor]:
+    return _make_decoder()
 
-    payload: str = "x"
+
+@pytest.fixture
+def bound_decoder(decoder) -> CommsDecoder[ToTask, ToSupervisor]:
+    return decoder.bind(lang_sdk_msg_schema_version=VERSION)
+
+
+@pytest.fixture
+def mock_migrator(mocker):
+    """Patch ``get_schema_version_migrator`` and return the migrator instance."""
+    return mocker.patch(MIGRATOR_PATH).return_value
 
 
 class TestBindReturnsNewInstance:
     """``.bind`` is logger-style: returns a new instance, leaves the original alone."""
 
-    def test_unbound_decoder_has_no_lang_sdk_msg_schema_version(self):
-        c = _new_decoder()
-        assert c.lang_sdk_msg_schema_version is None
+    def test_unbound_decoder_has_no_lang_sdk_msg_schema_version(self, decoder):
+        assert decoder.lang_sdk_msg_schema_version is None
 
-    def test_bind_does_not_mutate_original(self):
-        c = _new_decoder()
-        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
-        assert c.lang_sdk_msg_schema_version is None
-        assert bound.lang_sdk_msg_schema_version == "2026-04-17"
-        assert bound is not c
+    def test_bind_does_not_mutate_original(self, decoder):
+        bound = decoder.bind(lang_sdk_msg_schema_version=VERSION)
+        assert decoder.lang_sdk_msg_schema_version is None
+        assert bound.lang_sdk_msg_schema_version == VERSION
+        assert bound is not decoder
 
-    def test_bind_to_none_drops_the_pin(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        cleared = c.bind(lang_sdk_msg_schema_version=None)
+    def test_bind_to_none_drops_the_pin(self, bound_decoder):
+        cleared = bound_decoder.bind(lang_sdk_msg_schema_version=None)
         assert cleared.lang_sdk_msg_schema_version is None
 
 
@@ -91,141 +104,119 @@ class TestBoundDecoderSharesMutableState:
     unbound copy would race the bound copy on the shared socket.
     """
 
-    def test_socket_is_shared(self):
-        c = _new_decoder()
-        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
-        assert bound.socket is c.socket
-
-    def test_locks_are_shared(self):
-        c = _new_decoder()
-        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
-        assert bound._thread_lock is c._thread_lock
-        assert bound._async_lock is c._async_lock
-
-    def test_id_counter_is_shared(self):
-        c = _new_decoder()
-        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
-        assert bound.id_counter is c.id_counter
-
-    def test_decoders_are_shared(self):
-        c = _new_decoder()
-        bound = c.bind(lang_sdk_msg_schema_version="2026-04-17")
-        assert bound.body_decoder is c.body_decoder
-        assert bound.resp_decoder is c.resp_decoder
-        assert bound.err_decoder is c.err_decoder
+    @pytest.mark.parametrize(
+        "attr",
+        [
+            "socket",
+            "_thread_lock",
+            "_async_lock",
+            "id_counter",
+            "body_decoder",
+            "resp_decoder",
+            "err_decoder",
+        ],
+    )
+    def test_attribute_is_shared_by_reference(self, decoder, bound_decoder, attr):
+        assert getattr(bound_decoder, attr) is getattr(decoder, attr)
 
 
 class TestResolveBodyClass:
     """``resolve_body_class`` reads the ``type`` discriminator into the head class."""
 
     def test_known_type_resolves_to_class(self):
-        cls = resolve_body_class({"type": "StartupDetails"})
-        assert cls is not None
-        assert cls.__name__ == "StartupDetails"
+        assert resolve_body_class({"type": "StartupDetails"}) is StartupDetails
 
-    def test_unknown_type_returns_none(self):
-        assert resolve_body_class({"type": "DefinitelyNotAType"}) is None
-
-    def test_missing_type_returns_none(self):
-        assert resolve_body_class({"payload": "x"}) is None
-
-    def test_non_dict_returns_none(self):
-        assert resolve_body_class("hello") is None
-        assert resolve_body_class(None) is None
-        assert resolve_body_class(42) is None
-
-    def test_non_string_type_returns_none(self):
-        assert resolve_body_class({"type": 123}) is None
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"type": "DefinitelyNotAType"}, id="unknown-type"),
+            pytest.param({"payload": "x"}, id="missing-type"),
+            pytest.param({"type": 123}, id="non-string-type"),
+            pytest.param("hello", id="string-body"),
+            pytest.param(None, id="none-body"),
+            pytest.param(42, id="int-body"),
+        ],
+    )
+    def test_unresolved_body_returns_none(self, body):
+        assert resolve_body_class(body) is None
 
 
 class TestMakeFrameDowngradesWhenBound:
     """When ``lang_sdk_msg_schema_version`` is set, ``_make_frame`` routes through the migrator."""
 
-    def test_downgrade_called_with_pinned_version(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
+    def test_downgrade_called_with_pinned_version(self, bound_decoder, mock_migrator):
         msg = MagicMock(spec=BaseModel)
         wire = {"type": "Whatever", "payload": "downgraded"}
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.downgrade.return_value = wire
-            frame = c._make_frame(msg)
-        mock_get.return_value.downgrade.assert_called_once_with(msg, "2026-04-17")
+        mock_migrator.downgrade.return_value = wire
+
+        frame = bound_decoder._make_frame(msg)
+
+        mock_migrator.downgrade.assert_called_once_with(msg, VERSION)
         assert isinstance(frame, _RequestFrame)
         assert frame.body == wire
 
-    def test_unbound_uses_model_dump_json_mode(self):
+    def test_unbound_uses_model_dump_json_mode(self, decoder):
         # The mode="json" switch makes datetime / UUID / Path serialise
         # as JSON-safe primitives even on the unbound (head-shape) path,
         # so the wire shape is identical regardless of bind state.
-        c = _new_decoder()
         msg = MagicMock(spec=BaseModel)
         msg.model_dump.return_value = {"sentinel": True}
-        c._make_frame(msg)
+
+        decoder._make_frame(msg)
+
         msg.model_dump.assert_called_once_with(mode="json")
 
 
 class TestFromFrameUpgradesWhenBound:
     """When ``lang_sdk_msg_schema_version`` is set, ``_from_frame`` routes through the migrator."""
 
-    def test_upgrade_called_for_known_body_type(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        c.body_decoder = MagicMock(spec=TypeAdapter)
-        c.body_decoder.validate_python.return_value = "validated"
+    @staticmethod
+    def _stub_body_decoder(decoder) -> MagicMock:
+        decoder.body_decoder = MagicMock(spec=TypeAdapter)
+        decoder.body_decoder.validate_python.return_value = "validated"
+        return decoder.body_decoder
+
+    def test_upgrade_called_for_known_body_type(self, bound_decoder, mock_migrator):
+        body_decoder = self._stub_body_decoder(bound_decoder)
         wire = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"}
-        upgraded = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws", "extra_field": True}
-        frame = _ResponseFrame(id=1, body=wire)
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            mock_get.return_value.upgrade.return_value = upgraded
-            result = c._from_frame(frame)
-        # The upgrade was called with the resolved head class and the pinned version.
-        mock_get.return_value.upgrade.assert_called_once()
-        body_arg, type_arg, version_arg = mock_get.return_value.upgrade.call_args[0]
-        assert body_arg == wire
-        assert type_arg.__name__ == "ConnectionResult"
-        assert version_arg == "2026-04-17"
+        upgraded = {**wire, "extra_field": True}
+        mock_migrator.upgrade.return_value = upgraded
+
+        result = bound_decoder._from_frame(_ResponseFrame(id=1, body=wire))
+
+        mock_migrator.upgrade.assert_called_once_with(wire, ConnectionResult, VERSION)
         # The decoder received the upgraded (head-shape) body, not the wire dict.
-        c.body_decoder.validate_python.assert_called_once_with(upgraded)
+        body_decoder.validate_python.assert_called_once_with(upgraded)
         assert result == "validated"
 
-    def test_unknown_type_falls_through_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        c.body_decoder = MagicMock(spec=TypeAdapter)
-        c.body_decoder.validate_python.return_value = "validated"
-        wire = {"type": "Bogus", "x": 1}
-        frame = _ResponseFrame(id=1, body=wire)
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            c._from_frame(frame)
-        mock_get.return_value.upgrade.assert_not_called()
-        # The decoder still got the original wire dict and is left to fail/succeed.
-        c.body_decoder.validate_python.assert_called_once_with(wire)
+    @pytest.mark.parametrize(
+        ("bound", "wire"),
+        [
+            pytest.param(True, {"type": "Bogus", "x": 1}, id="bound-unknown-type"),
+            pytest.param(True, {"x": 1}, id="bound-missing-type"),
+            pytest.param(True, {"type": "_NoTypeBody", "payload": "x"}, id="bound-unregistered-class"),
+            pytest.param(
+                False,
+                {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"},
+                id="unbound-known-type",
+            ),
+        ],
+    )
+    def test_fall_through_does_not_call_upgrade(self, decoder, mock_migrator, bound, wire):
+        if bound:
+            decoder = decoder.bind(lang_sdk_msg_schema_version=VERSION)
+        body_decoder = self._stub_body_decoder(decoder)
 
-    def test_missing_type_falls_through_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        c.body_decoder = MagicMock(spec=TypeAdapter)
-        c.body_decoder.validate_python.return_value = "validated"
-        wire = {"x": 1}
-        frame = _ResponseFrame(id=1, body=wire)
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            c._from_frame(frame)
-        mock_get.return_value.upgrade.assert_not_called()
-        c.body_decoder.validate_python.assert_called_once_with(wire)
+        decoder._from_frame(_ResponseFrame(id=1, body=wire))
 
-    def test_unbound_decoder_does_not_call_upgrade(self):
-        c = _new_decoder()  # lang_sdk_msg_schema_version is None
-        c.body_decoder = MagicMock(spec=TypeAdapter)
-        c.body_decoder.validate_python.return_value = "validated"
-        wire = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"}
-        frame = _ResponseFrame(id=1, body=wire)
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            c._from_frame(frame)
-        mock_get.return_value.upgrade.assert_not_called()
-        c.body_decoder.validate_python.assert_called_once_with(wire)
+        mock_migrator.upgrade.assert_not_called()
+        # The decoder still got the original wire dict — left to fail/succeed downstream.
+        body_decoder.validate_python.assert_called_once_with(wire)
 
-    def test_none_body_returns_none_without_calling_upgrade(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        frame = _ResponseFrame(id=1, body=None)
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            result = c._from_frame(frame)
-        mock_get.return_value.upgrade.assert_not_called()
+    def test_none_body_returns_none_without_calling_upgrade(self, bound_decoder, mock_migrator):
+        result = bound_decoder._from_frame(_ResponseFrame(id=1, body=None))
+
+        mock_migrator.upgrade.assert_not_called()
         assert result is None
 
 
@@ -236,53 +227,31 @@ class TestConcurrentBindsDoNotStomp:
     """
 
     def test_two_instances_with_different_versions(self):
-        a = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        b = _new_decoder().bind(lang_sdk_msg_schema_version="2026-06-16")
-        assert a.lang_sdk_msg_schema_version == "2026-04-17"
-        assert b.lang_sdk_msg_schema_version == "2026-06-16"
+        a = _make_decoder().bind(lang_sdk_msg_schema_version=VERSION)
+        b = _make_decoder().bind(lang_sdk_msg_schema_version=OTHER_VERSION)
+        assert a.lang_sdk_msg_schema_version == VERSION
+        assert b.lang_sdk_msg_schema_version == OTHER_VERSION
         # They also do not share sockets (each was constructed with its own MagicMock).
         assert a.socket is not b.socket
 
     def test_rebinding_one_does_not_affect_the_other(self):
-        a = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        b = _new_decoder().bind(lang_sdk_msg_schema_version="2026-06-16")
-        a2 = a.bind(lang_sdk_msg_schema_version=None)
-        assert a2.lang_sdk_msg_schema_version is None
-        assert a.lang_sdk_msg_schema_version == "2026-04-17"  # original untouched
-        assert b.lang_sdk_msg_schema_version == "2026-06-16"  # other instance untouched
+        a = _make_decoder().bind(lang_sdk_msg_schema_version=VERSION)
+        b = _make_decoder().bind(lang_sdk_msg_schema_version=OTHER_VERSION)
+        a_cleared = a.bind(lang_sdk_msg_schema_version=None)
+        assert a_cleared.lang_sdk_msg_schema_version is None
+        assert a.lang_sdk_msg_schema_version == VERSION  # original untouched
+        assert b.lang_sdk_msg_schema_version == OTHER_VERSION  # other instance untouched
 
 
-class TestUnregisteredFallThroughIsConsistentWithMigrator:
-    """
-    The same "unregistered body passes through" contract the migrator
-    advertises: a body whose ``type`` is not in ``registered_models_by_name``
-    must reach the underlying ``TypeAdapter`` unmodified.
-    """
-
-    def test_unregistered_body_class_unmodified(self):
-        c = _new_decoder().bind(lang_sdk_msg_schema_version="2026-04-17")
-        c.body_decoder = MagicMock(spec=TypeAdapter)
-        c.body_decoder.validate_python.return_value = "validated"
-        frame = _ResponseFrame(id=1, body={"type": "_NoTypeBody", "payload": "x"})
-        with patch("airflow.sdk.execution_time.supervisor_schemas.get_schema_version_migrator") as mock_get:
-            c._from_frame(frame)
-        mock_get.return_value.upgrade.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "version",
-    ["2026-04-17", "2026-06-16", None],
-)
-def test_bind_round_trips_through_attrs_evolve(version):
+@pytest.mark.parametrize("version", [VERSION, OTHER_VERSION, None])
+def test_bind_round_trips_through_attrs_evolve(decoder, version):
     """``.bind`` accepts any string or None and round-trips identity correctly."""
-    c = _new_decoder()
-    bound = c.bind(lang_sdk_msg_schema_version=version)
+    bound = decoder.bind(lang_sdk_msg_schema_version=version)
     assert bound.lang_sdk_msg_schema_version == version
     # The chain ``c.bind(None).bind("X").bind(None)`` ends with no pin.
-    assert (
-        c.bind(lang_sdk_msg_schema_version=None)
+    chained = (
+        decoder.bind(lang_sdk_msg_schema_version=None)
         .bind(lang_sdk_msg_schema_version="X")
         .bind(lang_sdk_msg_schema_version=None)
-        .lang_sdk_msg_schema_version
-        is None
     )
+    assert chained.lang_sdk_msg_schema_version is None
