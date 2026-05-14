@@ -83,7 +83,6 @@ from airflow.sdk.execution_time.comms import (
     XComResult,
     XComSequenceSliceResult,
 )
-from airflow.sdk.execution_time.coordinator import BaseCoordinator, CoordinatorManager
 from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance
 from airflow.utils.session import create_session
 from airflow.utils.state import TaskInstanceState
@@ -2150,16 +2149,19 @@ class TestDagFileProcessorProcess:
         }
 
 
-class TestDagFileParseRequestCoordinatorMigration:
+class TestDagFileParseRequestSeedFrame:
     """
-    Foreign-language SDK parsers decode IPC Msgpack frames against a schema
-    version frozen at SDK build time. The DagFileProcessorProcess-supervisor's
-    interception point is ``DagFileProcessorProcess._on_child_started``,
-    which pins ``self.lang_sdk_msg_schema_version`` to the foreign-language SDK's message schema
-    version when a coordinator says it can handle the file. The
-    supervisor schema migrator then downgrades every outgoing body
-    (including the seed ``DagFileParseRequest``) through ``send_msg``
-    and upgrades every incoming body through ``handle_requests``.
+    ``DagFileProcessorProcess._on_child_started`` builds the seed
+    ``DagFileParseRequest`` and hands it to ``send_msg`` so the child
+    parser knows which file to load.
+
+    Coordinator-driven Dag parsing was removed from the AIP-108 scope
+    in astronomer/airflow#1578, so no coordinator hook runs here today --
+    ``lang_sdk_msg_schema_version`` stays unset and the head Pydantic
+    body is sent verbatim. The placeholder block in ``_on_child_started``
+    documents where the pin would land once the coordinator <-> Dag
+    Processor interaction is reintroduced; this test pins the current
+    no-op contract so any accidental re-enable is caught loudly.
     """
 
     @pytest.fixture
@@ -2177,7 +2179,7 @@ class TestDagFileParseRequestCoordinatorMigration:
             logger_filehandle=MagicMock(spec=BinaryIO),
             client=MagicMock(spec=Client),
             bundle_name="mybundle",
-            dag_file_rel_path="dags/example.jar",
+            dag_file_rel_path="dags/example.py",
         )
         instance._open_sockets.clear()
         r.close()
@@ -2185,26 +2187,10 @@ class TestDagFileParseRequestCoordinatorMigration:
         return instance
 
     @pytest.mark.parametrize(
-        ("coordinator_pins_to", "dag_rel_path", "callbacks"),
+        ("dag_rel_path", "callbacks"),
         [
-            pytest.param("2026-04-17", "dags/example.jar", [], id="coordinator-routed-jar"),
+            pytest.param("dags/example.py", [], id="no-callbacks"),
             pytest.param(
-                "2026-04-17",
-                "dags/example",
-                [
-                    DagCallbackRequest(
-                        filepath="dags/example",
-                        dag_id="d1",
-                        run_id="r1",
-                        bundle_name="mybundle",
-                        bundle_version=None,
-                        is_failure_callback=False,
-                    ),
-                ],
-                id="coordinator-routed-executable",
-            ),
-            pytest.param(
-                None,
                 "dags/example.py",
                 [
                     DagCallbackRequest(
@@ -2216,50 +2202,20 @@ class TestDagFileParseRequestCoordinatorMigration:
                         is_failure_callback=False,
                     ),
                 ],
-                id="python-parser-py",
+                id="with-dag-callback",
             ),
         ],
     )
-    def test_on_child_started_seed_frame(
+    def test_on_child_started_sends_seed_frame_without_pinning(
         self,
         proc: DagFileProcessorProcess,
-        coordinator_pins_to: str | None,
         dag_rel_path: str,
         callbacks: list,
     ):
-        """
-        Drive ``_on_child_started`` once per scenario and assert on the
-        seed ``DagFileParseRequest`` that the processor builds.
-
-        DagFileParseRequest is a Pydantic BaseModel whose ``__eq__``
-        compares by field values, so the same ``expected_msg`` matches
-        both the ``target_msg_schema_version`` and ``send_msg`` calls --
-        the processor builds one instance and threads it through both
-        seams. When the coordinator is registered, the processor pins
-        ``lang_sdk_msg_schema_version`` and lets the supervisor IPC
-        migrator downgrade the seed frame; when no coordinator matches,
-        the Python parser is on the other end and the head model is
-        forwarded verbatim with the pin left unset.
-        """
-        coordinator = MagicMock(spec=BaseCoordinator)
-        coordinator.target_msg_schema_version.return_value = coordinator_pins_to
-        manager_dict: dict[str, BaseCoordinator] = (
-            {"java": coordinator} if coordinator_pins_to is not None else {}
-        )
-        manager = CoordinatorManager(manager_dict, {})
-        manager_mock = MagicMock(wraps=manager)
-        manager_mock.for_dag_file.return_value = coordinator if coordinator_pins_to is not None else None
-
         bundle_path = pathlib.Path("/bundles/mybundle")
         full_path = bundle_path / dag_rel_path
 
-        with (
-            patch(
-                "airflow.sdk.execution_time.coordinator.get_coordinator_manager",
-                return_value=manager_mock,
-            ),
-            patch.object(DagFileProcessorProcess, "send_msg", autospec=True) as mock_send,
-        ):
+        with patch.object(DagFileProcessorProcess, "send_msg", autospec=True) as mock_send:
             proc._on_child_started(
                 callbacks=callbacks,
                 path=full_path,
@@ -2274,8 +2230,6 @@ class TestDagFileParseRequestCoordinatorMigration:
             callback_requests=callbacks,
         )
         mock_send.assert_called_once_with(proc, expected_msg, request_id=0)
-        assert proc.lang_sdk_msg_schema_version == coordinator_pins_to
-        if coordinator_pins_to is not None:
-            coordinator.target_msg_schema_version.assert_called_once_with(expected_msg)
-        else:
-            coordinator.target_msg_schema_version.assert_not_called()
+        # Coordinator hook is currently commented out; the pin must stay
+        # at its default ``None`` until the placeholder is reactivated.
+        assert proc.lang_sdk_msg_schema_version is None

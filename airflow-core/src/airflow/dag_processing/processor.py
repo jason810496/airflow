@@ -579,11 +579,13 @@ class DagFileProcessorProcess(WatchedSubprocess):
             bundle_name=bundle_name,
             callback_requests=callbacks,
         )
-        # TODO(jason810496): Comment out the coordinator logic here once we settle down the Dag Processor <-> Coordinator interaction pattern.
-        # When a coordinator handles this file, pin the supervisor
-        # to the lang-SDK's message schema version so ``WatchedSubprocess.send_msg`` downgrades
-        # outgoing head-shape bodies and ``WatchedSubprocess.handle_requests`` upgrades
-        # incoming bodies through the in-process Cadwyn migrator.
+        # TODO(jason810496): Uncomment the coordinator-pinning block below once the
+        # Dag Processor <-> Coordinator interaction pattern is settled and
+        # ``CoordinatorManager.for_dag_file`` is reintroduced (it was removed in
+        # astronomer/airflow#1578, which narrowed AIP-108 scope to task execution only).
+        # When a coordinator handles this file, the pin lets the supervisor's IPC
+        # migrator downgrade outgoing head-shape bodies and upgrade incoming
+        # bodies against the lang-SDK's frozen message schema version.
         # if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
         #     self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
         self.send_msg(msg, request_id=0)
