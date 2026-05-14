@@ -2017,38 +2017,25 @@ def _resolve_runtime_entrypoint(startup_details: StartupDetails, log: Logger) ->
             lang_sdk_msg_schema_version=target_version,
         )
 
-    # Step 1: queue-to-coordinator mapping.
     queue = startup_details.ti.queue
-    if (coordinator := manager.for_queue(queue)) is not None:
-        log.debug(
-            "Resolved coordinator for task via queue mapping",
-            coordinator=type(coordinator).__qualname__,
-            queue=queue,
-            task_id=startup_details.ti.task_id,
-        )
-        return _build(coordinator)
-
-    # Step 2: DAG file extension fallback (pure-<runtime> DAGs).
     dag_rel_path = startup_details.dag_rel_path
-    for coordinator in manager.all():
-        ext = getattr(type(coordinator), "file_extension", None)
-        if not ext or not dag_rel_path.endswith(ext):
-            continue
+    coordinator = manager.for_task(queue, dag_rel_path)
+    if coordinator is None:
         log.debug(
-            "Resolved coordinator for task via DAG file extension",
-            coordinator=type(coordinator).__qualname__,
+            "No runtime coordinator matched, using standard Python execution path",
+            queue=queue,
             dag_rel_path=dag_rel_path,
             task_id=startup_details.ti.task_id,
         )
-        return _build(coordinator)
-
+        return None
     log.debug(
-        "No runtime coordinator matched, using standard Python execution path",
+        "Resolved coordinator for task",
+        coordinator=type(coordinator).__qualname__,
         queue=queue,
         dag_rel_path=dag_rel_path,
         task_id=startup_details.ti.task_id,
     )
-    return None
+    return _build(coordinator)
 
 
 @flush_spans()

@@ -220,13 +220,17 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
 
     def bind(self, *, lang_sdk_msg_schema_version: str | None) -> CommsDecoder[ReceiveMsgType, SendMsgType]:
         """
-        Return a new decoder pinned to *lang_sdk_msg_schema_version*, structlog-style.
+        Return a new decoder with the schema-version pin set to *lang_sdk_msg_schema_version*.
 
-        The returned instance shares this instance's ``socket``,
-        ``id_counter`` and both locks **by reference**. That is safe
-        only when the caller immediately reassigns and discards the
-        unbound original (so nothing else holds a reference to the
-        shared mutable state). The expected pattern is::
+        This is **not** a fully immutable ``structlog``-style bind. Only
+        the ``lang_sdk_msg_schema_version`` field is replaced; the
+        returned instance shares this instance's ``socket``,
+        ``id_counter`` and both locks **by reference** (via
+        ``attrs.evolve``), because those resources own real I/O state
+        that cannot be duplicated. The unbound original must therefore
+        be discarded immediately after binding so nothing else drives
+        the same socket or counter concurrently. The expected pattern
+        is a swap-in-place reassignment::
 
             comms = comms.bind(lang_sdk_msg_schema_version=coordinator.target_msg_schema_version(...))
 

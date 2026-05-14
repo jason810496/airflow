@@ -655,6 +655,30 @@ class TestCoordinatorManager:
         assert manager.for_dag_file("bundle", "dag.b") is coordinator_b
         assert manager.for_dag_file("bundle", "dag.py") is None
 
+    def test_for_task_prefers_queue_mapping_over_extension(self):
+        # Queue mapping wins even when the dag_rel_path extension matches a different coordinator.
+        coordinator_a = _CoordinatorA()
+        coordinator_b = _CoordinatorB()
+        manager = CoordinatorManager(
+            {"alpha": coordinator_a, "beta": coordinator_b},
+            {"queue-a": "alpha"},
+        )
+
+        assert manager.for_task("queue-a", "dag.b") is coordinator_a
+
+    def test_for_task_falls_back_to_file_extension(self):
+        coordinator_a = _CoordinatorA()
+        coordinator_b = _CoordinatorB()
+        manager = CoordinatorManager({"alpha": coordinator_a, "beta": coordinator_b}, {})
+
+        assert manager.for_task("queue-unmapped", "dag.a") is coordinator_a
+        assert manager.for_task("queue-unmapped", "dag.b") is coordinator_b
+
+    def test_for_task_returns_none_when_nothing_matches(self):
+        manager = CoordinatorManager({"alpha": _CoordinatorA()}, {})
+
+        assert manager.for_task("queue-unmapped", "dag.py") is None
+
     def test_file_extensions(self):
         manager = CoordinatorManager({"a": _CoordinatorA(), "b": _CoordinatorB()}, {})
         assert set(manager.file_extensions()) == {".a", ".b"}

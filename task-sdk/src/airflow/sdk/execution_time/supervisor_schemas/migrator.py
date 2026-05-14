@@ -36,6 +36,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from cadwyn import VersionBundle
+    from cadwyn.schema_generation import SchemaGenerator
 
 
 class _BodyInfo:
@@ -80,17 +81,29 @@ class SchemaVersionMigrator:
     transformer runs.
     """
 
-    __slots__ = ("_bundle", "_supervisor_version")
+    __slots__ = ("_bundle", "_supervisor_version", "_versioned_models", "_version_values")
 
     def __init__(self, bundle: VersionBundle, supervisor_version: str | None = None) -> None:
         self._bundle = bundle
         self._supervisor_version = (
             supervisor_version if supervisor_version is not None else bundle.versions[0].value
         )
+        # Caches over the bundle (which is immutable for the migrator's
+        # lifetime). ``generate_versioned_models`` walks the full version
+        # graph; ``_version_values`` mirrors cadwyn's internal lookup set
+        # without reaching into its private attribute.
+        self._versioned_models: dict[str, SchemaGenerator] | None = None
+        self._version_values: frozenset[str] = frozenset(v.value for v in bundle.versions)
 
     @property
     def supervisor_version(self) -> str:
         return self._supervisor_version
+
+    def _versioned_class(self, lang_sdk_value: str, body_type: type[BaseModel]) -> type[BaseModel]:
+        """Return the cadwyn-generated class for *body_type* at *lang_sdk_value*."""
+        if self._versioned_models is None:
+            self._versioned_models = generate_versioned_models(self._bundle)
+        return self._versioned_models[lang_sdk_value][body_type]
 
     def downgrade(
         self,
@@ -138,7 +151,7 @@ class SchemaVersionMigrator:
         # ``schema(X).field(Y).didnt_exist`` instructions take effect:
         # those alter the class shape, not the dict, so without this
         # round-trip the dropped field would still appear on the wire.
-        versioned_class: type[BaseModel] = generate_versioned_models(self._bundle)[lang_sdk_value][body_type]
+        versioned_class = self._versioned_class(lang_sdk_value, body_type)
         return versioned_class.model_validate(info.body).model_dump(**merged_dump_kwargs)
 
     def upgrade(
@@ -183,7 +196,7 @@ class SchemaVersionMigrator:
         """Validate *v* is a ``YYYY-MM-DD`` string present in the bundle."""
         if not isinstance(v, str):
             raise ValueError(f"Version {v!r} must be a string in YYYY-MM-DD format")
-        if v not in self._bundle._version_values_set:
+        if v not in self._version_values:
             raise ValueError(
                 f"Version {v!r} not found in airflow.sdk.execution_time.supervisor_schemas.versions.bundle"
             )

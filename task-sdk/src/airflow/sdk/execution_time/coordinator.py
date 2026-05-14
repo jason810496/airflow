@@ -576,6 +576,31 @@ class CoordinatorManager:
             return None
         return self._instances_by_name.get(name)
 
+    def for_task(self, queue: str, dag_rel_path: str | os.PathLike[str]) -> BaseCoordinator | None:
+        """
+        Return the coordinator that should handle a task with *queue* and *dag_rel_path*.
+
+        Resolution order matches the task-runner entrypoint:
+
+        1. **Queue mapping** -- ``[sdk] queue_to_coordinator`` routes the
+           task's queue to a configured coordinator (python-stub pattern).
+        2. **DAG file extension** -- the Dag file's extension is matched
+           against each coordinator's ``file_extension`` ClassVar
+           (pure-runtime Dag pattern).
+
+        Returns ``None`` if neither rule matches, in which case the caller
+        should fall back to the standard Python execution path.
+        """
+        coordinator = self.for_queue(queue)
+        if coordinator is not None:
+            return coordinator
+        dag_rel_path_str = os.fspath(dag_rel_path)
+        for candidate in self.all():
+            ext = getattr(type(candidate), "file_extension", None)
+            if ext and dag_rel_path_str.endswith(ext):
+                return candidate
+        return None
+
     def for_dag_file(self, bundle_name: str, path: str | os.PathLike[str]) -> BaseCoordinator | None:
         """Return the first coordinator whose ``can_handle_dag_file`` matches *path*."""
         for instance in self.all():
