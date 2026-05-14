@@ -1225,10 +1225,25 @@ class ActivitySubprocess(WatchedSubprocess):
             start_date=start_date,
             sentry_integration=sentry_integration,
         )
-        # The supervisor -> task_runner channel is always Python, so the seed
-        # StartupDetails is sent in head shape: task_runner decodes it natively
-        # and only then forks the foreign-language runtime subprocess (downgrading
-        # the seed once for that hand-off inside ``_send_startup_details``).
+
+        # Resolve the coordinator's pinned schema version *before* sending the
+        # seed so a bad bundle (e.g. a JAR with no/invalid
+        # ``Airflow-SDK-Supervisor-Schema-Version`` manifest entry) fails fast
+        # and the seed never goes on the wire. The pin itself is applied
+        # *after* the seed is sent: ``send_msg`` reads
+        # ``self.lang_sdk_msg_schema_version`` to decide whether to downgrade,
+        # and the supervisor -> task_runner channel is always Python, so the
+        # seed must go out in head shape.
+        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
+
+        coordinator = get_coordinator_manager().for_task(ti.queue, dag_rel_path)
+        target_schema_version = (
+            coordinator.target_msg_schema_version(msg) if coordinator is not None else None
+        )
+
+        # task_runner decodes the seed natively and only then forks the
+        # foreign-language runtime subprocess (downgrading the seed once for
+        # that hand-off inside ``_send_startup_details``).
         log.debug("Sending", msg=msg)
         try:
             self.send_msg(msg, request_id=0)
@@ -1237,16 +1252,11 @@ class ActivitySubprocess(WatchedSubprocess):
             log.debug("Couldn't send startup message to Subprocess - it died very early", pid=self.pid)
             return
 
-        # After the seed is sent, pin ``self.lang_sdk_msg_schema_version`` to the
-        # coordinator's pinned schema version (resolved from ``ti.queue`` /
-        # ``dag_rel_path``) so every subsequent ``send_msg`` (responses to
-        # ``GetConnection`` etc.) and ``handle_requests`` decode is migrated
+        # Seed is on the wire; arm the pin so subsequent ``send_msg`` (responses
+        # to ``GetConnection`` etc.) and ``handle_requests`` decode are migrated
         # through the supervisor IPC bundle.
-        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
-
-        coordinator = get_coordinator_manager().for_task(ti.queue, dag_rel_path)
-        if coordinator is not None:
-            self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
+        if target_schema_version is not None:
+            self.lang_sdk_msg_schema_version = target_schema_version
 
     def wait(self) -> int:
         if self._exit_code is not None:

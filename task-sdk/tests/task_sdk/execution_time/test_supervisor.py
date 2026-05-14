@@ -3974,3 +3974,27 @@ class TestSendsRawStartupDetails:
         mock_send.assert_called_once_with(proc, expected_body, request_id=0)
         coordinator.target_msg_schema_version.assert_called_once_with(expected_body)
         assert proc.lang_sdk_msg_schema_version == self.SCHEMA_VERSION
+
+    def test_supervisor_skips_seed_when_schema_version_resolution_fails(self, proc, mock_send, patch_manager):
+        """``target_msg_schema_version`` may raise (e.g. a JAR with no manifest entry).
+        Since resolution happens before the seed is sent, the failure surfaces
+        before any wire commitment: ``send_msg`` must not be called and the pin
+        must stay unset, so the exception can propagate to ``supervise_task``
+        for cleanup without leaving the runtime half-fed."""
+        coordinator = MagicMock(spec=BaseCoordinator)
+        type(coordinator).file_extension = mock.PropertyMock(return_value=".jar")
+        coordinator.target_msg_schema_version.side_effect = ValueError(
+            "JAR manifest missing Airflow-SDK-Supervisor-Schema-Version"
+        )
+        patch_manager(CoordinatorManager({"java": coordinator}, {"java-queue": "java"}))
+
+        with pytest.raises(ValueError, match="JAR manifest missing"):
+            proc._on_child_started(
+                ti=self._make_ti("java-queue"),
+                dag_rel_path="dags/example.jar",
+                bundle_info=self.BUNDLE_INFO,
+                sentry_integration="",
+            )
+
+        mock_send.assert_not_called()
+        assert proc.lang_sdk_msg_schema_version is None
