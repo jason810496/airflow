@@ -187,10 +187,12 @@ class TestSchemaVersionMigratorUpgrade:
         assert out["sentry_trace_id"] == ""  # backfilled by 06-16
 
     def test_head_client_payload_is_returned_verbatim(self, migrator):
-        # A client already on head needs no upgrade.
+        # A client already on head needs no upgrade; the only diff from
+        # *original* is the discriminator filled in by the final
+        # ``model_validate`` round-trip (mirroring ``downgrade``).
         original = {"ti_id": "t1", "queue_capacity": 8, "sentry_trace_id": "00"}
         out = migrator.upgrade(dict(original), _MockBody, "3026-06-16")
-        assert out == original
+        assert out == {**original, "type": "MockBody"}
 
     def test_rejects_non_dict_input(self, migrator):
         with pytest.raises(TypeError, match="dict payload"):

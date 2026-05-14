@@ -784,11 +784,13 @@ class WatchedSubprocess:
             request = yield
 
             body = request.body
-            if (
-                self.lang_sdk_msg_schema_version is not None
-                and isinstance(body, dict)
-                and (body_type := resolve_body_class(body)) is not None
-            ):
+            if self.lang_sdk_msg_schema_version is not None and isinstance(body, dict):
+                body_type = resolve_body_class(body)
+                if body_type is None:
+                    raise ValueError(
+                        f"Cannot resolve head Pydantic class for wire body with body={request.body!r} "
+                        f"while lang_sdk_msg_schema_version={self.lang_sdk_msg_schema_version!r} is set."
+                    )
                 from airflow.sdk.execution_time.supervisor_schemas import get_schema_version_migrator
 
                 body = get_schema_version_migrator().upgrade(

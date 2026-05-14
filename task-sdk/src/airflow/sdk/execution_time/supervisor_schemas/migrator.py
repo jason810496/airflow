@@ -29,10 +29,13 @@ the wire.
 from __future__ import annotations
 
 import functools
+import re
 from typing import TYPE_CHECKING, Any
 
 from cadwyn import generate_versioned_models
 from pydantic import BaseModel
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 if TYPE_CHECKING:
     from cadwyn import VersionBundle
@@ -190,15 +193,18 @@ class SchemaVersionMigrator:
             for change in version.changes:
                 for instr in change.alter_request_by_schema_instructions.get(body_type, ()):
                     instr(info)  # type: ignore[arg-type]
-        return info.body
+
+        versioned_class = self._versioned_class(self._supervisor_version, body_type)
+        return versioned_class.model_validate(info.body).model_dump(mode="json")
 
     def _resolve(self, v: str) -> str:
         """Validate *v* is a ``YYYY-MM-DD`` string present in the bundle."""
-        if not isinstance(v, str):
+        if not isinstance(v, str) or not _ISO_DATE_RE.match(v):
             raise ValueError(f"Version {v!r} must be a string in YYYY-MM-DD format")
         if v not in self._version_values:
             raise ValueError(
-                f"Version {v!r} not found in airflow.sdk.execution_time.supervisor_schemas.versions.bundle"
+                f"Version {v!r} not found in bundle "
+                "airflow.sdk.execution_time.supervisor_schemas.versions.bundle"
             )
         return v
 

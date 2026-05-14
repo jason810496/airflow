@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from airflow.sdk._shared.module_loading import import_string, qualname
 
 if TYPE_CHECKING:
+    from structlog.typing import FilteringBoundLogger
     from typing_extensions import Self
 
     from airflow.dag_processing.processor import DagFileParseRequest
@@ -101,7 +102,7 @@ def _bridge(
     runtime_logs: socket.socket,
     runtime_stderr: socket.socket,
     proc: subprocess.Popen,
-    log,
+    log: FilteringBoundLogger,
 ) -> None:
     """
     Multiplex I/O between the supervisor and a runtime subprocess.
@@ -141,6 +142,7 @@ def _bridge(
 
     target_loggers = (log,)
 
+    # Comm: bidirectional raw byte forwarding.
     sel.register(supervisor_comm, selectors.EVENT_READ, make_raw_forwarder(runtime_comm, on_close))
     sel.register(runtime_comm, selectors.EVENT_READ, make_raw_forwarder(supervisor_comm, on_close))
 

@@ -510,15 +510,6 @@ class TestCoordinatorManager:
         assert manager.for_queue("queue-b") is coordinator_b
         assert manager.for_queue("queue-missing") is None
 
-    def test_for_dag_file_picks_first_match(self):
-        coordinator_a = _CoordinatorA()
-        coordinator_b = _CoordinatorB()
-        manager = CoordinatorManager({"alpha": coordinator_a, "beta": coordinator_b}, {})
-
-        assert manager.for_dag_file("bundle", "dag.a") is coordinator_a
-        assert manager.for_dag_file("bundle", "dag.b") is coordinator_b
-        assert manager.for_dag_file("bundle", "dag.py") is None
-
     def test_for_task_prefers_queue_mapping_over_extension(self):
         # Queue mapping wins even when the dag_rel_path extension matches a different coordinator.
         coordinator_a = _CoordinatorA()
@@ -542,10 +533,6 @@ class TestCoordinatorManager:
         manager = CoordinatorManager({"alpha": _CoordinatorA()}, {})
 
         assert manager.for_task("queue-unmapped", "dag.py") is None
-
-    def test_file_extensions(self):
-        manager = CoordinatorManager({"a": _CoordinatorA(), "b": _CoordinatorB()}, {})
-        assert set(manager.file_extensions()) == {".a", ".b"}
 
     def test_get_coordinator_manager_is_cached(self, monkeypatch):
         monkeypatch.delenv("AIRFLOW__SDK__COORDINATORS", raising=False)

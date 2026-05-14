@@ -169,22 +169,36 @@ class TestHandleRequestsUpgradesWhenBound:
         mock_migrator.upgrade.assert_called_once_with(wire, GetConnection, VERSION)
         stub_decoder.validate_python.assert_called_once_with(upgraded)
 
-    @pytest.mark.parametrize(
-        ("bind", "wire"),
-        [
-            pytest.param(True, {"type": "DefinitelyNotAType"}, id="bound-unknown-type"),
-            pytest.param(True, {"payload": "x"}, id="bound-missing-type"),
-            pytest.param(False, {"type": "GetConnection", "conn_id": "c1"}, id="unbound-known-type"),
-        ],
-    )
-    def test_fall_through_does_not_call_upgrade(self, ws, stub_decoder, mock_migrator, bind, wire):
-        if bind:
-            ws.lang_sdk_msg_schema_version = VERSION
+    def test_unbound_known_type_does_not_call_upgrade(self, ws, stub_decoder, mock_migrator):
+        # Without a pin the migrator must not run; the raw wire dict is
+        # handed straight to the head decoder.
+        wire = {"type": "GetConnection", "conn_id": "c1"}
 
         self._drive_one_request(ws, wire)
 
         mock_migrator.upgrade.assert_not_called()
         stub_decoder.validate_python.assert_called_once_with(wire)
+
+    @pytest.mark.parametrize(
+        "wire",
+        [
+            pytest.param({"type": "DefinitelyNotAType"}, id="unknown-type"),
+            pytest.param({"payload": "x"}, id="missing-type"),
+        ],
+    )
+    def test_bound_unresolved_body_type_raises(self, ws, stub_decoder, mock_migrator, wire):
+        # With the lang-SDK pin active, an unresolvable wire ``type`` is a
+        # protocol-contract violation: the runtime and supervisor disagree
+        # on which Pydantic class the body should validate against. The
+        # migrator must not run, and the head decoder must not be reached
+        # with a body of unknown shape.
+        ws.lang_sdk_msg_schema_version = VERSION
+
+        with pytest.raises(ValueError, match="Cannot resolve head Pydantic class"):
+            self._drive_one_request(ws, wire)
+
+        mock_migrator.upgrade.assert_not_called()
+        stub_decoder.validate_python.assert_not_called()
 
 
 class TestClientVersionIsolation:

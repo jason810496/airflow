@@ -231,10 +231,10 @@ class TestTargetMsgSchemaVersion:
         bundles_folder = tmp_path / "java_bundles"
         bundle_sub = bundles_folder / "my_bundle"
         bundle_sub.mkdir(parents=True)
-        with zipfile.ZipFile(bundle_sub / "aaa-dependency.jar", "w") as zf:
+        with zipfile.ZipFile(bundle_sub / "bundle-without-schema-version", "w") as zf:
             zf.writestr("placeholder.class", b"")
         _create_bundle_jar(
-            bundle_sub / "zzz-app.jar",
+            bundle_sub / "valid-bundle.jar",
             dag_ids=["stub_dag"],
             schema_version="2026-04-17",
         )

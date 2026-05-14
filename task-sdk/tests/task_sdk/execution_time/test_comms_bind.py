@@ -189,29 +189,39 @@ class TestFromFrameUpgradesWhenBound:
         body_decoder.validate_python.assert_called_once_with(upgraded)
         assert result == "validated"
 
-    @pytest.mark.parametrize(
-        ("bound", "wire"),
-        [
-            pytest.param(True, {"type": "Bogus", "x": 1}, id="bound-unknown-type"),
-            pytest.param(True, {"x": 1}, id="bound-missing-type"),
-            pytest.param(True, {"type": "_NoTypeBody", "payload": "x"}, id="bound-unregistered-class"),
-            pytest.param(
-                False,
-                {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"},
-                id="unbound-known-type",
-            ),
-        ],
-    )
-    def test_fall_through_does_not_call_upgrade(self, decoder, mock_migrator, bound, wire):
-        if bound:
-            decoder = decoder.bind(lang_sdk_msg_schema_version=VERSION)
+    def test_unbound_known_type_does_not_call_upgrade(self, decoder, mock_migrator):
+        # Without a pin the migrator must not run; the raw wire dict is
+        # handed straight to the head decoder.
+        wire = {"type": "ConnectionResult", "conn_id": "x", "conn_type": "aws"}
         body_decoder = self._stub_body_decoder(decoder)
 
         decoder._from_frame(_ResponseFrame(id=1, body=wire))
 
         mock_migrator.upgrade.assert_not_called()
-        # The decoder still got the original wire dict — left to fail/succeed downstream.
         body_decoder.validate_python.assert_called_once_with(wire)
+
+    @pytest.mark.parametrize(
+        "wire",
+        [
+            pytest.param({"type": "Bogus", "x": 1}, id="unknown-type"),
+            pytest.param({"x": 1}, id="missing-type"),
+            pytest.param({"type": "_NoTypeBody", "payload": "x"}, id="unregistered-class"),
+        ],
+    )
+    def test_bound_unresolved_body_type_raises(self, decoder, mock_migrator, wire):
+        # With the lang-SDK pin active, an unresolvable wire ``type`` is a
+        # protocol-contract violation: the runtime and supervisor disagree
+        # on which Pydantic class the body should validate against. The
+        # migrator must not run, and the head decoder must not be reached
+        # with a body of unknown shape.
+        decoder = decoder.bind(lang_sdk_msg_schema_version=VERSION)
+        body_decoder = self._stub_body_decoder(decoder)
+
+        with pytest.raises(ValueError, match="Cannot resolve head Pydantic class"):
+            decoder._from_frame(_ResponseFrame(id=1, body=wire))
+
+        mock_migrator.upgrade.assert_not_called()
+        body_decoder.validate_python.assert_not_called()
 
     def test_none_body_returns_none_without_calling_upgrade(self, bound_decoder, mock_migrator):
         result = bound_decoder._from_frame(_ResponseFrame(id=1, body=None))
