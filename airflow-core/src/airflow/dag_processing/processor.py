@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import contextlib
-import functools
 import importlib
 import logging
 import os
@@ -553,14 +552,7 @@ class DagFileProcessorProcess(WatchedSubprocess):
     ) -> Self:
         logger = kwargs["logger"]
 
-        # Check if a configured runtime coordinator should handle this file
-        logger.debug("Checking for runtime coordinator entrypoint for file", path=path)
-        resolved_target = cls._resolve_processor_target(path, bundle_name, bundle_path, logger)
-        if resolved_target is not None:
-            target = resolved_target
-            logger.debug("Resolved runtime coordinator entrypoint for file", path=path)
-        else:
-            _pre_import_airflow_modules(os.fspath(path), logger)
+        _pre_import_airflow_modules(os.fspath(path), logger)
 
         proc: Self = super().start(
             target=target,
@@ -573,34 +565,6 @@ class DagFileProcessorProcess(WatchedSubprocess):
         proc._on_child_started(callbacks, path, bundle_path, bundle_name)
         return proc
 
-    @staticmethod
-    def _resolve_processor_target(
-        path: str | os.PathLike[str],
-        bundle_name: str,
-        bundle_path: Path,
-        log: FilteringBoundLogger,
-    ) -> Callable[[], None] | None:
-        """
-        Return the entrypoint of the first runtime coordinator that can handle *path*.
-
-        The returned callable is a ``functools.partial`` that binds *path*, *bundle_name*
-        and *bundle_path* so the supervisor can pass it as a no-arg ``target`` to
-        ``WatchedSubprocess.start``.
-        """
-        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
-
-        if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is None:
-            log.debug("No runtime coordinator found for file %s, using default processor", path)
-            return None
-
-        log.debug("Using runtime coordinator %s for file %s", type(coordinator).__qualname__, path)
-        return functools.partial(
-            coordinator.run_dag_parsing,
-            path=os.fspath(path),
-            bundle_name=bundle_name,
-            bundle_path=os.fspath(bundle_path),
-        )
-
     def _on_child_started(
         self,
         callbacks: list[CallbackRequest],
@@ -608,7 +572,6 @@ class DagFileProcessorProcess(WatchedSubprocess):
         bundle_path: Path,
         bundle_name: str,
     ) -> None:
-        from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 
         msg = DagFileParseRequest(
             file=os.fspath(path),
@@ -616,12 +579,13 @@ class DagFileProcessorProcess(WatchedSubprocess):
             bundle_name=bundle_name,
             callback_requests=callbacks,
         )
+        # TODO(jason810496): Comment out the coordinator logic here once we settle down the Dag Processor <-> Coordinator interaction pattern.
         # When a coordinator handles this file, pin the supervisor
         # to the lang-SDK's message schema version so ``WatchedSubprocess.send_msg`` downgrades
         # outgoing head-shape bodies and ``WatchedSubprocess.handle_requests`` upgrades
         # incoming bodies through the in-process Cadwyn migrator.
-        if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
-            self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
+        # if (coordinator := get_coordinator_manager().for_dag_file(bundle_name, path)) is not None:
+        #     self.lang_sdk_msg_schema_version = coordinator.target_msg_schema_version(msg)
         self.send_msg(msg, request_id=0)
 
     def _get_target_loggers(self) -> tuple[FilteringBoundLogger, ...]:
