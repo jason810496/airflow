@@ -445,7 +445,7 @@ class CoordinatorManager:
             )
         self._specs_by_name: dict[str, CoordinatorSpec] = dict(specs_by_name)
         self._sorted_names: list[str] = sorted(specs_by_name.keys())
-        self._queue_to_coordinator: dict[str, str] = queue_to_coordinator
+        self._queue_to_coordinator: dict[str, str] = dict(queue_to_coordinator)
         self._instances_by_name: dict[str, BaseCoordinator] = {}
 
     @classmethod
@@ -469,7 +469,7 @@ class CoordinatorManager:
 
     @staticmethod
     def _parse_coordinator_specs(raw: Any) -> dict[str, CoordinatorSpec]:
-        """Parse and validate the raw ``[sdk] coordinators`` JSON string."""
+        """Parse and validate the decoded ``[sdk] coordinators`` JSON value."""
         if raw is None:
             return {}
         if not isinstance(raw, dict):

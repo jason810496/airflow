@@ -712,3 +712,15 @@ class TestCoordinatorManagerValidation:
                 specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
                 queue_to_coordinator={"queue-a": "missing"},
             )
+
+    def test_constructor_copies_queue_to_coordinator(self):
+        queue_mapping = {"queue-a": "alpha"}
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+            queue_to_coordinator=queue_mapping,
+        )
+
+        queue_mapping["queue-a"] = "should-not-leak"
+        queue_mapping["queue-b"] = "also-should-not-leak"
+
+        assert manager._queue_to_coordinator == {"queue-a": "alpha"}
