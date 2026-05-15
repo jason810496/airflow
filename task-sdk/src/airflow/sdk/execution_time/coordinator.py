@@ -566,7 +566,7 @@ class CoordinatorManager:
         """Return the coordinator routed to *queue*, building it on first call."""
         if (name := self._queue_to_coordinator.get(queue)) is None:
             return None
-        return self._instantiate(name)
+        return self.get(name)
 
 
 @functools.cache
