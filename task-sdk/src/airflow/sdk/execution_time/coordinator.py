@@ -437,12 +437,17 @@ class CoordinatorManager:
         specs_by_name: dict[str, CoordinatorSpec],
         queue_to_coordinator: dict[str, str],
     ) -> None:
-        unknown = {name for name in queue_to_coordinator.values() if name not in specs_by_name}
-        if unknown:
-            raise QueueToCoordinatorConfigError(
-                f"[sdk] queue_to_coordinator references unknown coordinator(s) {sorted(unknown)}; "
-                f"configured coordinators: {sorted(specs_by_name)}"
-            )
+        """
+        Build a manager directly from already-validated specs.
+
+        Prefer :meth:`from_config`, which parses and cross-validates the
+        ``[sdk] coordinators`` and ``[sdk] queue_to_coordinator`` config and
+        raises :class:`CoordinatorsConfigError` /
+        :class:`QueueToCoordinatorConfigError` on malformed input. This
+        constructor performs no cross-validation: a ``queue_to_coordinator``
+        entry pointing at a name absent from ``specs_by_name`` will silently
+        cause :meth:`for_queue` to return ``None`` for that queue.
+        """
         self._specs_by_name: dict[str, CoordinatorSpec] = dict(specs_by_name)
         self._sorted_names: list[str] = sorted(specs_by_name.keys())
         self._queue_to_coordinator: dict[str, str] = dict(queue_to_coordinator)

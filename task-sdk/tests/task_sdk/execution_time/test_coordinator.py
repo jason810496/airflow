@@ -706,12 +706,13 @@ class TestCoordinatorManagerValidation:
     def test_queue_mapping_explicit_null_yields_empty_mapping(self):
         assert CoordinatorManager._parse_queue_mapping(None, valid_names={"alpha"}) == {}
 
-    def test_constructor_rejects_queue_to_coordinator_pointing_at_unknown_name(self):
-        with pytest.raises(QueueToCoordinatorConfigError, match="references unknown coordinator"):
-            CoordinatorManager(
-                specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
-                queue_to_coordinator={"queue-a": "missing"},
-            )
+    def test_constructor_skips_cross_validation_and_for_queue_returns_none(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+            queue_to_coordinator={"queue-a": "missing"},
+        )
+
+        assert manager.for_queue("queue-a") is None
 
     def test_constructor_copies_queue_to_coordinator(self):
         queue_mapping = {"queue-a": "alpha"}
