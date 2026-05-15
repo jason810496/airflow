@@ -658,6 +658,10 @@ class TestCoordinatorManagerValidation:
         with pytest.raises(CoordinatorsConfigError, match="'classpath'"):
             CoordinatorManager._parse_coordinator_specs({"alpha": {}})
 
+    def test_coordinator_entry_kwargs_default_to_empty(self):
+        specs = CoordinatorManager._parse_coordinator_specs({"alpha": {"classpath": _ALPHA_CLASSPATH}})
+        assert specs == {"alpha": {"classpath": _ALPHA_CLASSPATH, "kwargs": {}}}
+
     @pytest.mark.parametrize(
         "classpath",
         ["", None, 42, []],
@@ -725,3 +729,15 @@ class TestCoordinatorManagerValidation:
         queue_mapping["queue-b"] = "also-should-not-leak"
 
         assert manager._queue_to_coordinator == {"queue-a": "alpha"}
+
+    def test_constructor_copies_specs_by_name(self):
+        specs = {"alpha": _spec(_ALPHA_CLASSPATH)}
+        manager = CoordinatorManager(
+            specs_by_name=specs,
+            queue_to_coordinator={},
+        )
+
+        specs["alpha"] = _spec(_BETA_CLASSPATH)
+        specs["beta"] = _spec(_BETA_CLASSPATH)
+
+        assert manager._specs_by_name == {"alpha": _spec(_ALPHA_CLASSPATH)}

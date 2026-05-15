@@ -551,7 +551,9 @@ class CoordinatorManager:
         """
         if (existing := self._instances_by_name.get(name)) is not None:
             return existing
-        spec = self._specs_by_name[name]
+        spec = self._specs_by_name.get(name)
+        if spec is None:
+            raise KeyError(f"coordinator {name!r} is not configured")
         coordinator_cls = import_string(spec["classpath"])
         instance = coordinator_cls(**spec["kwargs"])
         self._instances_by_name[name] = instance
