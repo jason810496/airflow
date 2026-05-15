@@ -23,6 +23,7 @@ import os
 import socket
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,6 +31,9 @@ import pytest
 from airflow.sdk.execution_time.coordinator import (
     BaseCoordinator,
     CoordinatorManager,
+    CoordinatorsConfigError,
+    CoordinatorSpec,
+    QueueToCoordinatorConfigError,
     _bridge,
     _send_startup_details,
     _start_server,
@@ -426,6 +430,41 @@ class _CoordinatorB(BaseCoordinator):
     file_extension = ".b"
 
 
+_ALPHA_CLASSPATH = f"{_CoordinatorA.__module__}._CoordinatorA"
+_BETA_CLASSPATH = f"{_CoordinatorB.__module__}._CoordinatorB"
+
+
+def _spec(classpath: str, **kwargs: Any) -> CoordinatorSpec:
+    """Build a :class:`CoordinatorSpec` for test fixtures."""
+    return CoordinatorSpec(classpath=classpath, kwargs=kwargs)
+
+
+@pytest.fixture
+def sdk_config(monkeypatch):
+    """Set the ``[sdk]`` env vars consumed by :meth:`CoordinatorManager.from_config`.
+
+    :return: Callable ``apply(*, coordinators=None, queue_to_coordinator=None)`` --
+        each argument is the raw JSON string for the matching env var, or ``None``
+        to unset it. The conf cache is invalidated after each call (and again on
+        teardown) so ``from_config()`` re-reads the values just set.
+    """
+    from airflow.sdk.configuration import conf
+
+    def _apply(*, coordinators: str | None = None, queue_to_coordinator: str | None = None) -> None:
+        if coordinators is None:
+            monkeypatch.delenv("AIRFLOW__SDK__COORDINATORS", raising=False)
+        else:
+            monkeypatch.setenv("AIRFLOW__SDK__COORDINATORS", coordinators)
+        if queue_to_coordinator is None:
+            monkeypatch.delenv("AIRFLOW__SDK__QUEUE_TO_COORDINATOR", raising=False)
+        else:
+            monkeypatch.setenv("AIRFLOW__SDK__QUEUE_TO_COORDINATOR", queue_to_coordinator)
+        conf.invalidate_cache()
+
+    yield _apply
+    conf.invalidate_cache()
+
+
 class TestCoordinatorManager:
     @pytest.fixture(autouse=True)
     def _reset_cache(self):
@@ -433,28 +472,16 @@ class TestCoordinatorManager:
         yield
         reset_coordinator_manager()
 
-    def test_from_config_loads_instances(self, monkeypatch):
-        coordinators_json = json.dumps(
-            [
+    def test_from_config_loads_specs_and_resolves_instances(self, sdk_config):
+        sdk_config(
+            coordinators=json.dumps(
                 {
-                    "name": "alpha",
-                    "classpath": f"{_CoordinatorA.__module__}._CoordinatorA",
-                    "kwargs": {"label": "alpha-label"},
-                },
-                {
-                    "name": "beta",
-                    "classpath": f"{_CoordinatorB.__module__}._CoordinatorB",
-                },
-            ]
+                    "alpha": _spec(_ALPHA_CLASSPATH, label="alpha-label"),
+                    "beta": _spec(_BETA_CLASSPATH),
+                }
+            ),
+            queue_to_coordinator=json.dumps({"queue-a": "alpha"}),
         )
-        queue_json = json.dumps({"queue-a": "alpha"})
-
-        monkeypatch.setenv("AIRFLOW__SDK__COORDINATORS", coordinators_json)
-        monkeypatch.setenv("AIRFLOW__SDK__QUEUE_TO_COORDINATOR", queue_json)
-
-        from airflow.sdk.configuration import conf
-
-        conf.invalidate_cache()
 
         manager = CoordinatorManager.from_config()
 
@@ -463,39 +490,214 @@ class TestCoordinatorManager:
         assert isinstance(alpha, _CoordinatorA)
         assert isinstance(beta, _CoordinatorB)
         assert alpha.label == "alpha-label"
-        assert {type(c) for c in manager.all()} == {_CoordinatorA, _CoordinatorB}
+        assert manager.for_queue("queue-a") is alpha
+        assert [type(c) for c in manager.all()] == [_CoordinatorA, _CoordinatorB]
 
-    def test_from_config_empty(self, monkeypatch):
-        monkeypatch.delenv("AIRFLOW__SDK__COORDINATORS", raising=False)
-        monkeypatch.delenv("AIRFLOW__SDK__QUEUE_TO_COORDINATOR", raising=False)
+    def test_from_config_missing_coordinators_section_yields_empty_manager(self, sdk_config):
+        sdk_config()
 
-        from airflow.sdk.configuration import conf
+        manager = CoordinatorManager.from_config()
+        assert manager.all() == []
+        assert manager.get("any") is None
+        assert manager.for_queue("any") is None
 
-        conf.invalidate_cache()
+    def test_from_config_explicit_null_yields_empty_manager(self, sdk_config):
+        sdk_config(coordinators=None)
+
+        manager = CoordinatorManager.from_config()
+        assert manager.all() == []
+
+    def test_from_config_empty_object_is_valid(self, sdk_config):
+        sdk_config(coordinators="{}")
 
         manager = CoordinatorManager.from_config()
         assert manager.all() == []
         assert manager.get("missing") is None
+        assert manager.for_queue("missing") is None
 
-    def test_for_queue_resolves_via_mapping(self):
-        coordinator_a = _CoordinatorA()
-        coordinator_b = _CoordinatorB()
+    def test_for_queue_routes_to_named_coordinator(self):
         manager = CoordinatorManager(
-            {"alpha": coordinator_a, "beta": coordinator_b},
-            {"queue-a": "alpha", "queue-b": "beta"},
+            specs_by_name={
+                "alpha": _spec(_ALPHA_CLASSPATH),
+                "beta": _spec(_BETA_CLASSPATH),
+            },
+            queue_to_coordinator={"queue-a": "alpha", "queue-b": "beta"},
         )
 
-        assert manager.for_queue("queue-a") is coordinator_a
-        assert manager.for_queue("queue-b") is coordinator_b
+        assert isinstance(manager.for_queue("queue-a"), _CoordinatorA)
+        assert isinstance(manager.for_queue("queue-b"), _CoordinatorB)
         assert manager.for_queue("queue-missing") is None
 
-    def test_get_coordinator_manager_is_cached(self, monkeypatch):
-        monkeypatch.delenv("AIRFLOW__SDK__COORDINATORS", raising=False)
-
-        from airflow.sdk.configuration import conf
-
-        conf.invalidate_cache()
+    def test_get_coordinator_manager_is_cached(self, sdk_config):
+        sdk_config(coordinators="{}")
 
         m1 = get_coordinator_manager()
         m2 = get_coordinator_manager()
         assert m1 is m2
+
+
+class TestCoordinatorManagerLazy:
+    def test_constructor_does_not_instantiate(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec("nonexistent.module.NotAClass")},
+            queue_to_coordinator={},
+        )
+        assert manager._instances_by_name == {}
+
+    def test_get_instantiates_on_first_call_and_caches(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH, label="hello")},
+            queue_to_coordinator={},
+        )
+        assert manager._instances_by_name == {}
+
+        first = manager.get("alpha")
+
+        assert isinstance(first, _CoordinatorA)
+        assert first.label == "hello"
+        assert manager._instances_by_name == {"alpha": first}
+
+        second = manager.get("alpha")
+        assert first is second
+        assert manager._instances_by_name == {"alpha": first}
+
+    def test_get_unknown_name_returns_none_and_does_not_instantiate(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+            queue_to_coordinator={},
+        )
+
+        assert manager.get("missing") is None
+        assert manager._instances_by_name == {}
+
+    def test_for_queue_caches_instance(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+            queue_to_coordinator={"queue-a": "alpha"},
+        )
+        assert manager._instances_by_name == {}
+
+        first = manager.for_queue("queue-a")
+        assert manager._instances_by_name == {"alpha": first}
+
+        second = manager.for_queue("queue-a")
+        third = manager.get("alpha")
+        assert first is second is third
+
+    def test_for_queue_unknown_returns_none_and_does_not_instantiate(self):
+        manager = CoordinatorManager(
+            specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+            queue_to_coordinator={},
+        )
+
+        assert manager.for_queue("not-mapped") is None
+        assert manager._instances_by_name == {}
+
+    def test_all_returns_instances_sorted_by_name(self):
+        manager = CoordinatorManager(
+            specs_by_name={
+                "zeta": _spec(_BETA_CLASSPATH),
+                "alpha": _spec(_ALPHA_CLASSPATH),
+            },
+            queue_to_coordinator={},
+        )
+        assert manager._instances_by_name == {}
+
+        instances = manager.all()
+
+        assert [type(c) for c in instances] == [_CoordinatorA, _CoordinatorB]
+        assert set(manager._instances_by_name) == {"alpha", "zeta"}
+        # Calling all() twice returns the same cached instances.
+        assert [id(c) for c in manager.all()] == [id(c) for c in instances]
+
+    def test_unused_coordinator_is_never_imported(self):
+        manager = CoordinatorManager(
+            specs_by_name={
+                "alpha": _spec(_ALPHA_CLASSPATH),
+                "broken": _spec("nonexistent.module.NotAClass"),
+            },
+            queue_to_coordinator={},
+        )
+
+        assert isinstance(manager.get("alpha"), _CoordinatorA)
+        # Looking up only "alpha" never touches "broken", so no ImportError raised.
+        assert "broken" not in manager._instances_by_name
+
+        with pytest.raises(ImportError):
+            manager.get("broken")
+
+
+class TestCoordinatorManagerValidation:
+    @pytest.mark.parametrize(
+        "value",
+        ["[]", '"abc"', "42"],
+        ids=["list", "string", "int"],
+    )
+    def test_coordinators_must_be_object(self, sdk_config, value):
+        sdk_config(coordinators=value)
+
+        with pytest.raises(CoordinatorsConfigError, match="must be a JSON object"):
+            CoordinatorManager.from_config()
+
+    def test_coordinator_entry_must_be_object(self):
+        with pytest.raises(CoordinatorsConfigError, match="must be a JSON object"):
+            CoordinatorManager._parse_coordinator_specs({"alpha": "not-a-dict"})
+
+    def test_coordinator_key_must_be_non_empty_string(self):
+        with pytest.raises(CoordinatorsConfigError, match="non-empty strings"):
+            CoordinatorManager._parse_coordinator_specs({"": _spec(_ALPHA_CLASSPATH)})
+
+    def test_coordinator_entry_rejects_unknown_keys(self):
+        with pytest.raises(CoordinatorsConfigError, match="unknown keys"):
+            CoordinatorManager._parse_coordinator_specs(
+                {"alpha": {"classpath": _ALPHA_CLASSPATH, "extra": 1}},
+            )
+
+    def test_coordinator_entry_requires_classpath(self):
+        with pytest.raises(CoordinatorsConfigError, match="'classpath'"):
+            CoordinatorManager._parse_coordinator_specs({"alpha": {}})
+
+    @pytest.mark.parametrize(
+        "classpath",
+        ["", None, 42, []],
+        ids=["empty-string", "null", "int", "list"],
+    )
+    def test_coordinator_classpath_must_be_non_empty_string(self, classpath):
+        with pytest.raises(CoordinatorsConfigError, match="'classpath'"):
+            CoordinatorManager._parse_coordinator_specs({"alpha": {"classpath": classpath}})
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [[], "string", 42],
+        ids=["list", "string", "int"],
+    )
+    def test_coordinator_kwargs_must_be_object_when_set(self, kwargs):
+        with pytest.raises(CoordinatorsConfigError, match="'kwargs'"):
+            CoordinatorManager._parse_coordinator_specs(
+                {"alpha": {"classpath": _ALPHA_CLASSPATH, "kwargs": kwargs}},
+            )
+
+    @pytest.mark.parametrize(
+        "value",
+        ["[]", '"abc"', "42"],
+        ids=["list", "string", "int"],
+    )
+    def test_queue_mapping_must_be_object(self, sdk_config, value):
+        sdk_config(
+            coordinators=json.dumps({"alpha": _spec(_ALPHA_CLASSPATH)}),
+            queue_to_coordinator=value,
+        )
+
+        with pytest.raises(QueueToCoordinatorConfigError, match="must be a JSON object"):
+            CoordinatorManager.from_config()
+
+    def test_queue_mapping_value_must_be_non_empty_string(self):
+        with pytest.raises(QueueToCoordinatorConfigError, match="non-empty"):
+            CoordinatorManager._parse_queue_mapping({"queue-a": ""}, valid_names={"alpha"})
+
+    def test_queue_mapping_must_reference_known_coordinator(self):
+        with pytest.raises(QueueToCoordinatorConfigError, match="not a configured coordinator"):
+            CoordinatorManager._parse_queue_mapping(
+                {"queue-a": "missing"},
+                valid_names={"alpha"},
+            )

@@ -49,7 +49,7 @@ import selectors
 import socket
 import subprocess
 import time
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict
 
 from airflow.sdk._shared.module_loading import import_string, qualname
 
@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     from airflow.sdk.api.datamodels._generated import BundleInfo
     from airflow.sdk.execution_time.comms import StartupDetails
     from airflow.sdk.execution_time.workloads.task import TaskInstanceDTO
+
+_COORDINATOR_ENTRY_KEYS = frozenset({"classpath", "kwargs"})
 
 
 def _start_server() -> socket.socket:
@@ -382,78 +384,181 @@ class BaseCoordinator:
             _bridge(supervisor_comm, runtime_comm, runtime_logs, read_stderr, proc, log)
 
 
+class CoordinatorsConfigError(ValueError):
+    """Raised when the ``[sdk] coordinators`` config is invalid."""
+
+
+class QueueToCoordinatorConfigError(ValueError):
+    """Raised when the ``[sdk] queue_to_coordinator`` config is invalid."""
+
+
+class CoordinatorSpec(TypedDict):
+    """Validated lookup entry for a configured coordinator (not the live instance)."""
+
+    classpath: str
+    kwargs: dict[str, Any]
+
+
 class CoordinatorManager:
     """
     Registry of coordinator instances loaded from the ``[sdk] coordinators`` config.
 
-    Each entry in the JSON list takes the form::
+    The ``[sdk] coordinators`` value is a JSON object keyed by coordinator name::
 
         {
-            "name": "jdk-11",
-            "classpath": "airflow.sdk.coordinators.java.JavaCoordinator",
-            "kwargs": {"java_executable": "/usr/lib/jvm/jdk-11/bin/java", ...}
+            "jdk-17": {
+                "classpath": "airflow.sdk.coordinators.java.JavaCoordinator",
+                "kwargs": {"java_executable": "/usr/lib/jvm/jdk-17/bin/java", ...}
+            }
         }
 
     The ``classpath`` is resolved via
     :func:`~airflow.sdk._shared.module_loading.import_string` (no
-    :class:`ProvidersManager` involvement) and constructed with ``kwargs``.
+    :class:`ProvidersManager` involvement) and constructed with ``kwargs`` on
+    first use -- a coordinator entry that is never looked up incurs no startup
+    cost.
 
     The ``[sdk] queue_to_coordinator`` config maps queue names to a coordinator
-    ``name`` from that list, which lets users reuse existing queue assignments
+    key from that object, which lets users reuse existing queue assignments
     to route tasks to a specific coordinator instance (for example, a
     ``"legacy-java"`` queue routed to a JDK 11 coordinator and a
     ``"modern-java"`` queue routed to a JDK 17 coordinator).
+
+    :raises CoordinatorsConfigError: from :meth:`from_config` when
+        ``[sdk] coordinators`` does not match the expected shape.
+    :raises QueueToCoordinatorConfigError: from :meth:`from_config` when
+        ``[sdk] queue_to_coordinator`` is malformed or references a
+        coordinator name that is not configured.
     """
 
     def __init__(
         self,
-        instances_by_name: dict[str, BaseCoordinator],
+        *,
+        specs_by_name: dict[str, CoordinatorSpec],
         queue_to_coordinator: dict[str, str],
     ) -> None:
-        self._instances_by_name = instances_by_name
-        self._queue_to_coordinator = queue_to_coordinator
+        self._specs_by_name: dict[str, CoordinatorSpec] = dict(specs_by_name)
+        self._sorted_names: list[str] = sorted(specs_by_name.keys())
+        self._queue_to_coordinator: dict[str, str] = queue_to_coordinator
+        self._instances_by_name: dict[str, BaseCoordinator] = {}
 
     @classmethod
     def from_config(cls) -> Self:
-        """Load coordinator instances from the ``[sdk]`` configuration."""
+        """
+        Load coordinator specs from the ``[sdk]`` configuration without instantiating them.
+
+        :raises CoordinatorsConfigError: if ``[sdk] coordinators`` is malformed.
+        :raises QueueToCoordinatorConfigError: if ``[sdk] queue_to_coordinator``
+            is malformed or maps to a coordinator name that is not configured.
+        """
         from airflow.sdk.configuration import conf
 
-        entries = conf.getjson("sdk", "coordinators", fallback=[])
-        if not isinstance(entries, list):
-            entries = []
+        raw_specs = conf.getjson("sdk", "coordinators", fallback=None)
+        specs = cls._parse_coordinator_specs(raw_specs)
 
-        instances: dict[str, BaseCoordinator] = {}
-        for entry in entries:
+        raw_mapping = conf.getjson("sdk", "queue_to_coordinator", fallback={})
+        queue_mapping = cls._parse_queue_mapping(raw_mapping, valid_names=set(specs))
+
+        return cls(specs_by_name=specs, queue_to_coordinator=queue_mapping)
+
+    @staticmethod
+    def _parse_coordinator_specs(raw: Any) -> dict[str, CoordinatorSpec]:
+        """Parse and validate the raw ``[sdk] coordinators`` JSON string."""
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise CoordinatorsConfigError(
+                "[sdk] coordinators must be a JSON object keyed by coordinator name; "
+                f"got {type(raw).__name__}"
+            )
+
+        specs: dict[str, CoordinatorSpec] = {}
+        for name, entry in raw.items():
+            if not isinstance(name, str) or not name:
+                raise CoordinatorsConfigError(
+                    f"[sdk] coordinators keys must be non-empty strings; got {name!r}"
+                )
             if not isinstance(entry, dict):
-                continue
-            name = entry.get("name")
+                raise CoordinatorsConfigError(
+                    f"[sdk] coordinators entry {name!r} must be a JSON object; got {type(entry).__name__}"
+                )
+            unknown = set(entry) - _COORDINATOR_ENTRY_KEYS
+            if unknown:
+                raise CoordinatorsConfigError(
+                    f"[sdk] coordinators entry {name!r} contains unknown keys {sorted(unknown)}; "
+                    f"allowed keys: {sorted(_COORDINATOR_ENTRY_KEYS)}"
+                )
             classpath = entry.get("classpath")
-            if not name or not classpath:
-                continue
-            kwargs = entry.get("kwargs") or {}
-            coordinator_cls = import_string(classpath)
-            instances[name] = coordinator_cls(**kwargs)
+            if not isinstance(classpath, str) or not classpath:
+                raise CoordinatorsConfigError(
+                    f"[sdk] coordinators entry {name!r} requires a non-empty string 'classpath' field"
+                )
+            kwargs = entry.get("kwargs", {})
+            if not isinstance(kwargs, dict):
+                raise CoordinatorsConfigError(
+                    f"[sdk] coordinators entry {name!r}: 'kwargs' must be a JSON object when set; "
+                    f"got {type(kwargs).__name__}"
+                )
+            specs[name] = CoordinatorSpec(classpath=classpath, kwargs=dict(kwargs))
+        return specs
 
-        queue_mapping = conf.getjson("sdk", "queue_to_coordinator", fallback={})
-        if not isinstance(queue_mapping, dict):
-            queue_mapping = {}
+    @staticmethod
+    def _parse_queue_mapping(raw: Any, *, valid_names: set[str]) -> dict[str, str]:
+        """Validate ``[sdk] queue_to_coordinator`` and cross-check it against configured coordinator names."""
+        if not isinstance(raw, dict):
+            raise QueueToCoordinatorConfigError(
+                "[sdk] queue_to_coordinator must be a JSON object mapping queue names to "
+                f"coordinator keys; got {type(raw).__name__}"
+            )
 
-        return cls(instances, queue_mapping)
+        queue_mapping: dict[str, str] = {}
+        for queue, coordinator_name in raw.items():
+            if not isinstance(queue, str) or not queue:
+                raise QueueToCoordinatorConfigError(
+                    f"[sdk] queue_to_coordinator keys must be non-empty strings; got {queue!r}"
+                )
+            if not isinstance(coordinator_name, str) or not coordinator_name:
+                raise QueueToCoordinatorConfigError(
+                    f"[sdk] queue_to_coordinator entry for queue {queue!r} must be a non-empty "
+                    "string referencing a key in [sdk] coordinators"
+                )
+            if coordinator_name not in valid_names:
+                raise QueueToCoordinatorConfigError(
+                    f"[sdk] queue_to_coordinator entry for queue {queue!r} = {coordinator_name!r} "
+                    f"is not a configured coordinator; valid keys: {sorted(valid_names)}"
+                )
+            queue_mapping[queue] = coordinator_name
+        return queue_mapping
+
+    def _instantiate(self, name: str) -> BaseCoordinator:
+        """
+        Build (or return the cached instance of) the coordinator registered as *name*.
+
+        :raises KeyError: if *name* is not a configured coordinator.
+        """
+        if (existing := self._instances_by_name.get(name)) is not None:
+            return existing
+        spec = self._specs_by_name[name]
+        coordinator_cls = import_string(spec["classpath"])
+        instance = coordinator_cls(**spec["kwargs"])
+        self._instances_by_name[name] = instance
+        return instance
 
     def all(self) -> list[BaseCoordinator]:
-        """Return all loaded coordinator instances, sorted by configured name."""
-        return [self._instances_by_name[name] for name in sorted(self._instances_by_name)]
+        """Build (if needed) and return every configured coordinator, sorted by name."""
+        return [self._instantiate(name) for name in self._sorted_names]
 
     def get(self, name: str) -> BaseCoordinator | None:
-        """Return the coordinator instance registered under *name*, or ``None``."""
-        return self._instances_by_name.get(name)
+        """Return the coordinator registered under *name*, building it on first call."""
+        if name not in self._specs_by_name:
+            return None
+        return self._instantiate(name)
 
     def for_queue(self, queue: str) -> BaseCoordinator | None:
-        """Return the coordinator instance routed to *queue*, or ``None``."""
-        name = self._queue_to_coordinator.get(queue)
-        if name is None:
+        """Return the coordinator routed to *queue*, building it on first call."""
+        if (name := self._queue_to_coordinator.get(queue)) is None:
             return None
-        return self._instances_by_name.get(name)
+        return self._instantiate(name)
 
 
 @functools.cache
@@ -470,6 +575,9 @@ def reset_coordinator_manager() -> None:
 __all__ = [
     "BaseCoordinator",
     "CoordinatorManager",
+    "CoordinatorSpec",
+    "CoordinatorsConfigError",
+    "QueueToCoordinatorConfigError",
     "get_coordinator_manager",
     "reset_coordinator_manager",
 ]
