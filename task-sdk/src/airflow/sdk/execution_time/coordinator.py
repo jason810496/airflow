@@ -440,7 +440,7 @@ class CoordinatorManager:
         unknown = {name for name in queue_to_coordinator.values() if name not in specs_by_name}
         if unknown:
             raise QueueToCoordinatorConfigError(
-                f"queue_to_coordinator references unknown coordinator(s) {sorted(unknown)}; "
+                f"[sdk] queue_to_coordinator references unknown coordinator(s) {sorted(unknown)}; "
                 f"configured coordinators: {sorted(specs_by_name)}"
             )
         self._specs_by_name: dict[str, CoordinatorSpec] = dict(specs_by_name)
