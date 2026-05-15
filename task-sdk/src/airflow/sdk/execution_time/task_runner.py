@@ -2017,6 +2017,8 @@ def _resolve_runtime_entrypoint(startup_details: StartupDetails, log: Logger) ->
         return _build(coordinator)
 
     # Step 2: DAG file extension fallback (pure-<runtime> DAGs).
+    # TODO: We should remove the Step 2 here as it's wrong at all.
+    # Even for the pure-<runtime> DAGs, we should still define the "queue" field for the task to match the coordinator, instead of relying on the file extension.
     dag_rel_path = startup_details.dag_rel_path
     for coordinator in manager.all():
         ext = getattr(type(coordinator), "file_extension", None)
