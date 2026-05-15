@@ -502,10 +502,11 @@ class TestCoordinatorManager:
         assert manager.for_queue("any") is None
 
     def test_from_config_explicit_null_yields_empty_manager(self, sdk_config):
-        sdk_config(coordinators=None)
+        sdk_config(coordinators="null", queue_to_coordinator="null")
 
         manager = CoordinatorManager.from_config()
         assert manager.all() == []
+        assert manager.for_queue("any") is None
 
     def test_from_config_empty_object_is_valid(self, sdk_config):
         sdk_config(coordinators="{}")
@@ -700,4 +701,14 @@ class TestCoordinatorManagerValidation:
             CoordinatorManager._parse_queue_mapping(
                 {"queue-a": "missing"},
                 valid_names={"alpha"},
+            )
+
+    def test_queue_mapping_explicit_null_yields_empty_mapping(self):
+        assert CoordinatorManager._parse_queue_mapping(None, valid_names={"alpha"}) == {}
+
+    def test_constructor_rejects_queue_to_coordinator_pointing_at_unknown_name(self):
+        with pytest.raises(QueueToCoordinatorConfigError, match="references unknown coordinator"):
+            CoordinatorManager(
+                specs_by_name={"alpha": _spec(_ALPHA_CLASSPATH)},
+                queue_to_coordinator={"queue-a": "missing"},
             )

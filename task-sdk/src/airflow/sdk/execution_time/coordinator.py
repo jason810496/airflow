@@ -437,6 +437,12 @@ class CoordinatorManager:
         specs_by_name: dict[str, CoordinatorSpec],
         queue_to_coordinator: dict[str, str],
     ) -> None:
+        unknown = {name for name in queue_to_coordinator.values() if name not in specs_by_name}
+        if unknown:
+            raise QueueToCoordinatorConfigError(
+                f"queue_to_coordinator references unknown coordinator(s) {sorted(unknown)}; "
+                f"configured coordinators: {sorted(specs_by_name)}"
+            )
         self._specs_by_name: dict[str, CoordinatorSpec] = dict(specs_by_name)
         self._sorted_names: list[str] = sorted(specs_by_name.keys())
         self._queue_to_coordinator: dict[str, str] = queue_to_coordinator
@@ -505,6 +511,8 @@ class CoordinatorManager:
     @staticmethod
     def _parse_queue_mapping(raw: Any, *, valid_names: set[str]) -> dict[str, str]:
         """Validate ``[sdk] queue_to_coordinator`` and cross-check it against configured coordinator names."""
+        if raw is None:
+            return {}
         if not isinstance(raw, dict):
             raise QueueToCoordinatorConfigError(
                 "[sdk] queue_to_coordinator must be a JSON object mapping queue names to "
