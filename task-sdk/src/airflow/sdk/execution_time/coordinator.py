@@ -462,7 +462,7 @@ class CoordinatorManager:
         raw_specs = conf.getjson("sdk", "coordinators", fallback=None)
         specs = cls._parse_coordinator_specs(raw_specs)
 
-        raw_mapping = conf.getjson("sdk", "queue_to_coordinator", fallback={})
+        raw_mapping = conf.getjson("sdk", "queue_to_coordinator", fallback=None)
         queue_mapping = cls._parse_queue_mapping(raw_mapping, valid_names=set(specs))
 
         return cls(specs_by_name=specs, queue_to_coordinator=queue_mapping)
