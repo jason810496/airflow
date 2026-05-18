@@ -96,7 +96,7 @@ class JavaCoordinator(BaseCoordinator):
                 *self._jvm_args,
                 "-classpath",
                 classpath,
-                BundleScanner.resolve_jar(jar_path),
+                BundleScanner.resolve_main_class_from_jar(jar_path),
                 f"--comm={comm_addr}",
                 f"--logs={logs_addr}",
             ]

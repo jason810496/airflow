@@ -91,7 +91,7 @@ class BundleScanner:
         )
 
     @staticmethod
-    def resolve_jar(jar_path: Path) -> str:
+    def resolve_main_class_from_jar(jar_path: Path) -> str:
         """
         Read ``Main-Class`` from a single bundle JAR, validating SDK attributes.
 

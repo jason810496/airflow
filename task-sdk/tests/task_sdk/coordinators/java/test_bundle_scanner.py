@@ -223,16 +223,16 @@ class TestReadDagCode:
         assert read_dag_code(jar) is None
 
 
-class TestBundleScannerResolveJar:
+class TestBundleScannerResolveMainClassFromJar:
     def test_returns_main_class(self, tmp_path: Path):
         jar = _create_bundle_jar(tmp_path / "bundle.jar", dag_ids=["d"])
-        assert BundleScanner.resolve_jar(jar) == TEST_MAIN_CLASS
+        assert BundleScanner.resolve_main_class_from_jar(jar) == TEST_MAIN_CLASS
 
     def test_raises_for_invalid_jar(self, tmp_path: Path):
         jar = tmp_path / "not_bundle.jar"
         jar.write_text("not a zip")
         with pytest.raises(FileNotFoundError, match="Not a valid Airflow Java SDK bundle"):
-            BundleScanner.resolve_jar(jar)
+            BundleScanner.resolve_main_class_from_jar(jar)
 
 
 class TestBundleScannerCandidateBundles:
