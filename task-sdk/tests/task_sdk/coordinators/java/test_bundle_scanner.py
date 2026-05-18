@@ -117,11 +117,6 @@ class TestJarFiles:
 
 
 class TestNormalizeBundleHome:
-    def test_jar_file_returns_parent(self, tmp_path: Path):
-        jar = tmp_path / "bundle.jar"
-        jar.touch()
-        assert _normalize_bundle_home(jar) == tmp_path.resolve()
-
     def test_dir_with_lib_containing_jars(self, tmp_path: Path):
         lib = tmp_path / "lib"
         lib.mkdir()
@@ -240,7 +235,7 @@ class TestBundleScannerResolveJar:
             BundleScanner.resolve_jar(jar)
 
 
-class TestBundleScannerCandidateHomes:
+class TestBundleScannerCandidateBundles:
     def test_nested_layout(self, tmp_path: Path):
         sub_a = tmp_path / "bundle_a"
         sub_a.mkdir()
@@ -250,18 +245,18 @@ class TestBundleScannerCandidateHomes:
         sub_b.mkdir()
         (sub_b / "app.jar").touch()
 
-        scanner = BundleScanner(tmp_path)
-        homes = scanner._candidate_homes()
-        assert len(homes) == 3
-        assert sub_a.resolve() in homes
-        assert sub_b.resolve() in homes
-        assert tmp_path.resolve() in homes
+        scanner = BundleScanner([tmp_path])
+        bundles = scanner._candidate_bundles()
+        # bundle_a, bundle_b (nested), then tmp_path itself (flat, empty)
+        assert len(bundles) == 2
+        assert [(sub_a / "app.jar").resolve()] in bundles
+        assert [(sub_b / "app.jar").resolve()] in bundles
 
     def test_flat_layout(self, tmp_path: Path):
         (tmp_path / "app.jar").touch()
-        scanner = BundleScanner(tmp_path)
-        homes = scanner._candidate_homes()
-        assert homes == [tmp_path.resolve()]
+        scanner = BundleScanner([tmp_path])
+        bundles = scanner._candidate_bundles()
+        assert bundles == [[(tmp_path / "app.jar").resolve()]]
 
     def test_nested_with_lib_subdir(self, tmp_path: Path):
         sub = tmp_path / "my_bundle"
@@ -270,9 +265,20 @@ class TestBundleScannerCandidateHomes:
         lib.mkdir()
         (lib / "dep.jar").touch()
 
-        scanner = BundleScanner(tmp_path)
-        homes = scanner._candidate_homes()
-        assert lib.resolve() in homes
+        scanner = BundleScanner([tmp_path])
+        bundles = scanner._candidate_bundles()
+        assert [(lib / "dep.jar").resolve()] in bundles
+
+    def test_jar_file_root(self, tmp_path: Path):
+        jar = tmp_path / "bundle.jar"
+        jar.touch()
+        scanner = BundleScanner([jar])
+        bundles = scanner._candidate_bundles()
+        assert bundles == [[jar.resolve()]]
+
+    def test_skips_nonexistent_root(self, tmp_path: Path):
+        scanner = BundleScanner([tmp_path / "missing"])
+        assert scanner._candidate_bundles() == []
 
 
 class TestBundleScannerResolve:
@@ -281,7 +287,7 @@ class TestBundleScannerResolve:
         bundle_dir.mkdir()
         _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["target_dag"])
 
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         result = scanner.resolve("target_dag")
         assert isinstance(result, ResolvedJarBundle)
         assert result.main_class == TEST_MAIN_CLASS
@@ -292,7 +298,7 @@ class TestBundleScannerResolve:
         bundle_dir.mkdir()
         _create_bundle_jar(bundle_dir / "app.jar", dag_ids=["other_dag"])
 
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         with pytest.raises(FileNotFoundError, match="No JAR bundle containing dag_id='missing'"):
             scanner.resolve("missing")
 
@@ -303,7 +309,7 @@ class TestBundleScannerResolve:
         with zipfile.ZipFile(bundle_dir / "dep.jar", "w") as zf:
             zf.writestr("placeholder.class", b"")
 
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         result = scanner.resolve("my_dag")
         parts = result.classpath.split(os.pathsep)
         assert len(parts) == 2
@@ -311,7 +317,7 @@ class TestBundleScannerResolve:
     def test_flat_layout_resolve(self, tmp_path: Path):
         _create_bundle_jar(tmp_path / "app.jar", dag_ids=["flat_dag"])
 
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         result = scanner.resolve("flat_dag")
         assert result.main_class == TEST_MAIN_CLASS
 
@@ -322,11 +328,22 @@ class TestBundleScannerResolve:
             zf.writestr("placeholder.class", b"")
         _create_bundle_jar(bundle_dir / "real.jar", dag_ids=["real_dag"])
 
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         result = scanner.resolve("real_dag")
         assert result.main_class == TEST_MAIN_CLASS
 
     def test_empty_bundles_dir(self, tmp_path: Path):
-        scanner = BundleScanner(tmp_path)
+        scanner = BundleScanner([tmp_path])
         with pytest.raises(FileNotFoundError):
             scanner.resolve("any_dag")
+
+    def test_finds_dag_in_second_root(self, tmp_path: Path):
+        first = tmp_path / "first"
+        first.mkdir()
+        second = tmp_path / "second" / "my_bundle"
+        second.mkdir(parents=True)
+        _create_bundle_jar(second / "app.jar", dag_ids=["target_dag"])
+
+        scanner = BundleScanner([first, second.parent])
+        result = scanner.resolve("target_dag")
+        assert result.main_class == TEST_MAIN_CLASS

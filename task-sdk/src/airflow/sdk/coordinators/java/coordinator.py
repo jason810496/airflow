@@ -43,16 +43,18 @@ class JavaCoordinator(BaseCoordinator):
             "kwargs": {
                 "java_executable": "/usr/lib/jvm/java-17-openjdk/bin/java",
                 "jvm_args": ["-Xmx1024m"],
-                "bundles_folder": "~/airflow/java-bundles",
+                "jar_root": ["~/airflow/java-bundles"],
             },
         }
 
     :param java_executable: Path to the ``java`` binary (defaults to ``"java"``,
         which relies on ``$PATH``).
     :param jvm_args: Extra arguments passed to the JVM (e.g. ``["-Xmx512m"]``).
-    :param bundles_folder: Directory scanned for JAR bundles when a Python
-        stub DAG delegates task execution to Java.  Required for the stub-DAG
-        flow; unused for pure-Java DAGs.
+    :param jar_root: Paths scanned for JAR bundles when a Python stub DAG
+        delegates task execution to Java.  Each entry may be a bundle JAR
+        file or a directory (flat or nested layout).  Entries are searched
+        in order until a bundle for the target dag is found.  Required for
+        the stub-DAG flow; unused for pure-Java DAGs.
     """
 
     def __init__(
@@ -60,11 +62,11 @@ class JavaCoordinator(BaseCoordinator):
         *,
         java_executable: str = "java",
         jvm_args: list[str] | None = None,
-        bundles_folder: str | None = None,
+        jar_root: list[str] | None = None,
     ) -> None:
-        self.java_executable = java_executable
-        self.jvm_args = list(jvm_args) if jvm_args else []
-        self.bundles_folder = bundles_folder
+        self._java_executable = java_executable
+        self._jvm_args = list(jvm_args) if jvm_args else []
+        self._jar_root: list[Path] = [Path(p) for p in jar_root] if jar_root else []
 
     def get_code_from_file(self, fileloc: str) -> str:
         """Read embedded DAG source code from a JAR bundle."""
@@ -90,8 +92,8 @@ class JavaCoordinator(BaseCoordinator):
             jar_path = Path(dag_file_path)
             classpath = f"{bundle_path}/*"
             return [
-                self.java_executable,
-                *self.jvm_args,
+                self._java_executable,
+                *self._jvm_args,
                 "-classpath",
                 classpath,
                 BundleScanner.resolve_jar(jar_path),
@@ -101,18 +103,18 @@ class JavaCoordinator(BaseCoordinator):
 
         # Case 2: Python Stub Dag -- the dag_file_path is a Python file but
         # the task delegates to a Java runtime.  The actual JAR bundle lives
-        # in ``bundles_folder`` (passed to __init__ from the [sdk] coordinators
-        # config entry).
-        if not self.bundles_folder:
+        # under one of the ``jar_root`` directories (passed to __init__ from
+        # the [sdk] coordinators config entry).
+        if not self._jar_root:
             raise ValueError(
-                "JavaCoordinator: bundles_folder kwarg must be set for Python stub DAGs "
+                "JavaCoordinator: jar_root kwarg must be set for Python stub DAGs "
                 "that delegate to Java task execution."
             )
 
-        resolved = BundleScanner(Path(self.bundles_folder)).resolve(dag_id=what.dag_id)
+        resolved = BundleScanner(self._jar_root).resolve(dag_id=what.dag_id)
         return [
-            self.java_executable,
-            *self.jvm_args,
+            self._java_executable,
+            *self._jvm_args,
             "-classpath",
             resolved.classpath,
             resolved.main_class,

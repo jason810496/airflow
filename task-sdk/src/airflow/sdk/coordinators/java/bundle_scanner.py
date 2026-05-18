@@ -49,31 +49,34 @@ class ResolvedJarBundle(NamedTuple):
 
 class BundleScanner:
     """
-    Locate Airflow Java SDK bundles inside a directory tree.
+    Locate Airflow Java SDK bundles across one or more roots.
 
-    Supports two directory layouts:
+    Each entry in *jar_root* may be:
 
-    - **Nested** -- each immediate subdirectory of *bundles_dir* is a bundle home.
-    - **Flat** -- *bundles_dir* itself contains the bundle JARs.
+    - A **bundle JAR file** -- treated as the sole JAR for that bundle.
+    - A **directory** in nested layout -- each immediate subdirectory is a
+      bundle home.
+    - A **directory** in flat layout -- the directory itself contains the
+      bundle JARs.
 
     Within a bundle home the JVM convention of a ``lib/`` subdirectory for
     dependency JARs is respected automatically.
+
+    :param jar_root: One or more paths (JAR files or directories) to scan for
+        JAR bundles.  Entries are searched in order until a matching bundle is
+        found.
     """
 
-    def __init__(self, bundles_dir: Path) -> None:
-        self._bundles_dir = bundles_dir
+    def __init__(self, jar_root: list[Path]) -> None:
+        self._jar_root = jar_root
 
     def resolve(self, dag_id: str) -> ResolvedJarBundle:
         """
         Find the bundle whose metadata YAML lists *dag_id*.
 
-        :raises FileNotFoundError: if no matching bundle is found.
+        :raises FileNotFoundError: if no matching bundle is found in any root.
         """
-        for bundle_home in self._candidate_homes():
-            jars = _jar_files(bundle_home)
-            if not jars:
-                continue
-
+        for jars in self._candidate_bundles():
             for jar_path in jars:
                 result = _read_bundle_jar(jar_path)
                 if result is None:
@@ -83,7 +86,9 @@ class BundleScanner:
                     classpath = os.pathsep.join(str(j.resolve()) for j in jars)
                     return ResolvedJarBundle(main_class=main_class, classpath=classpath)
 
-        raise FileNotFoundError(f"No JAR bundle containing dag_id={dag_id!r} found in {self._bundles_dir}")
+        raise FileNotFoundError(
+            f"No JAR bundle containing dag_id={dag_id!r} found in jar_root={[str(p) for p in self._jar_root]}"
+        )
 
     @staticmethod
     def resolve_jar(jar_path: Path) -> str:
@@ -100,16 +105,25 @@ class BundleScanner:
             )
         return result[0]
 
-    def _candidate_homes(self) -> list[Path]:
-        """Return normalised bundle-home directories to inspect."""
-        candidates: list[Path] = []
+    def _candidate_bundles(self) -> list[list[Path]]:
+        """Return JAR lists for each candidate bundle across all roots."""
+        candidates: list[list[Path]] = []
 
-        if self._bundles_dir.is_dir():
-            for child in sorted(self._bundles_dir.iterdir()):
+        for root in self._jar_root:
+            if root.is_file() and root.suffix == ".jar":
+                candidates.append([root.resolve()])
+                continue
+            if not root.is_dir():
+                continue
+            for child in sorted(root.iterdir()):
                 if child.is_dir():
-                    candidates.append(_normalize_bundle_home(child))
+                    jars = _jar_files(_normalize_bundle_home(child))
+                    if jars:
+                        candidates.append(jars)
+            jars = _jar_files(_normalize_bundle_home(root))
+            if jars:
+                candidates.append(jars)
 
-        candidates.append(_normalize_bundle_home(self._bundles_dir))
         return candidates
 
 
@@ -122,19 +136,16 @@ def _jar_files(directory: Path) -> list[Path]:
 
 def _normalize_bundle_home(path: Path) -> Path:
     """
-    Normalize a bundle path to the directory containing JARs.
+    Normalize a bundle directory to the directory containing JARs.
 
     Handles the common JVM distribution layout where dependency JARs
     live in a ``lib/`` subdirectory (Gradle ``application`` plugin,
     Maven Assembly, sbt-native-packager, etc.).
 
-    - If *path* points to a JAR file, use its parent directory.
     - If the directory has a ``lib/`` subdirectory containing JARs, use that.
     - Otherwise, return the directory as-is.
     """
     normalized = path.resolve()
-    if normalized.is_file() and normalized.suffix == ".jar":
-        return normalized.parent
     lib = normalized / "lib"
     if lib.is_dir() and any(p.suffix == ".jar" for p in lib.iterdir()):
         return lib

@@ -97,19 +97,19 @@ def _make_ti(dag_id: str = "test_dag") -> TaskInstanceDTO:
 class TestJavaCoordinatorAttributes:
     def test_default_kwargs(self):
         coordinator = JavaCoordinator()
-        assert coordinator.java_executable == "java"
-        assert coordinator.jvm_args == []
-        assert coordinator.bundles_folder is None
+        assert coordinator._java_executable == "java"
+        assert coordinator._jvm_args == []
+        assert coordinator._jar_root == []
 
     def test_custom_kwargs(self):
         coordinator = JavaCoordinator(
             java_executable="/opt/java/bin/java",
             jvm_args=["-Xmx512m", "-Xms256m"],
-            bundles_folder="/airflow/java-bundles",
+            jar_root=["/airflow/java-bundles", "/airflow/extra-bundles"],
         )
-        assert coordinator.java_executable == "/opt/java/bin/java"
-        assert coordinator.jvm_args == ["-Xmx512m", "-Xms256m"]
-        assert coordinator.bundles_folder == "/airflow/java-bundles"
+        assert coordinator._java_executable == "/opt/java/bin/java"
+        assert coordinator._jvm_args == ["-Xmx512m", "-Xms256m"]
+        assert coordinator._jar_root == [Path("/airflow/java-bundles"), Path("/airflow/extra-bundles")]
 
 
 class TestGetCodeFromFile:
@@ -148,16 +148,16 @@ class TestTaskExecutionCmd:
             "--logs=localhost:5678",
         ]
 
-    def test_python_stub_dag_uses_bundles_folder_kwarg(self, tmp_path: Path):
-        bundles_folder = tmp_path / "java_bundles"
-        bundle_sub = bundles_folder / "my_bundle"
+    def test_python_stub_dag_uses_jar_root_kwarg(self, tmp_path: Path):
+        jar_root = tmp_path / "java_bundles"
+        bundle_sub = jar_root / "my_bundle"
         bundle_sub.mkdir(parents=True)
         _create_bundle_jar(bundle_sub / "app.jar", dag_ids=["stub_dag"])
 
         ti = _make_ti(dag_id="stub_dag")
         bundle_info = BundleInfo(name="my_bundle")
 
-        coordinator = JavaCoordinator(bundles_folder=str(bundles_folder))
+        coordinator = JavaCoordinator(jar_root=[str(jar_root)])
         cmd = coordinator.task_execution_cmd(
             what=ti,  # type: ignore[arg-type]
             dag_file_path="/dags/stub_dag.py",
@@ -170,20 +170,93 @@ class TestTaskExecutionCmd:
         assert cmd == [
             "java",
             "-classpath",
-            f"{bundles_folder}/my_bundle/app.jar",
+            f"{jar_root}/my_bundle/app.jar",
             TEST_MAIN_CLASS,
             "--comm=localhost:1234",
             "--logs=localhost:5678",
         ]
 
-    def test_python_stub_dag_without_bundles_folder_raises(self):
+    def test_python_stub_dag_accepts_jar_file_in_jar_root(self, tmp_path: Path):
+        jar = tmp_path / "app.jar"
+        _create_bundle_jar(jar, dag_ids=["stub_dag"])
+
+        ti = _make_ti(dag_id="stub_dag")
+        bundle_info = BundleInfo(name="my_bundle")
+
+        coordinator = JavaCoordinator(jar_root=[str(jar)])
+        cmd = coordinator.task_execution_cmd(
+            what=ti,  # type: ignore[arg-type]
+            dag_file_path="/dags/stub_dag.py",
+            bundle_path="/some/bundle/path",
+            bundle_info=bundle_info,
+            comm_addr="localhost:1234",
+            logs_addr="localhost:5678",
+        )
+
+        assert cmd == [
+            "java",
+            "-classpath",
+            str(jar.resolve()),
+            TEST_MAIN_CLASS,
+            "--comm=localhost:1234",
+            "--logs=localhost:5678",
+        ]
+
+    def test_python_stub_dag_searches_multiple_jar_roots(self, tmp_path: Path):
+        empty_root = tmp_path / "empty_root"
+        empty_root.mkdir()
+        jar_root = tmp_path / "java_bundles"
+        bundle_sub = jar_root / "my_bundle"
+        bundle_sub.mkdir(parents=True)
+        _create_bundle_jar(bundle_sub / "app.jar", dag_ids=["stub_dag"])
+
+        ti = _make_ti(dag_id="stub_dag")
+        bundle_info = BundleInfo(name="my_bundle")
+
+        coordinator = JavaCoordinator(jar_root=[str(empty_root), str(jar_root)])
+        cmd = coordinator.task_execution_cmd(
+            what=ti,  # type: ignore[arg-type]
+            dag_file_path="/dags/stub_dag.py",
+            bundle_path="/some/bundle/path",
+            bundle_info=bundle_info,
+            comm_addr="localhost:1234",
+            logs_addr="localhost:5678",
+        )
+
+        assert cmd == [
+            "java",
+            "-classpath",
+            f"{jar_root}/my_bundle/app.jar",
+            TEST_MAIN_CLASS,
+            "--comm=localhost:1234",
+            "--logs=localhost:5678",
+        ]
+
+    def test_python_stub_dag_without_jar_root_raises(self):
         ti = _make_ti()
         bundle_info = BundleInfo(name="my_bundle")
 
-        with pytest.raises(ValueError, match="bundles_folder kwarg must be set"):
+        with pytest.raises(ValueError, match="jar_root kwarg must be set"):
             JavaCoordinator().task_execution_cmd(
                 what=ti,  # type: ignore[arg-type]
                 dag_file_path="/dags/stub_dag.py",
+                bundle_path="/some/bundle/path",
+                bundle_info=bundle_info,
+                comm_addr="localhost:1234",
+                logs_addr="localhost:5678",
+            )
+
+    def test_python_stub_dag_not_found_in_any_jar_root_raises(self, tmp_path: Path):
+        empty_root = tmp_path / "empty_root"
+        empty_root.mkdir()
+        ti = _make_ti(dag_id="missing_dag")
+        bundle_info = BundleInfo(name="my_bundle")
+
+        coordinator = JavaCoordinator(jar_root=[str(empty_root)])
+        with pytest.raises(FileNotFoundError, match="No JAR bundle containing dag_id='missing_dag'"):
+            coordinator.task_execution_cmd(
+                what=ti,  # type: ignore[arg-type]
+                dag_file_path="/dags/missing_dag.py",
                 bundle_path="/some/bundle/path",
                 bundle_info=bundle_info,
                 comm_addr="localhost:1234",
