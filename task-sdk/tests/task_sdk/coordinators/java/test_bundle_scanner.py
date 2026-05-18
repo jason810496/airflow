@@ -32,7 +32,7 @@ from airflow.sdk.coordinators.java.bundle_scanner import (
     SDK_VERSION_MANIFEST_KEY,
     BundleScanner,
     ResolvedJarBundle,
-    _jar_files,
+    _list_jar_files,
     _normalize_bundle_home,
     _parse_dag_ids_from_metadata,
     _read_bundle_jar,
@@ -96,24 +96,24 @@ def _create_bundle_jar(
     return jar_path
 
 
-class TestJarFiles:
-    def test_lists_jar_files_sorted(self, tmp_path: Path):
+class TestListJarFiles:
+    def test_lists_jar_files(self, tmp_path: Path):
         (tmp_path / "b.jar").touch()
         (tmp_path / "a.jar").touch()
         (tmp_path / "c.txt").touch()
-        result = _jar_files(tmp_path)
-        assert result == [tmp_path / "a.jar", tmp_path / "b.jar"]
+        result = _list_jar_files(tmp_path)
+        assert set(result) == {tmp_path / "a.jar", tmp_path / "b.jar"}
 
     def test_returns_empty_for_nonexistent_directory(self, tmp_path: Path):
-        assert _jar_files(tmp_path / "nonexistent") == []
+        assert _list_jar_files(tmp_path / "nonexistent") == []
 
     def test_returns_empty_for_directory_with_no_jars(self, tmp_path: Path):
         (tmp_path / "readme.txt").touch()
-        assert _jar_files(tmp_path) == []
+        assert _list_jar_files(tmp_path) == []
 
     def test_ignores_jar_directories(self, tmp_path: Path):
         (tmp_path / "fake.jar").mkdir()
-        assert _jar_files(tmp_path) == []
+        assert _list_jar_files(tmp_path) == []
 
 
 class TestNormalizeBundleHome:

@@ -116,23 +116,29 @@ class BundleScanner:
                 continue
             if not root.is_dir():
                 continue
-            for child in sorted(root.iterdir()):
+            for child in root.iterdir():
                 if child.is_dir():
-                    jars = _jar_files(_normalize_bundle_home(child))
+                    jars = _list_jar_files(_normalize_bundle_home(child))
                     if jars:
                         candidates.append(jars)
-            jars = _jar_files(_normalize_bundle_home(root))
+            jars = _list_jar_files(_normalize_bundle_home(root))
             if jars:
                 candidates.append(jars)
 
         return candidates
 
 
-def _jar_files(directory: Path) -> list[Path]:
-    """List all ``.jar`` files in *directory*, sorted by name."""
+def _list_jar_files(directory: Path) -> list[Path]:
+    """
+    Return the ``.jar`` files directly inside *directory* (non-recursive).
+
+    Returns an empty list when *directory* does not exist or is not a
+    directory.  Subdirectories with a ``.jar`` suffix are ignored -- only
+    regular files are returned.
+    """
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.iterdir() if p.is_file() and p.suffix == ".jar")
+    return [p for p in directory.glob("*.jar") if p.is_file()]
 
 
 def _normalize_bundle_home(path: Path) -> Path:
