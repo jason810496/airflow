@@ -130,6 +130,7 @@ from airflow.sdk.execution_time.comms import (
     _RequestFrame,
     _ResponseFrame,
 )
+from airflow.sdk.execution_time.coordinator import get_coordinator_manager
 from airflow.sdk.execution_time.request_handlers import (
     handle_delete_variable,
     handle_delete_xcom,
@@ -2302,27 +2303,26 @@ def supervise_task(
         reset_secrets_masker()
 
         try:
-            process = ActivitySubprocess.start(
-                dag_rel_path=dag_rel_path,
+            coordinator = get_coordinator_manager().for_queue(ti.queue)
+            result = coordinator.execute_task(
                 what=ti,
+                dag_rel_path=dag_rel_path,
+                bundle_info=bundle_info,
                 client=client,
                 logger=logger,
-                bundle_info=bundle_info,
-                subprocess_logs_to_stdout=subprocess_logs_to_stdout,
                 sentry_integration=sentry_integration,
+                subprocess_logs_to_stdout=subprocess_logs_to_stdout,
             )
-
-            exit_code = process.wait()
             end = time.monotonic()
             log.info(
                 "Workload finished",
                 workload_type="ExecuteTask",
                 workload_id=str(ti.id),
-                exit_code=exit_code,
+                exit_code=result.exit_code,
                 duration=end - start,
-                final_state=process.final_state,
+                final_state=result.final_state,
             )
-            return exit_code
+            return result.exit_code
         finally:
             if log_path and log_file_descriptor:
                 log_file_descriptor.close()
