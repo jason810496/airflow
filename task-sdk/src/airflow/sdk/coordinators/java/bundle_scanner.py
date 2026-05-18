@@ -76,7 +76,7 @@ class BundleScanner:
 
         :raises FileNotFoundError: if no matching bundle is found in any root.
         """
-        for jars in self._candidate_bundles():
+        for jars in self._candidate_bundles:
             for jar_path in jars:
                 result = _read_bundle_jar(jar_path)
                 if result is None:
@@ -105,8 +105,9 @@ class BundleScanner:
             )
         return result[0]
 
+    @property
     def _candidate_bundles(self) -> list[list[Path]]:
-        """Return JAR lists for each candidate bundle across all roots."""
+        """JAR lists for each candidate bundle across all roots."""
         candidates: list[list[Path]] = []
 
         for root in self._jar_root:

@@ -246,7 +246,7 @@ class TestBundleScannerCandidateBundles:
         (sub_b / "app.jar").touch()
 
         scanner = BundleScanner([tmp_path])
-        bundles = scanner._candidate_bundles()
+        bundles = scanner._candidate_bundles
         # bundle_a, bundle_b (nested), then tmp_path itself (flat, empty)
         assert len(bundles) == 2
         assert [(sub_a / "app.jar").resolve()] in bundles
@@ -255,7 +255,7 @@ class TestBundleScannerCandidateBundles:
     def test_flat_layout(self, tmp_path: Path):
         (tmp_path / "app.jar").touch()
         scanner = BundleScanner([tmp_path])
-        bundles = scanner._candidate_bundles()
+        bundles = scanner._candidate_bundles
         assert bundles == [[(tmp_path / "app.jar").resolve()]]
 
     def test_nested_with_lib_subdir(self, tmp_path: Path):
@@ -266,19 +266,19 @@ class TestBundleScannerCandidateBundles:
         (lib / "dep.jar").touch()
 
         scanner = BundleScanner([tmp_path])
-        bundles = scanner._candidate_bundles()
+        bundles = scanner._candidate_bundles
         assert [(lib / "dep.jar").resolve()] in bundles
 
     def test_jar_file_root(self, tmp_path: Path):
         jar = tmp_path / "bundle.jar"
         jar.touch()
         scanner = BundleScanner([jar])
-        bundles = scanner._candidate_bundles()
+        bundles = scanner._candidate_bundles
         assert bundles == [[jar.resolve()]]
 
     def test_skips_nonexistent_root(self, tmp_path: Path):
         scanner = BundleScanner([tmp_path / "missing"])
-        assert scanner._candidate_bundles() == []
+        assert scanner._candidate_bundles == []
 
 
 class TestBundleScannerResolve:
