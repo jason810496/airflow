@@ -21,7 +21,7 @@ import logging
 import warnings
 from typing import TYPE_CHECKING, Any
 
-from airflow._shared.logging.remote import discover_remote_log_handler
+from airflow._shared.logging.factory import DEFAULT_LOGGING_CONFIG_PATH, resolve_remote_task_log
 from airflow._shared.module_loading import import_string
 from airflow.configuration import conf
 from airflow.exceptions import AirflowConfigException
@@ -30,9 +30,6 @@ if TYPE_CHECKING:
     from airflow.logging.remote import RemoteLogIO
 
 log = logging.getLogger(__name__)
-
-# Default ``[logging] logging_config_class`` value when the user has not overridden it.
-DEFAULT_LOGGING_CONFIG_PATH = "airflow.config_templates.airflow_local_settings.DEFAULT_LOGGING_CONFIG"
 
 
 class _ActiveLoggingConfig:
@@ -52,30 +49,25 @@ class _ActiveLoggingConfig:
 
 def get_remote_task_log() -> RemoteLogIO | None:
     if not _ActiveLoggingConfig.logging_config_loaded:
-        load_logging_config()
+        _load_logging_config()
     return _ActiveLoggingConfig.remote_task_log
 
 
 def get_default_remote_conn_id() -> str | None:
+    if conn_id := conf.get("logging", "remote_log_conn_id", fallback=None):
+        return conn_id
+
     if not _ActiveLoggingConfig.logging_config_loaded:
-        load_logging_config()
+        _load_logging_config()
     return _ActiveLoggingConfig.default_remote_conn_id
 
 
-def load_logging_config() -> tuple[dict[str, Any], str]:
-    """
-    Resolve ``[logging] logging_config_class`` and the remote-log side channel.
-
-    The option is a dotted path to a ``logging.config.dictConfig`` dict. After
-    importing the dict, the enclosing module is probed for optional
-    ``REMOTE_TASK_LOG`` and ``DEFAULT_REMOTE_CONN_ID`` attributes via
-    :func:`airflow._shared.logging.remote.discover_remote_log_handler`.
-    """
-    logging_class_path = conf.get("logging", "logging_config_class", fallback=DEFAULT_LOGGING_CONFIG_PATH)
-
-    # Sometimes we end up with `""` as the value!
-    logging_class_path = logging_class_path or DEFAULT_LOGGING_CONFIG_PATH
-
+def _get_logging_config() -> dict[str, Any]:
+    """Import and validate the ``[logging] logging_config_class`` dict."""
+    logging_class_path = (
+        conf.get("logging", "logging_config_class", fallback=DEFAULT_LOGGING_CONFIG_PATH)
+        or DEFAULT_LOGGING_CONFIG_PATH
+    )
     user_defined = logging_class_path != DEFAULT_LOGGING_CONFIG_PATH
 
     try:
@@ -87,24 +79,48 @@ def load_logging_config() -> tuple[dict[str, Any], str]:
 
         if user_defined:
             log.info("Successfully imported user-defined logging config from %s", logging_class_path)
-
     except Exception as err:
-        # Import default logging configurations.
         raise ImportError(
             f"Unable to load {'custom ' if user_defined else ''}logging config from {logging_class_path} due "
             f"to: {type(err).__name__}:{err}"
         )
-    else:
-        # Load remote logging configuration using shared discovery logic.
-        remote_task_log, default_remote_conn_id = discover_remote_log_handler(
-            logging_class_path, DEFAULT_LOGGING_CONFIG_PATH, import_string
-        )
-        _ActiveLoggingConfig.set(remote_task_log, default_remote_conn_id)
 
-    return logging_config, logging_class_path
+    return logging_config
 
 
-def _warn_if_missing_remote_task_log(logging_class_path: str) -> None:
+def _load_logging_config() -> None:
+    """Load and cache the remote logging configuration from core config."""
+    from airflow.providers_manager import ProvidersManager
+
+    remote_task_log, default_remote_conn_id = resolve_remote_task_log(
+        conf=conf,
+        providers_manager=ProvidersManager(),
+        import_string=import_string,
+    )
+    _ActiveLoggingConfig.set(remote_task_log, default_remote_conn_id)
+
+
+def load_logging_config() -> tuple[dict[str, Any], str]:
+    """
+    Import the logging config dict and load the remote logging handler.
+
+    .. deprecated::
+        Use :func:`_get_logging_config` for the logging dict and
+        :func:`_load_logging_config` for remote handler setup.
+    """
+    warnings.warn(
+        "load_logging_config is deprecated; use _get_logging_config() for the logging dict "
+        "and _load_logging_config() for remote handler setup.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    _load_logging_config()
+    return _get_logging_config(), conf.get(
+        "logging", "logging_config_class", fallback=DEFAULT_LOGGING_CONFIG_PATH
+    ) or DEFAULT_LOGGING_CONFIG_PATH
+
+
+def _warn_if_missing_remote_task_log() -> None:
     """
     Warn if ``[logging] remote_logging`` is on but the user module exposes no remote IO.
 
@@ -114,6 +130,10 @@ def _warn_if_missing_remote_task_log(logging_class_path: str) -> None:
     Only fires for user-defined ``logging_config_class`` values; the stock
     fallback is exempt.
     """
+    logging_class_path = (
+        conf.get("logging", "logging_config_class", fallback=DEFAULT_LOGGING_CONFIG_PATH)
+        or DEFAULT_LOGGING_CONFIG_PATH
+    )
     user_defined = bool(logging_class_path) and logging_class_path != DEFAULT_LOGGING_CONFIG_PATH
     remote_logging_enabled = conf.getboolean("logging", "remote_logging", fallback=False)
     if not (user_defined and remote_logging_enabled):
@@ -137,7 +157,7 @@ def _warn_if_missing_remote_task_log(logging_class_path: str) -> None:
 def configure_logging():
     from airflow._shared.logging import configure_logging, init_log_folder, translate_config_values
 
-    logging_config, logging_class_path = load_logging_config()
+    logging_config = _get_logging_config()
     try:
         level: str = getattr(
             logging_config, "LOG_LEVEL", conf.get("logging", "logging_level", fallback="INFO")
@@ -187,7 +207,7 @@ def configure_logging():
 
     # Runs after dictConfig so deprecated handler self-registration (ES/OS) has
     # had its chance to populate _ActiveLoggingConfig.remote_task_log.
-    _warn_if_missing_remote_task_log(logging_class_path)
+    _warn_if_missing_remote_task_log()
 
     validate_logging_config()
 
