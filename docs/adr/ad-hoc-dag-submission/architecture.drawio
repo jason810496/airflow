@@ -1,0 +1,323 @@
+<mxfile host="65bd71144e">
+    <diagram id="page-architecture" name="1 - Architecture (layers)">
+        <mxGraphModel dx="1039" dy="770" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="850" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="p1_title" value="Ad-hoc Dag Submission — Architecture (layered)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="18" width="760" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_note" value="Security boundary: workers reach metadata state only via the Execution API — never the DB directly (FR-10 / FR-18)." style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;size=14;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="860" y="14" width="500" height="44" as="geometry"/>
+                </mxCell>
+                <mxCell id="tier_client" value="Layer 6 / 10 — Clients" style="swimlane;startSize=30;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="70" width="1320" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="cli" value="CLI: airflow submit&lt;br&gt;pack archive, --conf, --watch logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_client" vertex="1">
+                    <mxGeometry x="40" y="45" width="280" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ctl" value="airflow-ctl&lt;br&gt;submissions subcommand (REST client)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_client" vertex="1">
+                    <mxGeometry x="360" y="45" width="280" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ui" value="UI (minimal)&lt;br&gt;provenance marker, opt-in ad-hoc filter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_client" vertex="1">
+                    <mxGeometry x="680" y="45" width="280" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="tier_rest" value="Layer 3 / 7 / 8 — Public REST API control plane" style="swimlane;startSize=30;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="200" width="1320" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="rest" value="Public REST  /submissions&lt;br&gt;POST create / uploaded / run / cancel · GET · DELETE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_rest" vertex="1">
+                    <mxGeometry x="40" y="45" width="420" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="authm" value="Auth-manager&lt;br&gt;resource Submission: create / view / cancel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_rest" vertex="1">
+                    <mxGeometry x="500" y="45" width="300" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="audit_rest" value="Audit Log emit&lt;br&gt;submission.create / upload / run / cancel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="tier_rest" vertex="1">
+                    <mxGeometry x="840" y="45" width="300" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="tier_exec" value="Layer 2 — Execution API (worker-facing; binds caller dag_run_id to submission)" style="swimlane;startSize=30;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="330" width="1320" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ep_parsed" value="POST /execution/dags/parsed&lt;br&gt;only ADHOC insert path · provenance + authz" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
+                    <mxGeometry x="40" y="45" width="330" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ep_token" value="POST …/archive_download_token&lt;br&gt;ephemeral presigned GET (ADR 0003)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
+                    <mxGeometry x="400" y="45" width="360" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ep_get" value="GET /execution/submissions/{id}&lt;br&gt;archive_uri, entry_file, conf, state…" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
+                    <mxGeometry x="790" y="45" width="350" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="tier_compute" value="Layer 4 / 5 — System Dags + worker runtime" style="swimlane;startSize=30;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="470" width="1320" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="orch" value="Orchestrator system Dag&lt;br&gt;t1 download_parse_register&lt;br&gt;t2 trigger_user_dag (pin dag_version_id)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="tier_compute" vertex="1">
+                    <mxGeometry x="40" y="45" width="360" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="cancel" value="Canceller system Dag&lt;br&gt;signal_workload → mark_cancelled&lt;br&gt;→ delete_archive → audit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="tier_compute" vertex="1">
+                    <mxGeometry x="430" y="45" width="360" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="workload" value="Workload DagRun&lt;br&gt;user tasks&lt;br&gt;OPERATOR_TRIGGERED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="tier_compute" vertex="1">
+                    <mxGeometry x="820" y="45" width="250" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="sdk" value="Task SDK / worker&lt;br&gt;parser helper&lt;br&gt;get_fs() (fsspec)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="tier_compute" vertex="1">
+                    <mxGeometry x="1090" y="45" width="200" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="tier_data" value="Layer 1 / 9 — Metadata DB, object store, configuration" style="swimlane;startSize=30;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="650" width="1320" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="db" value="Metadata DB&lt;br&gt;submission table · DagModel.provenance · Log (audit)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="tier_data" vertex="1">
+                    <mxGeometry x="40" y="45" width="460" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="store" value="Object store (get_fs)&lt;br&gt;per-submission archives" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="tier_data" vertex="1">
+                    <mxGeometry x="530" y="45" width="320" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="config" value="Configuration&lt;br&gt;[ad_hoc] default_archive_uri, retention, expiry&lt;br&gt;[api_auth] archive-download jwt secret / TTL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="tier_data" vertex="1">
+                    <mxGeometry x="880" y="45" width="400" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_cli_rest" value="submit / poll" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="cli" target="rest" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_rest_auth" value="authorize" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="rest" target="authm" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_rest_db" value="insert / update" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="rest" target="db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_rest_store" value="presigned PUT" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="rest" target="store" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_rest_orch" value="POST /run → trigger" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="rest" target="orch" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_rest_cancel" value="POST /cancel → trigger" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="rest" target="cancel" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_orch_get" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="orch" target="ep_get" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_orch_token" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="orch" target="ep_token" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_orch_parsed" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="orch" target="ep_parsed" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_orch_wl" value="trigger (pinned)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="orch" target="workload" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_cancel_wl" value="signal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="cancel" target="workload" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_cancel_store" value="delete archive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="cancel" target="store" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_parsed_db" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="ep_parsed" target="db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_get_db" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="ep_get" target="db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_token_store" value="sign" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="ep_token" target="store" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_sdk_orch" value="parser / get_fs" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="sdk" target="orch" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_sdk_cancel" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="sdk" target="cancel" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_cfg_token" value="jwt TTL" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="config" target="ep_token" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_cfg_rest" value="enable / limits" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="config" target="rest" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="p1_e_audit_db" value="Log table" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="audit_rest" target="db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-flow" name="2 - End-to-end flow">
+        <mxGraphModel dx="846" dy="539" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="1360" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="p2_title" value="Ad-hoc Dag Submission — End-to-end flow (numbered)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="20" width="760" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="p2_note" value="Only Public REST and the Execution API write the metadata DB. Solid = request, dashed = response." style="shape=note;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;size=14;align=left;spacingLeft=6;" parent="1" vertex="1">
+                    <mxGeometry x="940" y="16" width="440" height="44" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_cli" value="CLI / airflow-ctl" style="swimlane;startSize=30;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="c1" value="1 · POST /submissions&lt;br&gt;(entry_file, conf)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_cli" vertex="1">
+                    <mxGeometry x="12" y="50" width="176" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="c2" value="3 · PUT zip → upload_url" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_cli" vertex="1">
+                    <mxGeometry x="12" y="220" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="c3" value="5 · POST /uploaded" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_cli" vertex="1">
+                    <mxGeometry x="12" y="330" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="c4" value="7 · POST /run" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_cli" vertex="1">
+                    <mxGeometry x="12" y="440" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="c5" value="19 · Poll GET /submissions/{id}&lt;br&gt;stream workload logs, exit on result" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_cli" vertex="1">
+                    <mxGeometry x="12" y="1080" width="176" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_rest" value="Public REST API" style="swimlane;startSize=30;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="260" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="r1" value="2 · INSERT submission&lt;br&gt;PENDING_UPLOAD → DB&lt;br&gt;mint presigned PUT" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_rest" vertex="1">
+                    <mxGeometry x="12" y="50" width="176" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="r2" value="6 · state = READY → DB&lt;br&gt;emit upload_complete" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_rest" vertex="1">
+                    <mxGeometry x="12" y="330" width="176" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="r3" value="8 · TX: trigger Orchestrator DagRun&lt;br&gt;SET parsing_dag_run_id, RUNNING → DB&lt;br&gt;emit run_triggered" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="col_rest" vertex="1">
+                    <mxGeometry x="12" y="440" width="176" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_store" value="Object store" style="swimlane;startSize=30;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="s1" value="4 · archive stored" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="col_store" vertex="1">
+                    <mxGeometry x="12" y="220" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="s2" value="12 · presigned GET minted&lt;br&gt;get_fs().sign" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="col_store" vertex="1">
+                    <mxGeometry x="12" y="700" width="176" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="s3" value="13 · bytes → worker" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" parent="col_store" vertex="1">
+                    <mxGeometry x="12" y="820" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_orch" value="Orchestrator system Dag" style="swimlane;startSize=30;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="o1" value="9 · t1 GET submission" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="580" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="o2" value="11 · t1 POST download_token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="700" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="o3" value="13 · t1 GET bytes&lt;br&gt;scratch path, never XCom" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="820" width="176" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="o4" value="14 · t1 parse + serialise" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="910" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="o5" value="15 · t1 POST dags/parsed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="1000" width="176" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="o6" value="17 · t2 TriggerDagRunOperator&lt;br&gt;pin dag_version_id&lt;br&gt;SET workload_dag_run_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_orch" vertex="1">
+                    <mxGeometry x="12" y="1090" width="176" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_exec" value="Execution API" style="swimlane;startSize=30;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" value="10 · read row → DB&lt;br&gt;authz: dag_run_id ==&lt;br&gt;parsing_dag_run_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="col_exec" vertex="1">
+                    <mxGeometry x="12" y="580" width="176" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="12 · mint token → store&lt;br&gt;authz check" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="col_exec" vertex="1">
+                    <mxGeometry x="12" y="700" width="176" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="16 · provenance check&lt;br&gt;INSERT / new-version&lt;br&gt;DagModel(ADHOC) → DB&lt;br&gt;SET parsed_dag_id, READY" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="col_exec" vertex="1">
+                    <mxGeometry x="12" y="1000" width="176" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="col_workload" value="Workload DagRun" style="swimlane;startSize=30;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="1140" y="90" width="200" height="1200" as="geometry"/>
+                </mxCell>
+                <mxCell id="w1" value="18 · Run user tasks&lt;br&gt;OPERATOR_TRIGGERED&lt;br&gt;pinned dag_version_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="col_workload" vertex="1">
+                    <mxGeometry x="12" y="1090" width="176" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="f1" value="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="c1" target="r1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f2" value="{id, upload_url}" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="r1" target="c1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f3" value="3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="c2" target="s1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f4" value="5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="c3" target="r2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f5" value="7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="c4" target="r3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f6" value="trigger DagRun" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="r3" target="o1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f7" value="9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="o1" target="e1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f8" value="row" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="e1" target="o1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f9" value="11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="o2" target="e2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f10" value="sign" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="e2" target="s2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f11" value="presigned url" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="e2" target="o2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f12" value="13 GET" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="o3" target="s3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f13" value="bytes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="s3" target="o3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f14" value="15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="o5" target="e3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f15" value="dag_version_id" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="e3" target="o5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f16" value="17 trigger (pinned)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" parent="1" source="o6" target="w1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="f17" value="logs / result" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;endArrow=open;" parent="1" source="w1" target="c5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="page-motivation" name="3 - Motivation">
+        <mxGraphModel dx="846" dy="539" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="620" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="p3_title" value="Ad-hoc Dag Submission — Motivation &amp; design principles" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=18;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="20" width="900" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="m1" value="Workers never touch the DB&lt;br&gt;&lt;br&gt;All metadata reads / writes go through the Execution API (FR-10 / 18) — same boundary as bundle-parsed Dags." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="90" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m2" value="Submission row = source of truth&lt;br&gt;&lt;br&gt;Owns archive lifecycle and every authz check. Orchestrator carries only submission_id in conf (FR-32)." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="90" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m3" value="Tamper-proof authorization&lt;br&gt;&lt;br&gt;Each endpoint binds caller dag_run_id to parsing / cancellation_dag_run_id. Workload is never authorized; a forged submission_id is useless." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                    <mxGeometry x="660" y="90" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m4" value="Never persist the credential&lt;br&gt;&lt;br&gt;Archive-download URL minted on demand, short TTL, never stored on the row, never logged, never on XCom (ADR 0003)." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                    <mxGeometry x="970" y="90" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m5" value="Provenance separation&lt;br&gt;&lt;br&gt;DagModel.provenance BUNDLE vs ADHOC. Default listings filter to BUNDLE; a bundle Dag is never shadowed by ad-hoc (FR-11 / 12 / 13)." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="290" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m6" value="Dag-version pinning&lt;br&gt;&lt;br&gt;Workload runs the exact serialised version this submission produced, even under concurrent re-submits of the same dag_id." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="290" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m7" value="Ships as its own distribution&lt;br&gt;&lt;br&gt;apache-airflow-system-dags keeps core lean; loaded via an undeletable system bundle, not a filesystem scan." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="660" y="290" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="m8" value="Reuse, don&#39;t reinvent&lt;br&gt;&lt;br&gt;get_fs() (fsspec), SerializedDagModel write path, TriggerDagRunOperator (OPERATOR_TRIGGERED). No new transport, DagRunType, or worker bootstrap." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="970" y="290" width="290" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="p3_ref" value="References: AIP · ADR 0001 (scope) · ADR 0002 (parsing/execution) · ADR 0003 (ephemeral token) · requirements-and-changes.md" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontStyle=2;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="480" width="1220" height="30" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

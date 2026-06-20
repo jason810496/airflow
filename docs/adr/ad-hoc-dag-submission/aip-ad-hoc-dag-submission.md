@@ -17,12 +17,12 @@
  under the License.
  -->
 
-# AIP-XX: Ad-hoc DAG execution (`airflow submit`)
+# AIP-XX: Ad-hoc Dag submission (`airflow submit`)
 
 > Draft of an Airflow Improvement Proposal. The fields below mirror the
 > Confluence AIP template; they will be transcribed into the wiki page
 > when the proposal moves to discussion. Detailed design lives in
-> [ADR 0001](./0001-ad-hoc-dag-execution.md) and
+> [ADR 0001](./0001-ad-hoc-dag-submission.md) and
 > [ADR 0002](./0002-parsing-and-execution-mechanism.md).
 
 ## Status
@@ -67,7 +67,7 @@ Existing primitives do not cover this:
   the bundle namespace and forces the DAG processor to track ephemeral
   state it should not own.
 
-This AIP introduces a first-class **ad-hoc DAG execution** path so a
+This AIP introduces a first-class **ad-hoc Dag submission** path so a
 user can package a DAG file (with optional supporting modules) on their
 laptop, submit it to the API server, and have a worker download, parse,
 and execute it as a one-shot run.
@@ -118,7 +118,7 @@ Special considerations and known difficulties:
 
 ## What change do you propose to make?
 
-Add a `spark-submit`-style ad-hoc DAG execution path to Airflow:
+Add a `spark-submit`-style ad-hoc Dag submission path to Airflow:
 
 - A new `airflow submit <entry_file> [--param key=value ...]
   [--watch / --no-watch]` CLI in the Task SDK / CLI, with the same

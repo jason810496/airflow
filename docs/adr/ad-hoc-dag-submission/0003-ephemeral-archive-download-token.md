@@ -39,7 +39,7 @@ Date: 2026-05-10
 ## Status
 
 Proposed. Builds on
-[1. Ad-hoc DAG execution](./0001-ad-hoc-dag-execution.md) and
+[1. Ad-hoc Dag submission](./0001-ad-hoc-dag-submission.md) and
 [2. Parsing and execution mechanism](./0002-parsing-and-execution-mechanism.md).
 
 ## Context

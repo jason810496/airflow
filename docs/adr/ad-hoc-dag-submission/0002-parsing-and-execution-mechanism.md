@@ -41,12 +41,12 @@ Date: 2026-05-03
 ## Status
 
 Proposed. Builds on
-[1. Ad-hoc DAG execution](./0001-ad-hoc-dag-execution.md).
+[1. Ad-hoc Dag submission](./0001-ad-hoc-dag-submission.md).
 
 ## Context
 
-ADR 0001 establishes that we want a `spark-submit`-style ad-hoc DAG
-execution path and sketches a submission lifecycle, a `Submission`
+ADR 0001 establishes that we want a `spark-submit`-style ad-hoc Dag
+submission path and sketches a submission lifecycle, a `Submission`
 data model, and a REST surface. That ADR is deliberately broad: it
 spans data model, lifecycle, RBAC, retention, UI, and staging.
 

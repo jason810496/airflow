@@ -17,10 +17,10 @@
  under the License.
  -->
 
-# Ad-hoc DAG execution: functional requirements and required changes
+# Ad-hoc Dag submission: functional requirements and required changes
 
-> Companion to [the AIP](./aip-ad-hoc-dag-execution.md),
-> [ADR 0001](./0001-ad-hoc-dag-execution.md), and
+> Companion to [the AIP](./aip-ad-hoc-dag-submission.md),
+> [ADR 0001](./0001-ad-hoc-dag-submission.md), and
 > [ADR 0002](./0002-parsing-and-execution-mechanism.md).
 >
 > The AIP captures the proposal at the level needed for

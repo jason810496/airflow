@@ -19,7 +19,7 @@
 
 **Table of contents**
 
-- [1. Ad-hoc DAG execution](#1-ad-hoc-dag-execution)
+- [1. Ad-hoc Dag submission](#1-ad-hoc-dag-submission)
   - [Status](#status)
   - [Context](#context)
     - [Motivating use case](#motivating-use-case)
@@ -38,7 +38,7 @@
   - [Open questions](#open-questions)
   - [Note on dag_id collisions between users](#note-on-dag_id-collisions-between-users)
 
-# 1. Ad-hoc DAG execution
+# 1. Ad-hoc Dag submission
 
 Date: 2026-05-03
 
@@ -120,7 +120,7 @@ keep the development loop local. -->
 
 ## Decision
 
-We will introduce a first-class **ad-hoc DAG execution** path. A user
+We will introduce a first-class **ad-hoc Dag submission** path. A user
 can package a DAG file (with optional supporting modules) on their
 local machine, submit it to the API server, and have a worker download,
 parse, and execute it as a one-shot run. The submission is tracked as a

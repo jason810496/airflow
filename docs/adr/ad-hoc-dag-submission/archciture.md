@@ -19,7 +19,7 @@
 
 **Table of contents**
 
-- [Architecture: ad-hoc Dag execution](#architecture-ad-hoc-dag-execution)
+- [Architecture: ad-hoc Dag submission](#architecture-ad-hoc-dag-submission)
   - [Status and scope](#status-and-scope)
   - [Layer 1: Metadata DB](#layer-1-metadata-db)
     - [`submission` table](#submission-table)
@@ -47,20 +47,20 @@
   - [Layer 10: UI (minimal)](#layer-10-ui-minimal)
   - [End-to-end call graph](#end-to-end-call-graph)
 
-# Architecture: ad-hoc Dag execution
+# Architecture: ad-hoc Dag submission
 
 Date: 2026-05-10
 
 ## Status and scope
 
 This document is the implementation-side architectural spec for ad-hoc
-Dag execution. It enumerates only the changes Airflow core has to
+Dag submission. It enumerates only the changes Airflow core has to
 ship, organised bottom-up from the metadata DB through the worker
 runtime to the user-facing CLI. Rationale, alternatives considered,
 and the broader proposal live in:
 
-- [AIP](./aip-ad-hoc-dag-execution.md)
-- [ADR 0001 — feature scope](./0001-ad-hoc-dag-execution.md)
+- [AIP](./aip-ad-hoc-dag-submission.md)
+- [ADR 0001 — feature scope](./0001-ad-hoc-dag-submission.md)
 - [ADR 0002 — parsing/execution mechanism](./0002-parsing-and-execution-mechanism.md)
 - [ADR 0003 — ephemeral archive-download token](./0003-ephemeral-archive-download-token.md)
 - [Functional requirements](./requirements-and-changes.md)
