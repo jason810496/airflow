@@ -258,13 +258,66 @@ The CLI side is light:
 
 ### User-facing CLI shape
 
-A minimal first cut, deliberately leaving polish for a follow-up:
+`airflow submit` deliberately mirrors the `spark-submit` family of
+"submit local code to a remote cluster" tools. Those tools converge on
+the same handful of concerns — name an entry point, ship the local
+code, pass parameters, target compute, and choose whether to wait — but
+differ in how much they put on the command line. Flag names below
+reflect each tool's current official CLI docs:
+
+| Purpose | `spark-submit` | `ray job submit` | `pyflyte run` | `sky launch` | `sbatch` | `airflow submit` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Entry point | `app.py` / `--class` | `-- python x.py` | `FILE.py ENTITY` | YAML / inline | `script.sh` | `<entry_file>` |
+| Ship local code | `--py-files` `--files` `--archives` | `--working-dir` | `--copy all` | `--workdir` | shared FS | auto-discovery + `--include` |
+| Root / working dir | — | `--working-dir` | copy root | `--workdir` | `-D/--chdir` | `--project-dir` |
+| Parameters / inputs | app args | args after `--` | `--<input>` | YAML / `--env` | script args | `--conf <json>` |
+| Environment vars | `--conf …executorEnv` | runtime-env `env_vars` | `--env` | `--env` / `--env-file` | `--export` | via `--conf` |
+| Target / queue | `--master` `--queue` | `--address` | `--remote -p -d` | `--infra` `--cluster` | `-p/--partition` | `--queue` |
+| Compute resources | `--executor-memory` `--num-executors` | `--entrypoint-num-gpus` | `--resource-requests` | `--gpus` `--cpus` | `--gres=gpu` `--mem` | from the DAG + `--queue` |
+| Name / identity | `--name` | `--submission-id` | `--name` | `-n/--name` | `-J/--job-name` | `--run-id` |
+| Wait / detach | `--deploy-mode` | `--no-wait` | `--wait` | `-d/--detach-run` | `--wait` | `--watch / --no-watch` |
+
+The proposed first-cut flag set borrows a flag only where it maps
+cleanly onto an Airflow-native verb (`conf`, queue, DAG):
 
 ```
 airflow submit <entry_file>
-    [--param key=value ...]     # forwarded to the user DAG run
-    [--watch / --no-watch]      # stream logs (default on)
+
+  # local code to ship
+  --project-dir <dir>     root to discover and pack local imports from
+                          (default: the entry file's directory)
+  --include <path>        extra file or directory to add to the archive; repeatable
+                          (runtime imports or data files the static walker misses)
+  --exclude <glob>        path to omit from the archive; repeatable
+
+  # parameters
+  --conf <json>           JSON string forwarded to the user DAG run's conf
+                          (same flag as `airflow dags trigger`)
+
+  # target & identity
+  --queue <name>          executor queue to dispatch the workload to
+  --run-id <id>           run id for the workload DAG run (as in `airflow dags trigger`)
+
+  # lifecycle
+  --watch / --no-watch    stream the workload's logs and exit on its result (default: --watch)
+  --timeout <duration>    stop watching after this long (does not cancel the run)
 ```
+
+Two purposes are deliberately **not** turned into flags, because Airflow
+already owns them elsewhere:
+
+- **Which Airflow to talk to.** The target API server comes from the
+  existing CLI / airflow-ctl configuration (config file or environment),
+  the same way `ray job submit` reads `RAY_ADDRESS` and `spark-submit`
+  takes `--master`. There is no per-command `--server` flag.
+- **Compute resources and third-party dependencies.** CPU, GPU, and
+  memory are expressed in the DAG itself (operator arguments,
+  `executor_config`, pools), and third-party packages come from the
+  worker image — the same model every bundle-backed DAG already uses.
+  `airflow submit` therefore exposes only `--queue` as the compute
+  target and does **not** replicate `--gpus` / `--cpus` / `--memory`,
+  which would create a second, conflicting resource model. `--include`
+  ships first-party local modules; it is not a dependency installer.
 
 The same operations are exposed in airflow-ctl as REST clients, since
 the submission, registration, and DagRun-watching are all REST calls.

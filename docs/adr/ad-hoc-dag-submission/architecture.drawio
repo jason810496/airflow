@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram id="page-architecture" name="1 - Architecture (layers)">
-        <mxGraphModel dx="1862" dy="0" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1220" math="0" shadow="0">
+        <mxGraphModel dx="1862" dy="539" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="1220" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -55,7 +55,7 @@
                 <mxCell id="ep_parsed" value="POST /execution/dags/parsed&lt;br&gt;only ADHOC insert path · provenance + authz" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
                     <mxGeometry x="40" y="45" width="330" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="ep_token" value="POST …/archive_download_token&lt;br&gt;ephemeral presigned GET (ADR 0003)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
+                <mxCell id="ep_token" value="POST …/archive_download_token&lt;br&gt;ephemeral presigned GET (short-TTL token)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
                     <mxGeometry x="400" y="45" width="360" height="55" as="geometry"/>
                 </mxCell>
                 <mxCell id="ep_get" value="GET /execution/submissions/{id}&lt;br&gt;archive_uri, entry_file, conf, state…" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="tier_exec" vertex="1">
@@ -216,7 +216,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="page-flow" name="2 - End-to-end flow">
-        <mxGraphModel dx="660" dy="770" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="1360" math="0" shadow="0">
+        <mxGraphModel dx="727" dy="539" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="1360" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -405,7 +405,7 @@
         </mxGraphModel>
     </diagram>
     <diagram id="page-motivation" name="3 - Motivation">
-        <mxGraphModel dx="462" dy="539" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="620" math="0" shadow="0">
+        <mxGraphModel dx="1118" dy="829" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="620" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -421,7 +421,7 @@
                 <mxCell id="m3" value="Tamper-proof authorization&lt;br&gt;&lt;br&gt;Each endpoint binds caller dag_run_id to parsing / cancellation_dag_run_id. Workload is never authorized; a forged submission_id is useless." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
                     <mxGeometry x="660" y="90" width="290" height="160" as="geometry"/>
                 </mxCell>
-                <mxCell id="m4" value="Never persist the credential&lt;br&gt;&lt;br&gt;Archive-download URL minted on demand, short TTL, never stored on the row, never logged, never on XCom (ADR 0003)." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                <mxCell id="m4" value="Never persist the credential&lt;br&gt;&lt;br&gt;Archive-download URL minted on demand, short TTL, never stored on the row, never logged, never on XCom." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
                     <mxGeometry x="970" y="90" width="290" height="160" as="geometry"/>
                 </mxCell>
                 <mxCell id="m5" value="Provenance separation&lt;br&gt;&lt;br&gt;DagModel.provenance BUNDLE vs ADHOC. Default listings filter to BUNDLE; a bundle Dag is never shadowed by ad-hoc (FR-11 / 12 / 13)." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
@@ -430,13 +430,13 @@
                 <mxCell id="m6" value="Dag-version pinning&lt;br&gt;&lt;br&gt;Workload runs the exact serialised version this submission produced, even under concurrent re-submits of the same dag_id." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
                     <mxGeometry x="350" y="290" width="290" height="160" as="geometry"/>
                 </mxCell>
-                <mxCell id="m7" value="Ships as its own distribution&lt;br&gt;&lt;br&gt;apache-airflow-system-dags keeps core lean; loaded via an undeletable system bundle, not a filesystem scan." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                <mxCell id="m7" value="Pre-written Dags, exposed via a bundle&lt;br&gt;&lt;br&gt;Orchestrator and canceller are ordinary Dag files shipped in an Airflow distribution; a deployment registers a LocalDagBundle pointing at the packaged path. No bespoke dispatcher." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
                     <mxGeometry x="660" y="290" width="290" height="160" as="geometry"/>
                 </mxCell>
                 <mxCell id="m8" value="Reuse, don&#39;t reinvent&lt;br&gt;&lt;br&gt;get_fs() (fsspec), SerializedDagModel write path, TriggerDagRunOperator (OPERATOR_TRIGGERED). No new transport, DagRunType, or worker bootstrap." style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;spacingTop=8;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
                     <mxGeometry x="970" y="290" width="290" height="160" as="geometry"/>
                 </mxCell>
-                <mxCell id="p3_ref" value="References: AIP · ADR 0001 (scope) · ADR 0002 (parsing/execution) · ADR 0003 (ephemeral token) · requirements-and-changes.md" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontStyle=2;" parent="1" vertex="1">
+                <mxCell id="p3_ref" value="Eight design principles behind ad-hoc Dag submission, grouped by concern (security, data &amp; flow, packaging, provenance)." style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=12;fontStyle=2;" parent="1" vertex="1">
                     <mxGeometry x="40" y="480" width="1220" height="30" as="geometry"/>
                 </mxCell>
             </root>

@@ -63,8 +63,8 @@ issues, and tests can reference them directly.
   cancellation tears down the user DagRun (if running) and cleans up
   the archive. The cancellation flow itself is implemented as a system
   DAG (see `FR-25`) so its execution carries logs and an audit trail.
-- **FR-8 — Forwarded parameters.** `--param key=value ...` flags are
-  forwarded as the user DagRun's `conf`.
+- **FR-8 — Forwarded parameters.** `--conf <json>` (the same flag as
+  `airflow dags trigger`) is forwarded as the user DagRun's `conf`.
 - **FR-9 — Watch mode.** `--watch` (default on) streams the user
   DagRun's task logs to the CLI and exits with a non-zero status if
   the run fails. `--no-watch` returns immediately after triggering.
@@ -334,8 +334,8 @@ than an open-ended JSON dump.
 ### CLI
 
 - New `airflow submit <entry_file>` command in the Task SDK / CLI
-  (`airflow-core/src/airflow/cli/`) with flags `--param`, `--watch`,
-  `--no-watch`, plus a way to add explicit files (FR-3).
+  (`airflow-core/src/airflow/cli/`) with flags `--conf`, `--run-id`,
+  `--watch`, `--no-watch`, plus a way to add explicit files (FR-3).
 - Local dependency-discovery utility (`ast` walker +
   `importlib.util.find_spec` resolver).
 - Archive packing (zip) and presigned-upload client.
