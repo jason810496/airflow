@@ -61,9 +61,18 @@ configure<SpotlessExtension> {
 // reference would resolve relative to whichever subproject applies the plugin,
 // not the multi-project root where LICENSE/NOTICE actually live.
 tasks.withType<Jar>().configureEach {
+    val legalFiles = listOf("LICENSE", "NOTICE").map { rootProject.layout.projectDirectory.file(it) }
     metaInf {
-        from(rootProject.layout.projectDirectory.file("LICENSE"))
-        from(rootProject.layout.projectDirectory.file("NOTICE"))
+        legalFiles.forEach { from(it) }
+    }
+    // Gradle copy specs silently skip missing sources, which would reproduce the exact
+    // ASF-policy violation this block exists to prevent — fail loudly instead.
+    doFirst {
+        legalFiles.forEach {
+            check(it.asFile.isFile) {
+                "${it.asFile} is missing: ASF release policy requires it in every jar's META-INF"
+            }
+        }
     }
 }
 

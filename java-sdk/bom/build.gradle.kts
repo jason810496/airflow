@@ -25,15 +25,24 @@ plugins {
 val projectVersion: String by project
 val airflowSupervisorSchemaVersion: String by project
 
+// The constraints are derived from the sibling subprojects instead of being listed by
+// hand: a hand-written list silently drifted once already (airflow-sdk-jpl was missing,
+// an RC2 vote blocker). `evaluationDependsOn` forces the siblings to be configured
+// first, since `bom` is evaluated before them and their `artifactId`s are only set in
+// their own `publishing {}` blocks. The groupId filter drops the Gradle plugin-marker
+// publication, which is consumed via the `plugins {}` DSL and does not belong in a BOM.
+val publishedSiblings = rootProject.subprojects.filter { it.name != project.name }
+publishedSiblings.forEach { evaluationDependsOn(it.path) }
+
 dependencies {
     constraints {
-        api("org.apache.airflow:airflow-sdk:$projectVersion")
-        api("org.apache.airflow:airflow-sdk-gradle-plugin:$projectVersion")
-        api("org.apache.airflow:airflow-sdk-jpl:$projectVersion")
-        api("org.apache.airflow:airflow-sdk-jul:$projectVersion")
-        api("org.apache.airflow:airflow-sdk-log4j2:$projectVersion")
-        api("org.apache.airflow:airflow-sdk-processor:${projectVersion}")
-        api("org.apache.airflow:airflow-sdk-slf4j:$projectVersion")
+        publishedSiblings
+            .filter { it.plugins.hasPlugin("airflow-publish") }
+            .flatMap { it.extensions.getByType<PublishingExtension>().publications.withType<MavenPublication>() }
+            .filter { it.groupId == "org.apache.airflow" }
+            .distinctBy { it.artifactId }
+            .sortedBy { it.artifactId }
+            .forEach { api("${it.groupId}:${it.artifactId}:$projectVersion") }
     }
 }
 
