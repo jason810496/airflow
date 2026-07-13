@@ -22,6 +22,20 @@
 //
 // Re-run with: pnpm run generate:supervisor
 
+/**
+ * Language-neutral value type a stub-task argument binds to in the foreign runtime.
+ *
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "ArgBindingDataType".
+ */
+export type ArgBindingDataType =
+  | "string"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "any";
 export type Name = string;
 export type Id = number;
 export type Timestamp = string;
@@ -246,10 +260,37 @@ export type XcomKeysToClear = string[];
 export type ShouldRetry = boolean;
 export type StartDate2 = string | null;
 export type ArgBindings = TaskArgBinding[] | null;
-export type Kind = "xcom" | "literal";
-export type DataType = "string" | "integer" | "number" | "boolean" | "object" | "array" | "any";
-export type TaskId1 = string | null;
+/**
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "TaskArgBinding".
+ */
+export type TaskArgBinding = XComArgBinding | LiteralArgBinding;
+export type Kind = "xcom";
+/**
+ * Language-neutral value type a stub-task argument binds to in the foreign runtime.
+ */
+export type ArgBindingDataType1 =
+  | "string"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "any";
+export type TaskId1 = string;
 export type Key1 = string;
+export type Kind1 = "literal";
+/**
+ * Language-neutral value type a stub-task argument binds to in the foreign runtime.
+ */
+export type ArgBindingDataType2 =
+  | "string"
+  | "integer"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "any";
 export type Type13 = "TaskCallbackRequest";
 export type Filepath2 = string;
 export type BundleName3 = string;
@@ -299,11 +340,6 @@ export type Note1 = string | null;
 export type TeamName1 = string | null;
 export type Type18 = "DagRunResult";
 export type Type19 = "DagRunStateResult";
-/**
- * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "DataType".
- */
-export type DataType1 = "string" | "integer" | "number" | "boolean" | "object" | "array" | "any";
 export type State2 = "deferred" | null;
 export type Classpath = string;
 export type TriggerKwargs =
@@ -504,11 +540,6 @@ export type AssignedUsers1 = HITLUser[] | null;
 export type Type54 = "HITLDetailRequestResult";
 export type InactiveAssets = AssetProfile[] | null;
 export type Type55 = "InactiveAssetsResult";
-/**
- * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "Kind".
- */
-export type Kind1 = "xcom" | "literal";
 export type Name12 = string | null;
 export type Type56 = "MaskSecret";
 export type Ok = boolean;
@@ -1043,19 +1074,26 @@ export interface ConnectionResponse {
   extra: Extra6;
 }
 /**
- * One positional argument of a stub (foreign-runtime) task, in declaration order.
- *
- * A deliberately flat shape (``kind`` discriminates instead of a union) so the JSON schema
- * generates a plain struct in the foreign-language SDKs consuming the supervisor schema.
+ * One positional stub-task argument pulled from an upstream task's XCom.
  *
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "TaskArgBinding".
+ * via the `definition` "XComArgBinding".
  */
-export interface TaskArgBinding {
+export interface XComArgBinding {
   kind: Kind;
-  data_type?: DataType;
-  task_id?: TaskId1;
+  data_type?: ArgBindingDataType1;
+  task_id: TaskId1;
   key?: Key1;
+}
+/**
+ * One positional stub-task argument carrying an inline literal from the Dag file.
+ *
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "LiteralArgBinding".
+ */
+export interface LiteralArgBinding {
+  kind: Kind1;
+  data_type?: ArgBindingDataType2;
   value?: unknown;
 }
 /**

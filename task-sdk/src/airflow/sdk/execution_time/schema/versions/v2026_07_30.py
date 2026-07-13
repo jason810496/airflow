@@ -23,7 +23,12 @@ from airflow.sdk.api.datamodels._generated import TIRunContext
 
 
 class AddArgBindingsToTIRunContext(VersionChange):
-    """Add the ``arg_bindings`` positional-argument binding spec for stub (foreign-runtime) tasks."""
+    """
+    Add the ``arg_bindings`` positional-argument binding spec for stub (foreign-runtime) tasks.
+
+    Each entry is a discriminated union of ``XComArgBinding`` and ``LiteralArgBinding``
+    keyed on ``kind``.
+    """
 
     description = __doc__
 

@@ -52,14 +52,6 @@ import (
 	"github.com/apache/airflow/go-sdk/sdk"
 )
 
-// ArgKind discriminates how one positional argument is sourced.
-type ArgKind string
-
-const (
-	ArgKindXCom    ArgKind = "xcom"
-	ArgKindLiteral ArgKind = "literal"
-)
-
 // DataType is the language-neutral value type the Dag declared for an
 // argument (from the stub function's annotation on the Python side).
 type DataType string
@@ -75,21 +67,41 @@ const (
 )
 
 // Arg is one positional argument for a task function's data parameters, in
-// declaration order. It is a runtime-neutral mirror of the wire model so this
-// package stays decoupled from the generated coordinator schema types.
-type Arg struct {
-	Kind ArgKind
-	// TaskID is the upstream task to pull from. Set only for ArgKindXCom.
+// declaration order: an XComArg or a LiteralArg. A sealed sum type mirroring
+// the wire model's XComArgBinding/LiteralArgBinding split, kept runtime-neutral
+// so this package stays decoupled from the generated coordinator schema types.
+type Arg interface {
+	// DeclaredType is the Dag-declared language-neutral type for the argument;
+	// empty is treated as DataTypeAny.
+	DeclaredType() DataType
+	// sealedArg restricts implementations to this package, keeping
+	// resolveData's type switch the single exhaustive consumer.
+	sealedArg()
+}
+
+// XComArg sources the argument from an upstream task's XCom.
+type XComArg struct {
+	// TaskID is the upstream task to pull from.
 	TaskID string
-	// Key is the XCom key to pull; empty means the return-value key. Set only
-	// for ArgKindXCom.
+	// Key is the XCom key to pull; empty means the return-value key.
 	Key string
-	// Value is the literal value from the Dag file. Set only for ArgKindLiteral.
-	Value any
-	// DataType is the declared type to check the Go parameter against; empty
-	// is treated as DataTypeAny.
+	// DataType is the declared type to check the Go parameter against.
 	DataType DataType
 }
+
+// LiteralArg carries an inline value from the Dag file.
+type LiteralArg struct {
+	// Value is the literal value from the Dag file.
+	Value any
+	// DataType is the declared type to check the Go parameter against.
+	DataType DataType
+}
+
+func (a XComArg) DeclaredType() DataType    { return a.DataType }
+func (a LiteralArg) DeclaredType() DataType { return a.DataType }
+
+func (XComArg) sealedArg()    {}
+func (LiteralArg) sealedArg() {}
 
 // paramKind classifies how a task-function parameter is filled at execution.
 type paramKind int
@@ -201,14 +213,19 @@ func (p *Plan) resolveData(
 	arg Arg,
 	argIdx int,
 ) (reflect.Value, error) {
-	if err := checkDataType(arg.DataType, plan.typ); err != nil {
+	if arg == nil {
+		return reflect.Value{}, fmt.Errorf(
+			"task function %s: argument %d: nil argument binding", p.fnName, argIdx,
+		)
+	}
+	if err := checkDataType(arg.DeclaredType(), plan.typ); err != nil {
 		return reflect.Value{}, fmt.Errorf(
 			"task function %s: argument %d (parameter %d): %w", p.fnName, argIdx, plan.index, err,
 		)
 	}
-	switch arg.Kind {
-	case ArgKindLiteral:
-		v, err := decodeValue(arg.Value, plan.typ)
+	switch a := arg.(type) {
+	case LiteralArg:
+		v, err := decodeValue(a.Value, plan.typ)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf(
 				"task function %s: argument %d: decoding literal value into %s: %w",
@@ -216,7 +233,7 @@ func (p *Plan) resolveData(
 			)
 		}
 		return v, nil
-	case ArgKindXCom:
+	case XComArg:
 		workload, ok := ctx.Value(sdkcontext.WorkloadContextKey).(api.ExecuteTaskWorkload)
 		if !ok {
 			return reflect.Value{}, fmt.Errorf(
@@ -224,30 +241,30 @@ func (p *Plan) resolveData(
 				p.fnName, argIdx,
 			)
 		}
-		key := arg.Key
+		key := a.Key
 		if key == "" {
 			key = api.XComReturnValueKey
 		}
 		// Pull from the upstream's unmapped instance (map_index nil); mapped
 		// upstream fan-in is out of scope for now.
-		raw, err := c.GetXCom(ctx, workload.TI.DagId, workload.TI.RunId, arg.TaskID, nil, key, nil)
+		raw, err := c.GetXCom(ctx, workload.TI.DagId, workload.TI.RunId, a.TaskID, nil, key, nil)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf(
 				"task function %s: argument %d: pulling xcom from task %q (key %q): %w",
-				p.fnName, argIdx, arg.TaskID, key, err,
+				p.fnName, argIdx, a.TaskID, key, err,
 			)
 		}
 		v, err := decodeValue(raw, plan.typ)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf(
 				"task function %s: argument %d: decoding xcom from task %q into %s: %w",
-				p.fnName, argIdx, arg.TaskID, plan.typ, err,
+				p.fnName, argIdx, a.TaskID, plan.typ, err,
 			)
 		}
 		return v, nil
 	default:
 		return reflect.Value{}, fmt.Errorf(
-			"task function %s: argument %d: unknown argument kind %q", p.fnName, argIdx, arg.Kind,
+			"task function %s: argument %d: unsupported argument binding %T", p.fnName, argIdx, arg,
 		)
 	}
 }

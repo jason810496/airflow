@@ -3,6 +3,20 @@
   "api_version": "2026-07-30",
   "description": "Apache Airflow SDK Supervisor Schema",
   "$defs": {
+    "ArgBindingDataType": {
+      "description": "Language-neutral value type a stub-task argument binds to in the foreign runtime.",
+      "enum": [
+        "string",
+        "integer",
+        "number",
+        "boolean",
+        "object",
+        "array",
+        "any"
+      ],
+      "title": "ArgBindingDataType",
+      "type": "string"
+    },
     "AssetAliasReferenceAssetEventDagRun": {
       "additionalProperties": false,
       "description": "Schema for AssetAliasModel used in AssetEventDagRunReference.",
@@ -1393,19 +1407,6 @@
         "asset_materialization"
       ],
       "title": "DagRunType",
-      "type": "string"
-    },
-    "DataType": {
-      "enum": [
-        "string",
-        "integer",
-        "number",
-        "boolean",
-        "object",
-        "array",
-        "any"
-      ],
-      "title": "DataType",
       "type": "string"
     },
     "DeferTask": {
@@ -3011,14 +3012,6 @@
       "type": "object"
     },
     "JsonValue": {},
-    "Kind": {
-      "enum": [
-        "xcom",
-        "literal"
-      ],
-      "title": "Kind",
-      "type": "string"
-    },
     "LazyDeserializedDAG": {
       "description": "Lazily build information from the serialized DAG structure.\n\nAn object that will present \"enough\" of the DAG like interface to update DAG db models etc, without having\nto deserialize the full DAG and Task hierarchy.",
       "properties": {
@@ -4536,6 +4529,83 @@
       "title": "ConnectionResponse",
       "type": "object"
     },
+    "LiteralArgBinding": {
+      "description": "One positional stub-task argument carrying an inline literal from the Dag file.",
+      "properties": {
+        "kind": {
+          "const": "literal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "data_type": {
+          "$ref": "#/$defs/ArgBindingDataType",
+          "default": "any"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "LiteralArgBinding",
+      "type": "object"
+    },
+    "TaskArgBinding": {
+      "discriminator": {
+        "mapping": {
+          "literal": "#/$defs/LiteralArgBinding",
+          "xcom": "#/$defs/XComArgBinding"
+        },
+        "propertyName": "kind"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/XComArgBinding"
+        },
+        {
+          "$ref": "#/$defs/LiteralArgBinding"
+        }
+      ],
+      "title": "TaskArgBinding"
+    },
+    "XComArgBinding": {
+      "description": "One positional stub-task argument pulled from an upstream task's XCom.",
+      "properties": {
+        "kind": {
+          "const": "xcom",
+          "title": "Kind",
+          "type": "string"
+        },
+        "data_type": {
+          "$ref": "#/$defs/ArgBindingDataType",
+          "default": "any"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "key": {
+          "default": "return_value",
+          "title": "Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "task_id"
+      ],
+      "title": "XComArgBinding",
+      "type": "object"
+    },
     "AssetEventDagRunReference": {
       "additionalProperties": false,
       "description": "Schema for AssetEvent model used in DagRun.",
@@ -4921,66 +4991,6 @@
         "max_tries"
       ],
       "title": "TIRunContext",
-      "type": "object"
-    },
-    "TaskArgBinding": {
-      "description": "One positional argument of a stub (foreign-runtime) task, in declaration order.\n\nA deliberately flat shape (``kind`` discriminates instead of a union) so the JSON schema\ngenerates a plain struct in the foreign-language SDKs consuming the supervisor schema.",
-      "properties": {
-        "kind": {
-          "enum": [
-            "xcom",
-            "literal"
-          ],
-          "title": "Kind",
-          "type": "string"
-        },
-        "data_type": {
-          "default": "any",
-          "enum": [
-            "string",
-            "integer",
-            "number",
-            "boolean",
-            "object",
-            "array",
-            "any"
-          ],
-          "title": "Data Type",
-          "type": "string"
-        },
-        "task_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Task Id"
-        },
-        "key": {
-          "default": "return_value",
-          "title": "Key",
-          "type": "string"
-        },
-        "value": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/JsonValue"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "title": "TaskArgBinding",
       "type": "object"
     },
     "TaskInstance": {

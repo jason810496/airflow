@@ -91,9 +91,10 @@ def _build_arg_bindings(
     """
     Bind the TaskFlow call arguments to the stub signature and build the ordered arg spec.
 
-    Each spec entry is a plain dict matching the execution API ``TaskArgBinding`` shape: an XCom
-    reference (``kind="xcom"``) for upstream TaskFlow outputs, or an inline value
-    (``kind="literal"``) for everything else. Returns ``None`` for parameterless stubs.
+    Each spec entry is a plain dict matching one variant of the execution API's
+    ``TaskArgBinding`` union: an ``XComArgBinding`` (``kind="xcom"``) for upstream TaskFlow
+    outputs, or a ``LiteralArgBinding`` (``kind="literal"``) for everything else. Returns
+    ``None`` for parameterless stubs.
     """
     signature = inspect.signature(python_callable)
 

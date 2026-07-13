@@ -30,6 +30,20 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, Roo
 API_VERSION: Final[str] = "2026-06-30"
 
 
+class ArgBindingDataType(str, Enum):
+    """
+    Language-neutral value type a stub-task argument binds to in the foreign runtime.
+    """
+
+    STRING = "string"
+    INTEGER = "integer"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    OBJECT = "object"
+    ARRAY = "array"
+    ANY = "any"
+
+
 class AssetAliasReferenceAssetEventDagRun(BaseModel):
     """
     Schema for AssetAliasModel used in AssetEventDagRunReference.
@@ -218,6 +232,16 @@ class IntermediateTIState(str, Enum):
     AWAITING_INPUT = "awaiting_input"
 
 
+class LiteralArgBinding(BaseModel):
+    """
+    One positional stub-task argument carrying an inline literal from the Dag file.
+    """
+
+    kind: Annotated[Literal["literal"], Field(title="Kind")]
+    data_type: ArgBindingDataType | None = ArgBindingDataType.ANY
+    value: JsonValue | None = None
+
+
 class PrevSuccessfulDagRunResponse(BaseModel):
     """
     Schema for response with previous successful DagRun information for Task Template Context.
@@ -371,36 +395,6 @@ class TITargetStatePayload(BaseModel):
     state: IntermediateTIState
 
 
-class Kind(str, Enum):
-    XCOM = "xcom"
-    LITERAL = "literal"
-
-
-class DataType(str, Enum):
-    STRING = "string"
-    INTEGER = "integer"
-    NUMBER = "number"
-    BOOLEAN = "boolean"
-    OBJECT = "object"
-    ARRAY = "array"
-    ANY = "any"
-
-
-class TaskArgBinding(BaseModel):
-    """
-    One positional argument of a stub (foreign-runtime) task, in declaration order.
-
-    A deliberately flat shape (``kind`` discriminates instead of a union) so the JSON schema
-    generates a plain struct in the foreign-language SDKs consuming the supervisor schema.
-    """
-
-    kind: Annotated[Kind, Field(title="Kind")]
-    data_type: Annotated[DataType | None, Field(title="Data Type")] = DataType.ANY
-    task_id: Annotated[str | None, Field(title="Task Id")] = None
-    key: Annotated[str | None, Field(title="Key")] = "return_value"
-    value: JsonValue | None = None
-
-
 class TaskBreadcrumbsResponse(BaseModel):
     """
     Response for task breadcrumbs.
@@ -541,6 +535,17 @@ class VariableResponse(BaseModel):
     )
     key: Annotated[str, Field(title="Key")]
     value: Annotated[str | None, Field(title="Value")] = None
+
+
+class XComArgBinding(BaseModel):
+    """
+    One positional stub-task argument pulled from an upstream task's XCom.
+    """
+
+    kind: Annotated[Literal["xcom"], Field(title="Kind")]
+    data_type: ArgBindingDataType | None = ArgBindingDataType.ANY
+    task_id: Annotated[str, Field(title="Task Id")]
+    key: Annotated[str | None, Field(title="Key")] = "return_value"
 
 
 class XComResponse(BaseModel):
@@ -738,6 +743,10 @@ class TITerminalStatePayload(BaseModel):
     state: TerminalStateNonSuccess
     end_date: Annotated[AwareDatetime, Field(title="End Date")]
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
+
+
+class TaskArgBinding(RootModel[XComArgBinding | LiteralArgBinding]):
+    root: Annotated[XComArgBinding | LiteralArgBinding, Field(discriminator="kind", title="TaskArgBinding")]
 
 
 class AssetEventDagRunReference(BaseModel):

@@ -20,6 +20,16 @@ package genmodels
 
 import "time"
 
+type ArgBindingDataType string
+
+const ArgBindingDataTypeAny ArgBindingDataType = "any"
+const ArgBindingDataTypeArray ArgBindingDataType = "array"
+const ArgBindingDataTypeBoolean ArgBindingDataType = "boolean"
+const ArgBindingDataTypeInteger ArgBindingDataType = "integer"
+const ArgBindingDataTypeNumber ArgBindingDataType = "number"
+const ArgBindingDataTypeObject ArgBindingDataType = "object"
+const ArgBindingDataTypeString ArgBindingDataType = "string"
+
 type ArgBindings []TaskArgBinding
 
 // Schema for AssetAliasModel used in AssetEventDagRunReference.
@@ -634,16 +644,6 @@ const DagRunTypeScheduled DagRunType = "scheduled"
 
 type Data map[string]interface{}
 
-type DataType string
-
-const DataTypeAny DataType = "any"
-const DataTypeArray DataType = "array"
-const DataTypeBoolean DataType = "boolean"
-const DataTypeInteger DataType = "integer"
-const DataTypeNumber DataType = "number"
-const DataTypeObject DataType = "object"
-const DataTypeString DataType = "string"
-
 type Defaults []string
 
 // Update a task instance state to deferred.
@@ -1250,11 +1250,6 @@ type InactiveAssetsResult struct {
 
 type JsonValue interface{}
 
-type Kind string
-
-const KindLiteral Kind = "literal"
-const KindXcom Kind = "xcom"
-
 // Lazily build information from the serialized DAG structure.
 //
 // An object that will present "enough" of the DAG like interface to update DAG db
@@ -1266,6 +1261,18 @@ type LazyDeserializedDAG struct {
 
 	// LastLoaded corresponds to the JSON schema field "last_loaded".
 	LastLoaded interface{} `msgpack:"last_loaded,omitempty"`
+}
+
+// One positional stub-task argument carrying an inline literal from the Dag file.
+type LiteralArgBinding struct {
+	// DataType corresponds to the JSON schema field "data_type".
+	DataType ArgBindingDataType `msgpack:"data_type,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value interface{} `msgpack:"value,omitempty"`
 }
 
 type LogicalDates []time.Time
@@ -1628,43 +1635,7 @@ type TIRunContext struct {
 	XcomKeysToClear []string `msgpack:"xcom_keys_to_clear,omitempty"`
 }
 
-// One positional argument of a stub (foreign-runtime) task, in declaration order.
-//
-// A deliberately flat shape (“kind“ discriminates instead of a union) so the
-// JSON schema
-// generates a plain struct in the foreign-language SDKs consuming the supervisor
-// schema.
-type TaskArgBinding struct {
-	// DataType corresponds to the JSON schema field "data_type".
-	DataType TaskArgBindingDataType `msgpack:"data_type,omitempty"`
-
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key,omitempty"`
-
-	// Kind corresponds to the JSON schema field "kind".
-	Kind TaskArgBindingKind `msgpack:"kind"`
-
-	// TaskID corresponds to the JSON schema field "task_id".
-	TaskID interface{} `msgpack:"task_id,omitempty"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value interface{} `msgpack:"value,omitempty"`
-}
-
-type TaskArgBindingDataType string
-
-const TaskArgBindingDataTypeAny TaskArgBindingDataType = "any"
-const TaskArgBindingDataTypeArray TaskArgBindingDataType = "array"
-const TaskArgBindingDataTypeBoolean TaskArgBindingDataType = "boolean"
-const TaskArgBindingDataTypeInteger TaskArgBindingDataType = "integer"
-const TaskArgBindingDataTypeNumber TaskArgBindingDataType = "number"
-const TaskArgBindingDataTypeObject TaskArgBindingDataType = "object"
-const TaskArgBindingDataTypeString TaskArgBindingDataType = "string"
-
-type TaskArgBindingKind string
-
-const TaskArgBindingKindLiteral TaskArgBindingKind = "literal"
-const TaskArgBindingKindXcom TaskArgBindingKind = "xcom"
+type TaskArgBinding interface{}
 
 type TaskBreadcrumbsResult struct {
 	// Breadcrumbs corresponds to the JSON schema field "breadcrumbs".
@@ -1865,19 +1836,6 @@ type UpdateHITLDetail struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value interface{} `msgpack:"value"`
-}
-
-type Warnings []interface{}
-
-type VersionData map[string]interface{}
-
 type ValidateInletsAndOutlets struct {
 	// TIID corresponds to the JSON schema field "ti_id".
 	TIID string `msgpack:"ti_id"`
@@ -1897,6 +1855,19 @@ type VariableKeysResult struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value interface{} `msgpack:"value"`
+}
+
+type VersionData map[string]interface{}
+
+type Warnings []interface{}
+
 type VariableResult struct {
 	// Key corresponds to the JSON schema field "key".
 	Key string `msgpack:"key"`
@@ -1906,6 +1877,21 @@ type VariableResult struct {
 
 	// Value corresponds to the JSON schema field "value".
 	Value interface{} `msgpack:"value,omitempty"`
+}
+
+// One positional stub-task argument pulled from an upstream task's XCom.
+type XComArgBinding struct {
+	// DataType corresponds to the JSON schema field "data_type".
+	DataType ArgBindingDataType `msgpack:"data_type,omitempty"`
+
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// TaskID corresponds to the JSON schema field "task_id".
+	TaskID string `msgpack:"task_id"`
 }
 
 type XComCountResponse struct {
