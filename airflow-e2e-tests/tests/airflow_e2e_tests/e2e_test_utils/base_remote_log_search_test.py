@@ -26,10 +26,13 @@ from airflow_e2e_tests.e2e_test_utils.clients import AirflowClient, create_reque
 
 class BaseRemoteLoggingSearchTest:
     """
-    Base class for remote logging e2e tests against search backends (Elasticsearch, OpenSearch).
+    Base class for remote logging e2e tests.
 
-    Subclasses must set:
+    Subclasses against search backends (Elasticsearch, OpenSearch) must set:
         - ``search_url``: base URL of the search backend, e.g. ``"http://localhost:9200"``
+
+    Subclasses against other backends (e.g. S3) override ``_wait_for_matching_logs``
+    (and optionally ``_assert_task_logs_content``) instead.
     """
 
     airflow_client = AirflowClient()
@@ -56,24 +59,13 @@ class BaseRemoteLoggingSearchTest:
             and self.expected_message in log_message
         )
 
-    def test_remote_logging(self):
-        """Test that a DAG using remote logging to the search backend completes successfully."""
-        self.airflow_client.un_pause_dag(self.dag_id)
+    def _wait_for_matching_logs(self, run_id: str) -> list:
+        """
+        Poll the remote logging backend until log records for ``run_id`` appear.
 
-        resp = self.airflow_client.trigger_dag(
-            self.dag_id,
-            json={"logical_date": datetime.now(timezone.utc).isoformat()},
-        )
-        run_id = resp["dag_run_id"]
-        state = self.airflow_client.wait_for_dag_run(
-            dag_id=self.dag_id,
-            run_id=run_id,
-        )
-
-        assert state == "success", f"DAG {self.dag_id} did not complete successfully. Final state: {state}"
-
+        Fails the test if nothing matched within ``max_retries`` attempts.
+        """
         session = self._get_session()
-        matching_logs = []
         for _ in range(self.max_retries):
             response = session.post(
                 f"{self.search_url}/{self.target_index}/_search",
@@ -88,15 +80,39 @@ class BaseRemoteLoggingSearchTest:
                 hit["_source"] for hit in hits if self._matches_expected_log(hit["_source"], run_id)
             ]
             if matching_logs:
-                break
+                return matching_logs
             time.sleep(self.retry_interval_in_seconds)
 
-        if not matching_logs:
-            pytest.fail(
-                f"Expected search backend logs for run_id {run_id} in index {self.target_index}, "
-                f"but none contained log_id starting with {self.expected_log_id_prefix!r} and event "
-                f"or message containing {self.expected_message!r}"
-            )
+        pytest.fail(
+            f"Expected search backend logs for run_id {run_id} in index {self.target_index}, "
+            f"but none contained log_id starting with {self.expected_log_id_prefix!r} and event "
+            f"or message containing {self.expected_message!r}"
+        )
+
+    def _assert_task_logs_content(self, task_logs: dict, run_id: str) -> None:
+        """Assert the task logs fetched through the Airflow API contain the expected event."""
+        events = [item.get("event", "") for item in task_logs.get("content", []) if isinstance(item, dict)]
+        assert any(self.expected_message in event for event in events), (
+            f"Expected task logs to contain {self.expected_message!r}, got events: {events}"
+        )
+
+    def test_remote_logging(self):
+        """Test that a DAG using remote logging to the backend completes successfully."""
+        self.airflow_client.un_pause_dag(self.dag_id)
+
+        resp = self.airflow_client.trigger_dag(
+            self.dag_id,
+            json={"logical_date": datetime.now(timezone.utc).isoformat()},
+        )
+        run_id = resp["dag_run_id"]
+        state = self.airflow_client.wait_for_dag_run(
+            dag_id=self.dag_id,
+            run_id=run_id,
+        )
+
+        assert state == "success", f"DAG {self.dag_id} did not complete successfully. Final state: {state}"
+
+        self._wait_for_matching_logs(run_id)
 
         task_logs = self.airflow_client.get_task_logs(
             dag_id=self.dag_id,
@@ -104,10 +120,7 @@ class BaseRemoteLoggingSearchTest:
             run_id=run_id,
         )
 
-        events = [item.get("event", "") for item in task_logs.get("content", []) if isinstance(item, dict)]
-        assert any(self.expected_message in event for event in events), (
-            f"Expected task logs to contain {self.expected_message!r}, got events: {events}"
-        )
+        self._assert_task_logs_content(task_logs, run_id)
 
     def test_remote_logging_error_detail(self):
         """Test that log error_detail is retrieved correctly from the search backend."""
