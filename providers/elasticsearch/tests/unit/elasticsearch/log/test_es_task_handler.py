@@ -880,6 +880,111 @@ class TestElasticsearchRemoteLogIO:
         assert log_source_info == []
         assert f"*** Log {log_id} not found in Elasticsearch" in log_messages[0]
 
+    def test_stream_paginates_lazily_until_no_more_hits(self, ti):
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        page1 = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "line1", "host": "host1", "log_id": log_id, "offset": 1},
+            {"event": "line2", "host": "host1", "log_id": log_id, "offset": 2},
+        )
+        page2 = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "line3", "host": "host1", "log_id": log_id, "offset": 3},
+        )
+
+        with patch.object(
+            self.elasticsearch_io, "_es_read", side_effect=[page1, page2, None]
+        ) as mock_es_read:
+            sources, log_streams = self.elasticsearch_io.stream("", ti)
+
+            assert sources == ["host1"]
+            assert len(log_streams) == 1
+            # Only the eager first page is fetched before the stream is consumed.
+            assert mock_es_read.call_count == 1
+
+            events = [json.loads(line)["event"] for line in log_streams[0]]
+
+        assert events == ["line1", "line2", "line3"]
+        assert mock_es_read.call_count == 3
+        assert [call.args[1] for call in mock_es_read.call_args_list] == [0, 2, 3]
+
+    def test_stream_yields_hits_of_all_hosts_in_offset_order(self, ti):
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        page = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "a", "host": "host1", "log_id": log_id, "offset": 1},
+            {"event": "b", "host": "host2", "log_id": log_id, "offset": 2},
+        )
+
+        with patch.object(self.elasticsearch_io, "_es_read", side_effect=[page, None]):
+            sources, log_streams = self.elasticsearch_io.stream("", ti)
+            events = [json.loads(line)["event"] for line in log_streams[0]]
+
+        assert sources == ["host1", "host2"]
+        assert events == ["a", "b"]
+
+    def test_stream_paginates_with_custom_offset_field(self, ti):
+        self.elasticsearch_io.offset_field = "log.offset"
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        page = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "a", "host": "host1", "log_id": log_id, "log": {"offset": 7}},
+        )
+
+        with patch.object(self.elasticsearch_io, "_es_read", side_effect=[page, None]) as mock_es_read:
+            _, log_streams = self.elasticsearch_io.stream("", ti)
+            events = [json.loads(line)["event"] for line in log_streams[0]]
+
+        assert events == ["a"]
+        assert [call.args[1] for call in mock_es_read.call_args_list] == [0, 7]
+
+    def test_stream_stops_when_hits_have_no_offset(self, ti):
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        page = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "a", "host": "host1", "log_id": log_id},
+        )
+
+        with patch.object(self.elasticsearch_io, "_es_read", side_effect=[page]) as mock_es_read:
+            _, log_streams = self.elasticsearch_io.stream("", ti)
+            events = [json.loads(line)["event"] for line in log_streams[0]]
+
+        assert events == ["a"]
+        assert mock_es_read.call_count == 1
+
+    def test_stream_surfaces_mid_stream_read_errors(self, ti):
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        page1 = _make_es_response(
+            self.elasticsearch_io,
+            {"event": "line1", "host": "host1", "log_id": log_id, "offset": 1},
+        )
+
+        with patch.object(self.elasticsearch_io, "_es_read", side_effect=[page1, RuntimeError("boom")]):
+            _, log_streams = self.elasticsearch_io.stream("", ti)
+            lines = list(log_streams[0])
+
+        assert json.loads(lines[0])["event"] == "line1"
+        assert lines[1] == f"*** Reading logs from Elasticsearch for {log_id} failed mid-stream: boom"
+
+    def test_es_read_raises_search_errors_when_raise_on_error(self, ti):
+        self.elasticsearch_io.client = Mock()
+        self.elasticsearch_io.client.search.side_effect = RuntimeError("boom")
+
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        with pytest.raises(RuntimeError, match="boom"):
+            self.elasticsearch_io._es_read(log_id, 0, ti, raise_on_error=True)
+
+    def test_stream_returns_missing_log_message_when_es_read_returns_none(self, ti):
+        with patch.object(self.elasticsearch_io, "_es_read", return_value=None):
+            sources, log_streams = self.elasticsearch_io.stream("", ti)
+
+        log_id = _render_log_id(self.elasticsearch_io.log_id_template, ti, ti.try_number)
+        assert sources == []
+        lines = [list(stream) for stream in log_streams]
+        assert len(lines) == 1
+        assert len(lines[0]) == 1
+        assert f"*** Log {log_id} not found in Elasticsearch" in lines[0][0]
+
     def test_upload_returns_early_when_ti_is_none(self, tmp_json_file):
         self.elasticsearch_io.upload(tmp_json_file, ti=None)
 

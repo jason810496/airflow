@@ -66,7 +66,13 @@ if TYPE_CHECKING:
 
     from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
     from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
-    from airflow.utils.log.file_task_handler import LogMessages, LogMetadata, LogSourceInfo
+    from airflow.utils.log.file_task_handler import (
+        LogMessages,
+        LogMetadata,
+        LogSourceInfo,
+        RawLogStream,
+        StreamingLogResponse,
+    )
 
 
 if AIRFLOW_V_3_0_PLUS:
@@ -93,6 +99,19 @@ TASK_LOG_FIELDS = ["timestamp", "event", "level", "chan", "logger", "error_detai
 def _deduplicate_fields(fields: Iterable[str]) -> list[str]:
     """Return non-empty field names in order without duplicates."""
     return list(dict.fromkeys(field for field in fields if field))
+
+
+def _build_missing_log_message(log_id: str) -> str:
+    return (
+        f"*** Log {log_id} not found in Elasticsearch. "
+        "If your task started recently, please wait a moment and reload this page. "
+        "Otherwise, the logs for this task instance may have been removed."
+    )
+
+
+def _stream_single_message(message: str) -> RawLogStream:
+    """Wrap a single message in a one-line log stream."""
+    yield message
 
 
 def _format_error_detail(error_detail: Any) -> str | None:
@@ -820,12 +839,7 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
             logs_by_host = None
 
         if logs_by_host is None:
-            missing_log_message = (
-                f"*** Log {log_id} not found in Elasticsearch. "
-                "If your task started recently, please wait a moment and reload this page. "
-                "Otherwise, the logs for this task instance may have been removed."
-            )
-            return [], [missing_log_message]
+            return [], [_build_missing_log_message(log_id)]
 
         header = []
         # Start log group
@@ -840,6 +854,54 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
 
         return header, message
 
+    def stream(self, _relative_path: str, ti: RuntimeTI) -> StreamingLogResponse:
+        """
+        Stream the logs matching the task instance's log_id from Elasticsearch.
+
+        Unlike :meth:`read`, hits are yielded lazily and follow-up pages are fetched
+        while the stream is consumed, so neither the whole log nor the single-page
+        cap (``[elasticsearch] max_lines_per_page``) bounds the response. The sources
+        are returned as one entry per host instead of :meth:`read`'s joined header,
+        and — matching read()'s single-page grouping — reflect the hosts seen on the
+        first page only.
+        """
+        log_id = _render_log_id(self.log_id_template, ti, ti.try_number)  # type: ignore[arg-type]
+        self.log.info("Streaming log %s from Elasticsearch", log_id)
+        source_includes = self._get_source_includes()
+        response = self._es_read(log_id, 0, ti, source_includes=source_includes)
+        if response is None or not response.hits:
+            return [], [_stream_single_message(_build_missing_log_message(log_id))]
+
+        hosts = list(self._group_logs_by_host(response))
+        return hosts, [self._stream_hits(log_id, ti, response, source_includes)]
+
+    def _stream_hits(
+        self,
+        log_id: str,
+        ti: RuntimeTI,
+        response: ElasticSearchResponse | None,
+        source_includes: list[str],
+    ) -> RawLogStream:
+        """Yield hits as JSON lines in offset order, fetching the next page once a page is drained."""
+        while response is not None:
+            last_offset = None
+            for hit in response:
+                yield json.dumps(_build_log_fields(hit.to_dict()))
+                last_offset = getattr_nested(hit, self.offset_field, last_offset)
+            if last_offset is None:
+                # Without an offset on the last hit the next page cannot be bounded;
+                # stop instead of re-fetching the same page forever.
+                return
+            try:
+                response = self._es_read(
+                    log_id, last_offset, ti, source_includes=source_includes, raise_on_error=True
+                )
+            except Exception as e:
+                # Surface mid-stream failures instead of ending the stream as a clean
+                # end-of-log, which would silently truncate the task log.
+                yield f"*** Reading logs from Elasticsearch for {log_id} failed mid-stream: {e}"
+                return
+
     def _es_read(
         self,
         log_id: str,
@@ -847,6 +909,7 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
         ti: RuntimeTI,
         *,
         source_includes: Iterable[str] | None = None,
+        raise_on_error: bool = False,
     ) -> ElasticSearchResponse | None:
         """
         Return the logs matching log_id in Elasticsearch and next offset or ''.
@@ -854,6 +917,8 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
         :param log_id: the log_id of the log to read.
         :param offset: the offset start to read log from.
         :param ti: the task instance object
+        :param raise_on_error: re-raise search errors instead of returning ``None``,
+            so callers can tell a failed read apart from an empty page.
 
         :meta private:
         """
@@ -882,6 +947,8 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
             raise
         except Exception:
             self.log.exception("Could not read log with log_id: %s", log_id)
+            if raise_on_error:
+                raise
             return None
 
         # Short-circuit on empty hits to avoid constructing ElasticSearchResponse unnecessarily.
