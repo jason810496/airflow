@@ -249,6 +249,55 @@ class TestS3RemoteLogIO:
         assert rec.levelno == logging.ERROR
         assert rec.exc_info is not None
 
+    def test_stream(self):
+        self.conn.put_object(Bucket="bucket", Key=self.remote_log_key, Body=b"Log line\nLine 2\n")
+        self.conn.put_object(
+            Bucket="bucket", Key=self.remote_log_key + ".trigger.log", Body=b"Log line 3\nLine 4\n"
+        )
+
+        messages, log_streams = self.subject.stream("1.log", self.ti)
+
+        expected_uris = [
+            f"s3://bucket/{self.remote_log_key}",
+            f"s3://bucket/{self.remote_log_key}.trigger.log",
+        ]
+        if AIRFLOW_V_3_0_PLUS:
+            assert messages == expected_uris
+        else:
+            assert messages == ["Found logs in s3:", *(f"  * {uri}" for uri in expected_uris)]
+        assert [list(stream) for stream in log_streams] == [
+            ["Log line", "Line 2"],
+            ["Log line 3", "Line 4"],
+        ]
+
+    def test_stream_no_logs_found(self):
+        messages, log_streams = self.subject.stream("1.log", self.ti)
+
+        assert messages == []
+        assert log_streams == []
+
+    @mock.patch.object(S3Hook, "get_key", side_effect=ConnectionError("bucket gone"))
+    def test_stream_yields_error_message_on_read_failure(self, mock_get_key):
+        self.conn.put_object(Bucket="bucket", Key=self.remote_log_key, Body=b"Log line\n")
+
+        messages, log_streams = self.subject.stream("1.log", self.ti)
+
+        assert list(log_streams[0]) == [
+            f"Could not read logs from s3://bucket/{self.remote_log_key} with error: bucket gone"
+        ]
+
+    def test_read_materializes_stream(self):
+        self.conn.put_object(Bucket="bucket", Key=self.remote_log_key, Body=b"Log line\nLine 2\n")
+
+        _, logs = self.subject.read("1.log", self.ti)
+
+        assert logs == ["Log line\nLine 2\n"]
+
+    def test_read_no_logs_found(self):
+        _, logs = self.subject.read("1.log", self.ti)
+
+        assert logs is None
+
     def test_write(self):
         with mock.patch.object(self.subject.log, "error") as mock_error:
             self.subject.write("text", self.remote_log_location)

@@ -22,6 +22,7 @@ import logging
 import os
 import pathlib
 import shutil
+from contextlib import closing
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,12 @@ from airflow.utils.log.logging_mixin import LoggingMixin
 if TYPE_CHECKING:
     from airflow.models.taskinstance import TaskInstance
     from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
-    from airflow.utils.log.file_task_handler import LogMessages, LogSourceInfo
+    from airflow.utils.log.file_task_handler import (
+        LogMessages,
+        LogSourceInfo,
+        RawLogStream,
+        StreamingLogResponse,
+    )
 
 
 @attrs.define
@@ -185,22 +191,38 @@ class S3RemoteLogIO(LoggingMixin):  # noqa: D101
                     return False
         return True
 
-    def read(self, relative_path: str, ti: RuntimeTI) -> tuple[LogSourceInfo, LogMessages | None]:
-        logs: list[str] = []
-        messages = []
+    def _stream_key(self, key: str) -> RawLogStream:
+        """Yield the log lines of the given S3 object without materializing the whole object."""
+        try:
+            with closing(self.hook.get_key(key).get()["Body"]) as body:
+                for line in body.iter_lines():
+                    yield line.decode("utf-8")
+        except Exception as error:
+            msg = f"Could not read logs from {key} with error: {error}"
+            self.log.exception(msg)
+            yield msg
+
+    def stream(self, relative_path: str, ti: RuntimeTI) -> StreamingLogResponse:
+        messages: LogSourceInfo = []
+        log_streams: list[RawLogStream] = []
         bucket, prefix = self.hook.parse_s3_url(s3url=os.path.join(self.remote_base, relative_path))
         keys = self.hook.list_keys(bucket_name=bucket, prefix=prefix)
-        if keys:
-            keys = sorted(f"s3://{bucket}/{key}" for key in keys)
-            if AIRFLOW_V_3_0_PLUS:
-                messages = keys
-            else:
-                messages.append("Found logs in s3:")
-                messages.extend(f"  * {key}" for key in keys)
-            for key in keys:
-                logs.append(self.s3_read(key, return_error=True))
-            return messages, logs
-        return messages, None
+        if not keys:
+            return messages, log_streams
+        keys = sorted(f"s3://{bucket}/{key}" for key in keys)
+        if AIRFLOW_V_3_0_PLUS:
+            messages = keys
+        else:
+            messages.append("Found logs in s3:")
+            messages.extend(f"  * {key}" for key in keys)
+        log_streams = [self._stream_key(key) for key in keys]
+        return messages, log_streams
+
+    def read(self, relative_path: str, ti: RuntimeTI) -> tuple[LogSourceInfo, LogMessages | None]:
+        messages, log_streams = self.stream(relative_path, ti)
+        if not log_streams:
+            return messages, None
+        return messages, ["".join(f"{line}\n" for line in stream) for stream in log_streams]
 
 
 class S3TaskHandler(FileTaskHandler, LoggingMixin):
