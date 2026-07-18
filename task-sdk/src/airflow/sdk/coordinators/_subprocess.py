@@ -305,12 +305,16 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             stderr_r, stderr_w = tracker.track(*socket.socketpair())
 
             # A language SDK runtime cannot read Airflow's config, so propagate the
-            # resolved log levels via the environment at launch. StartupDetails
-            # arrives too late, the logs might already be produced by then.
+            # resolved log levels and the double-dot ID policy via the environment at
+            # launch. StartupDetails arrives too late, the logs might already be
+            # produced by then.
             env = {
                 **os.environ,
                 "AIRFLOW__LOGGING__LOGGING_LEVEL": conf.get("logging", "logging_level", fallback="INFO"),
                 "AIRFLOW__LOGGING__NAMESPACE_LEVELS": conf.get("logging", "namespace_levels", fallback=""),
+                "AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS": str(
+                    conf.getboolean("core", "allow_double_dot_in_ids", fallback=False)
+                ).lower(),
             }
 
             proc = subprocess.Popen(

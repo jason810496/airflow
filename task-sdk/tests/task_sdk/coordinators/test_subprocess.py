@@ -820,6 +820,19 @@ class TestPopenActivitySubprocessStart:
         env = popen_mock.call_args.kwargs["env"]
         assert env["AIRFLOW__LOGGING__NAMESPACE_LEVELS"] == ""
 
+    @conf_vars({("core", "allow_double_dot_in_ids"): "True"})
+    def test_allow_double_dot_in_ids_true_passed_to_subprocess_env(self, mock_client):
+        """A language SDK runtime gets the resolved double-dot ID policy via the environment at launch."""
+        _, popen_mock, _ = self._start_with_mocks(mock_client, command=["/bin/true"])
+        env = popen_mock.call_args.kwargs["env"]
+        assert env["AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS"] == "true"
+
+    def test_allow_double_dot_in_ids_defaults_to_false(self, mock_client):
+        """Absent config, the runtime is told double dots are not allowed."""
+        _, popen_mock, _ = self._start_with_mocks(mock_client, command=["/bin/true"])
+        env = popen_mock.call_args.kwargs["env"]
+        assert env["AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS"] == "false"
+
     def test_register_pipe_readers_called_with_four_sockets(self, mock_client):
         """Both socketpair read-ends and both TCP sockets must be registered, with a data kwarg."""
         with (
