@@ -134,13 +134,27 @@ describe("registry", () => {
     );
   });
 
-  it("allows consecutive dots when AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS=true", () => {
-    vi.stubEnv("AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS", "true");
-    const registry = new TaskRegistry();
-    const handler = async () => undefined;
-    registry.register({ dagId: "a..b", taskId: "my_task" }, handler);
-    expect(registry.get("a..b", "my_task")).toBe(handler);
-  });
+  it.each(["true", "TRUE", " true ", "t", "1"])(
+    "allows consecutive dots when AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS=%j",
+    (value) => {
+      vi.stubEnv("AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS", value);
+      const registry = new TaskRegistry();
+      const handler = async () => undefined;
+      registry.register({ dagId: "a..b", taskId: "my_task" }, handler);
+      expect(registry.get("a..b", "my_task")).toBe(handler);
+    },
+  );
+
+  it.each(["0", "false", "yes", "on"])(
+    "still rejects consecutive dots when AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS=%j",
+    (value) => {
+      vi.stubEnv("AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS", value);
+      const registry = new TaskRegistry();
+      expect(() =>
+        registry.register({ dagId: "a..b", taskId: "my_task" }, async () => undefined),
+      ).toThrowError(/must not contain consecutive dots/);
+    },
+  );
 
   it("rejects non-function handlers", () => {
     const registry = new TaskRegistry();

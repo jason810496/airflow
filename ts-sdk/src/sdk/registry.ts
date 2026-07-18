@@ -19,15 +19,21 @@
 
 import type { TaskHandler } from "./task.js";
 
-// Mirrors the Python task-SDK KEY_REGEX and validate_key in airflow.sdk.definitions._internal.node.
+// Mirrors the Python task-SDK KEY_REGEX (charset/length only; see below for the
+// `..` guard) and validate_key in airflow.sdk.definitions._internal.node.
 const KEY_REGEX = /^[\p{L}\p{N}_.-]+$/u;
 const MAX_KEY_LENGTH = 250;
 // Set by the Python coordinator from `[core] allow_double_dot_in_ids` at subprocess
-// launch (task-sdk's _subprocess.py); mirrors airflow.utils.helpers.validate_key.
+// launch (task-sdk's _subprocess.py); mirrors airflow.utils.helpers.validate_key's
+// `..` guard (KEY_REGEX above has no Python equivalent for that check).
 const ALLOW_DOUBLE_DOT_ENV = "AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS";
+// Matches the truthy values Airflow's own config parser accepts for a boolean
+// (AirflowConfigParser.getboolean: "t", "true", "1", case-insensitive).
+const TRUTHY_VALUES = new Set(["t", "true", "1"]);
 
 function isDoubleDotAllowed(): boolean {
-  return process.env[ALLOW_DOUBLE_DOT_ENV]?.trim().toLowerCase() === "true";
+  const raw = process.env[ALLOW_DOUBLE_DOT_ENV]?.trim().toLowerCase();
+  return raw !== undefined && TRUTHY_VALUES.has(raw);
 }
 
 function validateKey(name: string, value: string): void {
