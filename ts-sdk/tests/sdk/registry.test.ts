@@ -17,10 +17,14 @@
  * under the License.
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { TaskRegistry } from "../../src/sdk/registry.js";
 
 describe("registry", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("registers and retrieves a handler", async () => {
     const registry = new TaskRegistry();
     const handler = async () => "hello";
@@ -118,6 +122,24 @@ describe("registry", () => {
     const handler = async () => undefined;
     registry.register({ dagId: "café_dag", taskId: "任務" }, handler);
     expect(registry.get("café_dag", "任務")).toBe(handler);
+  });
+
+  it.each([
+    ["dagId", { dagId: "a..b", taskId: "my_task" }],
+    ["taskId", { dagId: "example_dag", taskId: ".." }],
+  ])("rejects a %s containing consecutive dots by default", (name, registration) => {
+    const registry = new TaskRegistry();
+    expect(() => registry.register(registration, async () => undefined)).toThrowError(
+      /must not contain consecutive dots/,
+    );
+  });
+
+  it("allows consecutive dots when AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS=true", () => {
+    vi.stubEnv("AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS", "true");
+    const registry = new TaskRegistry();
+    const handler = async () => undefined;
+    registry.register({ dagId: "a..b", taskId: "my_task" }, handler);
+    expect(registry.get("a..b", "my_task")).toBe(handler);
   });
 
   it("rejects non-function handlers", () => {

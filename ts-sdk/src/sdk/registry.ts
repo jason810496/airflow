@@ -22,6 +22,13 @@ import type { TaskHandler } from "./task.js";
 // Mirrors the Python task-SDK KEY_REGEX and validate_key in airflow.sdk.definitions._internal.node.
 const KEY_REGEX = /^[\p{L}\p{N}_.-]+$/u;
 const MAX_KEY_LENGTH = 250;
+// Set by the Python coordinator from `[core] allow_double_dot_in_ids` at subprocess
+// launch (task-sdk's _subprocess.py); mirrors airflow.utils.helpers.validate_key.
+const ALLOW_DOUBLE_DOT_ENV = "AIRFLOW__CORE__ALLOW_DOUBLE_DOT_IN_IDS";
+
+function isDoubleDotAllowed(): boolean {
+  return process.env[ALLOW_DOUBLE_DOT_ENV]?.trim().toLowerCase() === "true";
+}
 
 function validateKey(name: string, value: string): void {
   if (typeof value !== "string" || !KEY_REGEX.test(value)) {
@@ -31,6 +38,9 @@ function validateKey(name: string, value: string): void {
   }
   if (value.length > MAX_KEY_LENGTH) {
     throw new Error(`${name} must be less than ${MAX_KEY_LENGTH} characters, not ${value.length}`);
+  }
+  if (value.includes("..") && !isDoubleDotAllowed()) {
+    throw new Error(`${name} must not contain consecutive dots ('..') to prevent path traversal`);
   }
 }
 
