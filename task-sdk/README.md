@@ -36,3 +36,11 @@ To install the Task SDK, use pip:
 ```bash
 pip install apache-airflow-task-sdk
 ```
+
+## Architectural decisions
+
+The [`adr/`](./adr) directory records the design decisions behind the SDK:
+
+- [ADR 0001](./adr/0001-watcher-owned-terminal-state.md): watcher-owned terminal state for
+  external-system operators, where a Trigger finalizes a task directly from its own observation of an
+  external resource instead of resuming a worker to self-report.
