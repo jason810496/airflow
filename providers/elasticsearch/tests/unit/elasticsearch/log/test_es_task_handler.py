@@ -21,6 +21,7 @@ import dataclasses
 import json
 import logging
 import re
+import sys
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -40,8 +41,10 @@ from airflow.providers.elasticsearch.log.es_task_handler import (
     ElasticsearchRemoteLogIO,
     ElasticsearchTaskHandler,
     _build_log_fields,
+    _BulkLogWriter,
     _clean_date,
     _format_error_detail,
+    _parse_default_log_path,
     _render_log_id,
     _safe_build_structured_log_message,
     _strip_userinfo,
@@ -631,6 +634,7 @@ class TestElasticsearchTaskHandler:
         assert fields == [
             "@timestamp",
             *TASK_LOG_FIELDS,
+            "raw_event",
             self.host_field,
             self.offset_field,
             "asctime",
@@ -783,6 +787,7 @@ class TestElasticsearchRemoteLogIO:
         assert self.elasticsearch_io._get_source_includes() == [
             "@timestamp",
             *TASK_LOG_FIELDS,
+            "raw_event",
             self.elasticsearch_io.host_field,
             self.elasticsearch_io.offset_field,
         ]
@@ -794,6 +799,7 @@ class TestElasticsearchRemoteLogIO:
         assert self.elasticsearch_io._get_source_includes() == [
             "@timestamp",
             *TASK_LOG_FIELDS,
+            "raw_event",
             "host.name",
             "log.offset",
         ]
@@ -833,6 +839,7 @@ class TestElasticsearchRemoteLogIO:
             source_includes=[
                 "@timestamp",
                 *TASK_LOG_FIELDS,
+                "raw_event",
                 self.elasticsearch_io.host_field,
                 self.elasticsearch_io.offset_field,
             ],
@@ -1018,3 +1025,328 @@ class TestSafeBuildStructuredLogMessage:
         assert result.event == str(["a", "b"])
         assert result.timestamp is not None
         mock_logger.debug.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        pytest.param(
+            "dag_id=d/run_id=r/task_id=t/attempt=2.log",
+            {"dag_id": "d", "run_id": "r", "task_id": "t", "map_index": -1, "try_number": 2},
+            id="unmapped",
+        ),
+        pytest.param(
+            "dag_id=d/run_id=r/task_id=t/map_index=3/attempt=1.log",
+            {"dag_id": "d", "run_id": "r", "task_id": "t", "map_index": 3, "try_number": 1},
+            id="mapped",
+        ),
+        pytest.param("dag_id=d/run_id=r/task_id=t/attempt=1.log.trigger.5.log", None, id="trigger-suffix"),
+        pytest.param("custom/location/1.log", None, id="custom-template"),
+        pytest.param("dag_id=d/task_id=t/attempt=1.log", None, id="missing-run-id"),
+    ],
+)
+def test_parse_default_log_path(path, expected):
+    identity = _parse_default_log_path(path)
+    if expected is None:
+        assert identity is None
+    else:
+        assert {field: getattr(identity, field) for field in expected} == expected
+
+
+def test_parsed_path_renders_same_log_id_as_task_instance():
+    ti = _MockTI()
+    template = "{dag_id}-{task_id}-{run_id}-{map_index}-{try_number}"
+    identity = _parse_default_log_path(
+        f"dag_id={ti.dag_id}/run_id={ti.run_id}/task_id={ti.task_id}/attempt=1.log"
+    )
+
+    assert _render_log_id(template, identity, identity.try_number) == _render_log_id(template, ti, 1)
+
+
+@pytest.mark.skipif(not AIRFLOW_V_3_0_PLUS, reason="Streaming write path only exists on Airflow 3")
+class TestElasticsearchRemoteLogIOStreaming:
+    LOG_REL_PATH = "dag_id=d/run_id=r/task_id=t/attempt=1.log"
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AIRFLOW__LOGGING__BASE_LOG_FOLDER", str(tmp_path))
+        self.log_file = tmp_path / self.LOG_REL_PATH
+        self.log_file.parent.mkdir(parents=True)
+        self.log_file.touch()
+        self.io = ElasticsearchRemoteLogIO(
+            write_to_es=True,
+            write_stdout=False,
+            delete_local_copy=False,
+            host="http://localhost:9200",
+            base_log_folder=tmp_path,
+        )
+        self.written_docs = []
+        self.write_fails = False
+
+        def fake_write(batch):
+            if self.write_fails:
+                return False
+            self.written_docs.extend(batch)
+            return True
+
+        self.io._write_to_es = fake_write
+
+    @pytest.fixture
+    def ti(self):
+        return _MockTI()
+
+    def _stream(self, *events):
+        proc = self.io.processors[0]
+        with self.log_file.open("a") as file_handle:
+            fake_logger = mock.Mock(spec=["_file"], _file=file_handle)
+            for event in events:
+                assert proc(fake_logger, "info", event) is event
+
+    def test_processors_empty_when_no_write_mode_enabled(self, tmp_path):
+        io = ElasticsearchRemoteLogIO(host="http://localhost:9200", base_log_folder=tmp_path)
+
+        assert io.processors == ()
+
+    def test_processor_streams_docs_with_log_id_and_offset(self, ti):
+        self._stream({"event": "one", "timestamp": "2026-07-23T00:00:00Z"}, {"event": "two"})
+        self.io._writer.flush(10)
+
+        assert [doc["event"] for doc in self.written_docs] == ["one", "two"]
+        log_id = _render_log_id(self.io.log_id_template, _parse_default_log_path(self.LOG_REL_PATH), 1)
+        assert all(doc["log_id"] == log_id for doc in self.written_docs)
+        offsets = [doc["offset"] for doc in self.written_docs]
+        assert all(isinstance(offset, int) and offset > 0 for offset in offsets)
+        assert offsets == sorted(offsets)
+        assert len(set(offsets)) == len(offsets)
+        assert json.loads(self.written_docs[0]["raw_event"]) == {
+            "event": "one",
+            "timestamp": "2026-07-23T00:00:00Z",
+        }
+
+    def test_processor_noop_for_stdout_logger(self):
+        proc = self.io.processors[0]
+        event = {"event": "hello"}
+
+        assert proc(mock.Mock(spec=["_file"], _file=sys.stdout), "info", event) is event
+        self.io._writer.flush(10)
+
+        assert self.written_docs == []
+
+    def test_processor_noop_for_custom_log_path(self, tmp_path):
+        custom = tmp_path / "custom" / "1.log"
+        custom.parent.mkdir(parents=True)
+        proc = self.io.processors[0]
+        with custom.open("a") as file_handle:
+            proc(mock.Mock(spec=["_file"], _file=file_handle), "info", {"event": "hello"})
+        self.io._writer.flush(10)
+
+        assert self.written_docs == []
+
+    def test_processor_serializes_unserializable_event_values(self):
+        self._stream({"event": "boom", "exc": ValueError("nope")})
+        self.io._writer.flush(10)
+
+        assert json.loads(self.written_docs[0]["raw_event"])["exc"] == str(ValueError("nope"))
+
+    def test_upload_skips_replay_after_clean_streaming(self, ti):
+        self._stream({"event": "one"}, {"event": "two"})
+        self.log_file.write_text('{"event": "one"}\n{"event": "two"}\n')
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert len(self.written_docs) == 2
+        assert self.log_file.exists()
+
+    def test_upload_replays_when_nothing_streamed(self, ti):
+        self.log_file.write_text('{"event": "one"}\n{"event": "two"}\n')
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert [doc["offset"] for doc in self.written_docs] == [1, 2]
+
+    def test_upload_keeps_local_copy_when_stream_retry_fails(self, ti):
+        self.io.delete_local_copy = True
+        self._stream({"event": "one"})
+        self.io._writer.flush(10)
+        self.io._writer._stash_failed([(self.LOG_REL_PATH, {"event": "lost"})])
+        self.write_fails = True
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert [doc["event"] for doc in self.written_docs] == ["one"]
+        assert self.log_file.exists()
+
+    def test_upload_retries_failed_streamed_records(self, ti):
+        self.io.delete_local_copy = True
+        self._stream({"event": "one"})
+        self.io._writer.flush(10)
+        self.io._writer._stash_failed([(self.LOG_REL_PATH, {"event": "lost"})])
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert [doc["event"] for doc in self.written_docs] == ["one", "lost"]
+        assert not self.log_file.exists()
+
+    def test_upload_prunes_per_path_state(self, ti):
+        self._stream({"event": "one"})
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert self.LOG_REL_PATH not in self.io._writer.sent
+        assert self.LOG_REL_PATH not in self.io._writer._failed_docs
+
+    def test_offsets_are_unique_and_increasing_within_a_burst(self):
+        self._stream(*({"event": f"e{i}"} for i in range(500)))
+        self.io._writer.flush(10)
+
+        offsets = [doc["offset"] for doc in self.written_docs]
+        assert len(offsets) == 500
+        assert len(set(offsets)) == 500
+        assert offsets == sorted(offsets)
+
+    def test_upload_deletes_local_copy_after_clean_streaming(self, ti):
+        self.io.delete_local_copy = True
+        self._stream({"event": "one"})
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+
+        assert not self.log_file.parent.exists()
+
+    def test_write_stdout_streams_and_upload_does_not_duplicate(self, ti, capsys):
+        self.io.write_stdout = True
+        self.io.write_to_es = False
+        self._stream({"event": "hello"})
+        streamed = capsys.readouterr().out.strip().splitlines()
+
+        self.io.upload(self.LOG_REL_PATH, ti)
+        uploaded = capsys.readouterr().out.strip().splitlines()
+
+        assert len(streamed) == 1
+        assert json.loads(streamed[0])["event"] == "hello"
+        assert "log_id" in json.loads(streamed[0])
+        assert uploaded == []
+
+
+class TestBulkLogWriter:
+    def test_batches_and_counts_sent(self):
+        batches = []
+
+        def write(batch):
+            batches.append(batch)
+            return True
+
+        writer = _BulkLogWriter(write, batch_size=2)
+        for i in range(3):
+            writer.put("p", {"i": i})
+        writer.flush(10)
+
+        assert sum(len(batch) for batch in batches) == 3
+        assert writer.sent["p"] == 3
+        assert writer.failed_count("p") == 0
+
+    def test_write_failure_counts_failed(self):
+        writer = _BulkLogWriter(lambda batch: False)
+        writer.put("p", {})
+        writer.flush(10)
+
+        assert writer.failed_count("p") == 1
+        assert writer.sent["p"] == 0
+
+    def test_write_exception_counts_failed_and_does_not_raise(self):
+        def explode(batch):
+            raise RuntimeError("es down")
+
+        writer = _BulkLogWriter(explode)
+        writer.put("p", {})
+        writer.flush(10)
+
+        assert writer.failed_count("p") == 1
+
+    def test_flush_drains_synchronously_when_thread_unusable(self):
+        docs = []
+        writer = _BulkLogWriter(lambda batch: docs.extend(batch) or True)
+        writer._queue.put_nowait(("p", {"i": 0}))
+
+        writer.flush(10)
+
+        assert docs == [{"i": 0}]
+        assert writer.sent["p"] == 1
+
+    def test_flush_drains_synchronously_after_pid_change(self):
+        docs = []
+        writer = _BulkLogWriter(lambda batch: docs.extend(batch) or True)
+        writer.put("p", {"i": 0})
+        writer.flush(10)
+        writer._pid = -1
+        writer._queue.put_nowait(("p", {"i": 1}))
+
+        writer.flush(10)
+
+        assert docs == [{"i": 0}, {"i": 1}]
+
+    def test_full_queue_counts_failed(self, monkeypatch):
+        writer = _BulkLogWriter(lambda batch: True, maxsize=1)
+        monkeypatch.setattr(writer, "_ensure_thread", lambda: None)
+        writer.put("p", {"i": 0})
+        writer.put("p", {"i": 1})
+
+        assert writer.failed_count("p") == 1
+
+    def test_retry_failed_reships_retained_docs(self):
+        docs = []
+        writer = _BulkLogWriter(lambda batch: docs.extend(batch) or True)
+        writer._stash_failed([("p", {"i": 0}), ("p", {"i": 1})])
+
+        assert writer.retry_failed("p") is True
+        assert docs == [{"i": 0}, {"i": 1}]
+        assert writer.failed_count("p") == 0
+        assert writer.sent["p"] == 2
+
+    def test_retry_failed_returns_false_when_write_fails(self):
+        writer = _BulkLogWriter(lambda batch: False)
+        writer._stash_failed([("p", {"i": 0})])
+
+        assert writer.retry_failed("p") is False
+        assert writer.failed_count("p") == 1
+
+    def test_retry_failed_reports_dropped_docs(self):
+        writer = _BulkLogWriter(lambda batch: True, maxsize=1)
+        writer._stash_failed([("p", {"i": 0}), ("p", {"i": 1})])
+
+        assert writer.retry_failed("p") is False
+
+    def test_clear_drops_per_path_state(self):
+        writer = _BulkLogWriter(lambda batch: True)
+        writer.put("p", {"i": 0})
+        writer.flush(10)
+        writer.clear("p")
+
+        assert "p" not in writer.sent
+
+
+def test_build_log_fields_prefers_raw_event_for_full_fidelity():
+    event = {
+        "event": "hi",
+        "timestamp": "2026-07-23T00:00:00Z",
+        "level": "info",
+        "custom_field": {"a": 1},
+    }
+    stored = {"event": "hi", "raw_event": json.dumps(event), "log_id": "id", "offset": 1}
+
+    assert _build_log_fields(stored) == event
+
+
+def test_build_log_fields_falls_back_on_malformed_raw_event():
+    stored = {"event": "hi", "raw_event": "{not json", "log_id": "id", "offset": 1}
+
+    assert _build_log_fields(stored) == {"event": "hi"}
+
+
+@pytest.mark.skipif(not AIRFLOW_V_3_0_PLUS, reason="StructuredLogMessage only exists on Airflow 3")
+def test_streamed_copy_parses_equal_to_local_log_line():
+    from airflow.utils.log.file_task_handler import StructuredLogMessage
+
+    event = {"event": "hi", "timestamp": "2026-07-23T00:00:00Z", "level": "info", "custom_field": "x"}
+    stored = {"event": "hi", "raw_event": json.dumps(event), "log_id": "id", "offset": 1}
+
+    assert StructuredLogMessage(**event) == StructuredLogMessage(**_build_log_fields(stored))

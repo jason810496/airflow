@@ -22,12 +22,16 @@ import inspect
 import json
 import logging
 import os
+import queue
+import re
 import shutil
 import sys
+import threading
 import time
 import warnings
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from functools import cached_property
 from operator import attrgetter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -64,6 +68,8 @@ else:
 if TYPE_CHECKING:
     from datetime import datetime
 
+    import structlog.typing
+
     from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
     from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
     from airflow.utils.log.file_task_handler import LogMessages, LogMetadata, LogSourceInfo
@@ -95,6 +101,202 @@ def _deduplicate_fields(fields: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(field for field in fields if field))
 
 
+# Matches the default ``[logging] log_filename_template`` (defined in airflow-core
+# ``config_templates/config.yml``; keep in sync). A customized template makes streaming
+# impossible (no task-instance identity at write time) and falls back to shipping the
+# whole log in ``upload()`` at task end.
+_DEFAULT_LOG_PATH_RE = re.compile(
+    r"^dag_id=(?P<dag_id>[^/]+)/run_id=(?P<run_id>[^/]+)/task_id=(?P<task_id>[^/]+)/"
+    r"(?:map_index=(?P<map_index>-?\d+)/)?attempt=(?P<try_number>\d+)\.log$"
+)
+_STREAM_BATCH_SIZE = 100
+_STREAM_FLUSH_INTERVAL = 2.0
+_STREAM_QUEUE_MAXSIZE = 10_000
+_STREAM_FLUSH_TIMEOUT = 30.0
+
+
+@attrs.define(kw_only=True)
+class _LogPathIdentity:
+    """Task-instance identity parsed from a log path; duck-types what ``_render_log_id`` reads."""
+
+    dag_id: str
+    run_id: str
+    task_id: str
+    map_index: int
+    try_number: int
+
+
+def _parse_default_log_path(relative_path: str) -> _LogPathIdentity | None:
+    match = _DEFAULT_LOG_PATH_RE.match(relative_path)
+    if not match:
+        return None
+    return _LogPathIdentity(
+        dag_id=match["dag_id"],
+        run_id=match["run_id"],
+        task_id=match["task_id"],
+        # The default template omits the segment for unmapped tasks, where a real
+        # task instance renders -1 into the log_id.
+        map_index=int(match["map_index"]) if match["map_index"] is not None else -1,
+        try_number=int(match["try_number"]),
+    )
+
+
+class _BulkLogWriter:
+    """
+    Background bulk indexer for task log documents streamed while the task is running.
+
+    Deliberately not a ``logging.Handler``: dictConfig re-initialization only closes handlers
+    registered with stdlib logging, so no rebuild-after-close logic is needed (contrast with
+    ``CloudWatchRemoteLogIO``'s watchtower handler). The worker thread starts lazily on first
+    enqueue — never in the task subprocess, which cannot resolve a log path — and is restarted
+    if the process forked since. Duplicated in the opensearch provider by convention.
+    """
+
+    def __init__(
+        self,
+        write_fn: Callable[[list[dict[str, Any]]], bool],
+        *,
+        batch_size: int = _STREAM_BATCH_SIZE,
+        flush_interval: float = _STREAM_FLUSH_INTERVAL,
+        maxsize: int = _STREAM_QUEUE_MAXSIZE,
+    ) -> None:
+        self._write_fn = write_fn
+        self._batch_size = batch_size
+        self._flush_interval = flush_interval
+        self._maxsize = maxsize
+        self._queue: queue.Queue[tuple[str, dict[str, Any]] | threading.Event] = queue.Queue(maxsize=maxsize)
+        self._thread: threading.Thread | None = None
+        self._pid: int | None = None
+        self._lock = threading.Lock()
+        self.sent: dict[str, int] = defaultdict(int)
+        # Failed documents are retained (bounded) so upload() can retry exactly the missing
+        # records instead of replaying the whole file, which would duplicate the ones that
+        # did land under clashing offsets.
+        self._failed_docs: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self._dropped: dict[str, int] = defaultdict(int)
+
+    def put(self, path: str, doc: dict[str, Any]) -> None:
+        self._ensure_thread()
+        try:
+            self._queue.put_nowait((path, doc))
+        except queue.Full:
+            self._stash_failed([(path, doc)])
+
+    def failed_count(self, path: str) -> int:
+        with self._lock:
+            return len(self._failed_docs[path]) + self._dropped[path]
+
+    def flush(self, timeout: float = _STREAM_FLUSH_TIMEOUT) -> bool:
+        """
+        Ship everything enqueued so far, draining synchronously if the thread is unusable.
+
+        Return ``False`` when the flush could not be confirmed within ``timeout`` — records may
+        still be in flight, so callers must not conclude anything from the counters.
+        """
+        if self._thread_usable():
+            flushed = threading.Event()
+            try:
+                self._queue.put(flushed, timeout=timeout)
+            except queue.Full:
+                return False
+            return flushed.wait(timeout)
+        batch: list[tuple[str, dict[str, Any]]] = []
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if isinstance(item, threading.Event):
+                item.set()
+            else:
+                batch.append(item)
+        if batch:
+            self._flush_batch(batch)
+        return True
+
+    def retry_failed(self, path: str) -> bool:
+        """Re-ship the retained failed documents; return True when nothing is missing anymore."""
+        with self._lock:
+            docs = list(self._failed_docs[path])
+            dropped = self._dropped[path]
+        if docs:
+            try:
+                success = self._write_fn(docs)
+            except Exception:
+                logger.exception("Failed to re-send %d streamed task log document(s)", len(docs))
+                success = False
+            if not success:
+                return False
+            with self._lock:
+                self.sent[path] += len(docs)
+                self._failed_docs[path] = []
+        return dropped == 0
+
+    def clear(self, path: str) -> None:
+        """Drop per-path bookkeeping once the task's log is fully handled."""
+        with self._lock:
+            self.sent.pop(path, None)
+            self._failed_docs.pop(path, None)
+            self._dropped.pop(path, None)
+
+    def _stash_failed(self, batch: list[tuple[str, dict[str, Any]]]) -> None:
+        with self._lock:
+            for path, doc in batch:
+                if len(self._failed_docs[path]) < self._maxsize:
+                    self._failed_docs[path].append(doc)
+                else:
+                    self._dropped[path] += 1
+
+    def _thread_usable(self) -> bool:
+        with self._lock:
+            return self._thread is not None and self._thread.is_alive() and self._pid == os.getpid()
+
+    def _ensure_thread(self) -> None:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive() and self._pid == os.getpid():
+                return
+            self._pid = os.getpid()
+            self._thread = threading.Thread(target=self._run, name="task-log-bulk-writer", daemon=True)
+            self._thread.start()
+
+    def _run(self) -> None:
+        batch: list[tuple[str, dict[str, Any]]] = []
+        last_flush = time.monotonic()
+        while True:
+            flush_requested: threading.Event | None = None
+            try:
+                item = self._queue.get(timeout=self._flush_interval)
+                if isinstance(item, threading.Event):
+                    flush_requested = item
+                else:
+                    batch.append(item)
+            except queue.Empty:
+                pass
+            if batch and (
+                flush_requested is not None
+                or len(batch) >= self._batch_size
+                or time.monotonic() - last_flush >= self._flush_interval
+            ):
+                self._flush_batch(batch)
+                batch = []
+                last_flush = time.monotonic()
+            if flush_requested is not None:
+                flush_requested.set()
+
+    def _flush_batch(self, batch: list[tuple[str, dict[str, Any]]]) -> None:
+        try:
+            success = self._write_fn([doc for _, doc in batch])
+        except Exception:
+            logger.exception("Failed to bulk-write %d streamed task log document(s)", len(batch))
+            success = False
+        if success:
+            with self._lock:
+                for path, _ in batch:
+                    self.sent[path] += 1
+        else:
+            self._stash_failed(batch)
+
+
 def _format_error_detail(error_detail: Any) -> str | None:
     """Render the structured ``error_detail`` written by the Airflow 3 supervisor as a traceback string."""
     if not error_detail:
@@ -123,6 +325,18 @@ def _format_error_detail(error_detail: Any) -> str | None:
 
 def _build_log_fields(hit_dict: dict[str, Any]) -> dict[str, Any]:
     """Filter an ES hit to ``TASK_LOG_FIELDS`` and ensure compatibility with StructuredLogMessage."""
+    # Documents streamed by ElasticsearchRemoteLogIO carry the verbatim record; prefer it so
+    # the remote copy keeps every field and parses identically to the local/served log line
+    # (the base handler's interleave dedup relies on that equality).
+    raw_event = hit_dict.get("raw_event")
+    if isinstance(raw_event, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            parsed = json.loads(raw_event)
+            if isinstance(parsed, dict):
+                if "event" not in parsed:
+                    parsed["event"] = parsed.pop("message", "")
+                return parsed
+
     fields = {k: v for k, v in hit_dict.items() if k.lower() in TASK_LOG_FIELDS or k == "@timestamp"}
 
     # Map @timestamp to timestamp
@@ -415,9 +629,11 @@ class ElasticsearchTaskHandler(FileTaskHandler, ExternalLoggingMixin, LoggingMix
                          can be used for steaming log reading and auto-tailing.
         :return: a list of tuple with host and log documents, metadata.
         """
-        # In Airflow 3 logs reach Elasticsearch only after the task finishes, so a running task
-        # has nothing to read there yet. Defer to the base handler for live worker/executor logs,
-        # as S3/GCS do. Airflow 2 has no remote-log-IO read path, so it keeps the ES-only path below.
+        # For the current try of a running/deferred task, defer to the base handler: it merges
+        # whatever has already reached Elasticsearch (streamed near-real-time by
+        # ElasticsearchRemoteLogIO's processor, or by an external shipper such as Filebeat) with
+        # live worker/executor logs, as CloudWatch/S3/GCS do. Airflow 2 has no remote-log-IO read
+        # path, so it keeps the ES-only path below.
         if (
             AIRFLOW_V_3_0_PLUS
             and ti.try_number == try_number
@@ -710,8 +926,6 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
         fallback="{dag_id}-{task_id}-{run_id}-{map_index}-{try_number}",
     )
 
-    processors = ()
-
     def __attrs_post_init__(self):
         es_kwargs = get_es_kwargs_from_config()
         self.client = apply_compat_with(elasticsearch.Elasticsearch(self.host, **es_kwargs))
@@ -721,15 +935,95 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
         self.index_patterns: str = conf.get("elasticsearch", "index_patterns")
         self._doc_type_map: dict[Any, Any] = {}
         self._doc_type: list[Any] = []
+        self._stdout_streamed: dict[str, int] = defaultdict(int)
+
+    @cached_property
+    def _writer(self) -> _BulkLogWriter:
+        return _BulkLogWriter(self._write_to_es)
+
+    @cached_property
+    def processors(self) -> tuple[structlog.typing.Processor, ...]:
+        """
+        Return the structlog processor streaming each record to Elasticsearch/stdout as it is emitted.
+
+        This is what makes a running task's logs readable from the API server in near-real-time,
+        the same way ``CloudWatchRemoteLogIO`` streams via watchtower.
+        """
+        if not AIRFLOW_V_3_0_PLUS or not (self.write_to_es or self.write_stdout):
+            return ()
+
+        from airflow.sdk.log import relative_path_from_logger
+
+        log_id_by_path: dict[str, str | None] = {}
+        offset_lock = threading.Lock()
+        last_offset = 0
+
+        def next_offset() -> int:
+            # Wall-clock nanoseconds (matching the Airflow 2 handler's offset semantics), made
+            # strictly increasing: same-tick records would otherwise collide, and the read
+            # query pages with ``range gt`` + ``sort`` on this field, silently dropping ties.
+            nonlocal last_offset
+            with offset_lock:
+                last_offset = max(time.time_ns(), last_offset + 1)
+                return last_offset
+
+        def proc(
+            logger: structlog.typing.WrappedLogger,
+            method_name: str,
+            event: structlog.typing.EventDict,
+        ) -> structlog.typing.EventDict:
+            if not logger:
+                return event
+            try:
+                path = relative_path_from_logger(logger)
+            except Exception:
+                return event
+            if not path:
+                return event
+            path_str = path.as_posix()
+            if path_str not in log_id_by_path:
+                log_id_by_path[path_str] = self._stream_log_id(path_str)
+            log_id = log_id_by_path[path_str]
+            if log_id is None:
+                return event
+            # Round-trip through JSON so an unserializable event value cannot poison a bulk batch.
+            raw_event = json.dumps(event, default=str)
+            doc: dict[str, Any] = {
+                key: value for key, value in json.loads(raw_event).items() if key.lower() in TASK_LOG_FIELDS
+            }
+            # The verbatim record: readers prefer it so the remote copy parses identically to
+            # the local/served line and the base handler's interleave dedup collapses them.
+            doc["raw_event"] = raw_event
+            doc["log_id"] = log_id
+            doc[self.offset_field] = next_offset()
+            if self.write_stdout:
+                sys.stdout.write(json.dumps(doc) + "\n")
+                sys.stdout.flush()
+                self._stdout_streamed[path_str] += 1
+            if self.write_to_es:
+                self._writer.put(path_str, doc)
+            return event
+
+        return (proc,)
+
+    def _stream_log_id(self, relative_path: str) -> str | None:
+        identity = _parse_default_log_path(relative_path)
+        if identity is None:
+            return None
+        try:
+            return _render_log_id(self.log_id_template, identity, identity.try_number)  # type: ignore[arg-type]
+        except (KeyError, IndexError):
+            # A custom log_id_template needing fields we cannot derive from the path.
+            return None
 
     def _get_source_includes(self, extra_fields: Iterable[str] = ()) -> list[str]:
         """Return the Elasticsearch source fields to include when reading task logs."""
         return _deduplicate_fields(
-            ["@timestamp", *TASK_LOG_FIELDS, self.host_field, self.offset_field, *extra_fields]
+            ["@timestamp", *TASK_LOG_FIELDS, "raw_event", self.host_field, self.offset_field, *extra_fields]
         )
 
     def upload(self, path: os.PathLike | str, ti: RuntimeTI | None = None) -> None:
-        """Write the log to ElasticSearch."""
+        """Write the log to ElasticSearch, skipping records already streamed while the task ran."""
         if ti is None:
             return
 
@@ -737,11 +1031,19 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
 
         if path.is_absolute():
             local_loc = path
+            try:
+                path_key = path.relative_to(self.base_log_folder).as_posix()
+            except ValueError:
+                path_key = path.as_posix()
         else:
             local_loc = self.base_log_folder.joinpath(path)
+            path_key = path.as_posix()
+
+        flushed = self._writer.flush(_STREAM_FLUSH_TIMEOUT)
+        stdout_streamed = self._stdout_streamed.pop(path_key, 0)
 
         log_id = _render_log_id(self.log_id_template, ti, ti.try_number)  # type: ignore[arg-type]
-        if local_loc.is_file() and self.write_stdout:
+        if local_loc.is_file() and self.write_stdout and not stdout_streamed:
             # Intentionally construct the log_id and offset field
 
             log_lines = self._parse_raw_log(local_loc.read_text(), log_id)
@@ -750,10 +1052,23 @@ class ElasticsearchRemoteLogIO(LoggingMixin):  # noqa: D101
                 sys.stdout.flush()
 
         if local_loc.is_file() and self.write_to_es:
-            log_lines = self._parse_raw_log(local_loc.read_text(), log_id)
-            success = self._write_to_es(log_lines)
+            if self._writer.sent[path_key] or self._writer.failed_count(path_key) or not flushed:
+                # Some records streamed (or may still be in flight): replaying the whole file
+                # would duplicate them under clashing offsets, so re-ship only the retained
+                # failed records instead.
+                success = flushed and self._writer.retry_failed(path_key)
+                if not success:
+                    self.log.warning(
+                        "Some task log records could not be streamed to Elasticsearch for %s; "
+                        "keeping the local copy",
+                        path_key,
+                    )
+            else:
+                log_lines = self._parse_raw_log(local_loc.read_text(), log_id)
+                success = self._write_to_es(log_lines)
             if success and self.delete_local_copy:
                 shutil.rmtree(os.path.dirname(local_loc))
+        self._writer.clear(path_key)
 
     def _parse_raw_log(self, log: str, log_id: str) -> list[dict[str, Any]]:
         logs = log.split("\n")

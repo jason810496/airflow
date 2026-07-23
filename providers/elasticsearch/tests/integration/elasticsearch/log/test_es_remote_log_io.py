@@ -19,6 +19,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import uuid
+from unittest import mock
 from unittest.mock import patch
 
 import elasticsearch
@@ -145,3 +146,30 @@ class TestElasticsearchRemoteLogIOIntegration:
         log_entry = json.loads(log_messages[0])
         assert "error_detail" in log_entry
         assert log_entry["error_detail"] == error_detail
+
+    def test_streaming_readable_before_upload(self, ti, tmp_path, monkeypatch):
+        """Streamed records must be readable from ES while the task is still running (before upload)."""
+        monkeypatch.setenv("AIRFLOW__LOGGING__BASE_LOG_FOLDER", str(tmp_path))
+        rel_path = f"dag_id={ti.dag_id}/run_id={ti.run_id}/task_id={ti.task_id}/attempt={ti.try_number}.log"
+        log_file = tmp_path / rel_path
+        log_file.parent.mkdir(parents=True)
+        log_file.touch()
+
+        proc = self.elasticsearch_io.processors[0]
+        with log_file.open("a") as file_handle:
+            fake_logger = mock.Mock(spec=["_file"], _file=file_handle)
+            for event in ("start", "processing", "end"):
+                proc(fake_logger, "info", {"event": event})
+        self.elasticsearch_io._writer.flush(30)
+        self.elasticsearch_io.client.indices.refresh(index=self.target_index)
+
+        log_source_info, log_messages = self.elasticsearch_io.read("", ti)
+
+        assert log_source_info[0] == ES_HOST
+        assert [json.loads(message)["event"] for message in log_messages] == ["start", "processing", "end"]
+
+        # upload() at task end must not re-ship the already-streamed records.
+        self.elasticsearch_io.upload(rel_path, ti)
+        self.elasticsearch_io.client.indices.refresh(index=self.target_index)
+
+        assert self.elasticsearch_io.client.count(index=self.target_index)["count"] == 3
