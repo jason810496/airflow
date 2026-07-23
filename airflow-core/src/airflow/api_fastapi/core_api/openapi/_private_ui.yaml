@@ -1829,6 +1829,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /ui/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}/stream:
+    get:
+      tags:
+      - Task Log Stream
+      summary: Stream Task Log
+      description: 'Stream logs of a task instance try as NDJSON until it reaches
+        a terminal state.
+
+
+        Log lines are interleaved with control records discriminated by the reserved
+
+        ``_airflow_stream_control`` key: ``resume`` records carry a signed token to
+
+        reconnect without re-reading from the start, ``heartbeat`` records keep idle
+
+        connections alive, and a final ``end_of_stream`` record (with a ``reason``
+        of
+
+        ``finished``, ``not_found``, or ``superseded``) marks a completed stream.
+        A
+
+        stream that ends with a ``resume`` record hit the server-side duration limit
+
+        and should be resumed with ``resume_token``.'
+      operationId: stream_task_log
+      security:
+      - OAuth2PasswordBearer: []
+      - HTTPBearer: []
+      parameters:
+      - name: dag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Id
+      - name: dag_run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Run Id
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      - name: try_number
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          title: Try Number
+      - name: map_index
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: -1
+          title: Map Index
+      - name: resume_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Resume Token
+      responses:
+        '200':
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Bad Request
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /ui/teams:
     get:
       tags:

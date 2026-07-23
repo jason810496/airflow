@@ -34,6 +34,7 @@ from airflow.api_fastapi.core_api.routes.ui.gantt import gantt_router
 from airflow.api_fastapi.core_api.routes.ui.grid import grid_router
 from airflow.api_fastapi.core_api.routes.ui.partitioned_dag_runs import partitioned_dag_runs_router
 from airflow.api_fastapi.core_api.routes.ui.structure import structure_router
+from airflow.api_fastapi.core_api.routes.ui.task_log_stream import task_log_stream_router
 from airflow.api_fastapi.core_api.routes.ui.teams import teams_router
 from airflow.api_fastapi.core_api.security import get_user
 
@@ -56,4 +57,5 @@ ui_router.include_router(backfills_router)
 ui_router.include_router(grid_router)
 ui_router.include_router(gantt_router)
 ui_router.include_router(calendar_router)
+ui_router.include_router(task_log_stream_router)
 ui_router.include_router(teams_router)

@@ -1825,6 +1825,25 @@ api:
       type: integer
       example: ~
       default: "500"
+    log_stream_tick_interval_seconds:
+      description: |
+        Seconds to wait between reads of a running task instance's log when serving the
+        UI task log stream endpoint. Each tick re-reads the log sources for new lines,
+        so lower values reduce latency at the cost of more load on the log backends.
+      version_added: 3.4.0
+      type: float
+      example: ~
+      default: "3"
+    log_stream_max_duration_seconds:
+      description: |
+        Maximum lifetime of one UI task log stream connection, in seconds. When reached,
+        the server ends the stream with a resume record and the client reconnects with
+        the resume token, keeping any single API server worker from holding a connection
+        indefinitely.
+      version_added: 3.4.0
+      type: float
+      example: ~
+      default: "600"
     ssl_cert:
       description: |
         Paths to the SSL certificate and key for the api server. When both are

@@ -1,7 +1,7 @@
 // generated with @7nohe/openapi-react-query-codegen@1.6.2 
 
 import { UseQueryOptions, useSuspenseQuery } from "@tanstack/react-query";
-import { AssetService, AssetStateStoreService, AuthLinksService, BackfillService, CalendarService, ConfigService, ConnectionService, DagRunService, DagService, DagSourceService, DagStatsService, DagVersionService, DagWarningService, DashboardService, DeadlinesService, DependenciesService, EventLogService, ExperimentalService, ExtraLinksService, GanttService, GridService, ImportErrorService, JobService, LoginService, MonitorService, PartitionedDagRunService, PluginService, PoolService, ProviderService, StructureService, TaskInstanceService, TaskService, TaskStateStoreService, TeamsService, VariableService, VersionService, XcomService } from "../requests/services.gen";
+import { AssetService, AssetStateStoreService, AuthLinksService, BackfillService, CalendarService, ConfigService, ConnectionService, DagRunService, DagService, DagSourceService, DagStatsService, DagVersionService, DagWarningService, DashboardService, DeadlinesService, DependenciesService, EventLogService, ExperimentalService, ExtraLinksService, GanttService, GridService, ImportErrorService, JobService, LoginService, MonitorService, PartitionedDagRunService, PluginService, PoolService, ProviderService, StructureService, TaskInstanceService, TaskLogStreamService, TaskService, TaskStateStoreService, TeamsService, VariableService, VersionService, XcomService } from "../requests/services.gen";
 import { DagRunState, DagWarningType } from "../requests/types.gen";
 import * as Common from "./common";
 /**
@@ -2137,6 +2137,35 @@ export const useCalendarServiceGetCalendarDeadlinesSuspense = <TData = Common.Ca
   deadlineTimeLte?: string;
   granularity?: "hourly" | "daily";
 }, queryKey?: TQueryKey, options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">) => useSuspenseQuery<TData, TError>({ queryKey: Common.UseCalendarServiceGetCalendarDeadlinesKeyFn({ dagId, deadlineTimeGt, deadlineTimeGte, deadlineTimeLt, deadlineTimeLte, granularity }, queryKey), queryFn: () => CalendarService.getCalendarDeadlines({ dagId, deadlineTimeGt, deadlineTimeGte, deadlineTimeLt, deadlineTimeLte, granularity }) as TData, ...options });
+/**
+* Stream Task Log
+* Stream logs of a task instance try as NDJSON until it reaches a terminal state.
+*
+* Log lines are interleaved with control records discriminated by the reserved
+* ``_airflow_stream_control`` key: ``resume`` records carry a signed token to
+* reconnect without re-reading from the start, ``heartbeat`` records keep idle
+* connections alive, and a final ``end_of_stream`` record (with a ``reason`` of
+* ``finished``, ``not_found``, or ``superseded``) marks a completed stream. A
+* stream that ends with a ``resume`` record hit the server-side duration limit
+* and should be resumed with ``resume_token``.
+* @param data The data for the request.
+* @param data.dagId
+* @param data.dagRunId
+* @param data.taskId
+* @param data.tryNumber
+* @param data.mapIndex
+* @param data.resumeToken
+* @returns unknown Successful Response
+* @throws ApiError
+*/
+export const useTaskLogStreamServiceStreamTaskLogSuspense = <TData = Common.TaskLogStreamServiceStreamTaskLogDefaultResponse, TError = unknown, TQueryKey extends Array<unknown> = unknown[]>({ dagId, dagRunId, mapIndex, resumeToken, taskId, tryNumber }: {
+  dagId: string;
+  dagRunId: string;
+  mapIndex?: number;
+  resumeToken?: string;
+  taskId: string;
+  tryNumber: number;
+}, queryKey?: TQueryKey, options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">) => useSuspenseQuery<TData, TError>({ queryKey: Common.UseTaskLogStreamServiceStreamTaskLogKeyFn({ dagId, dagRunId, mapIndex, resumeToken, taskId, tryNumber }, queryKey), queryFn: () => TaskLogStreamService.streamTaskLog({ dagId, dagRunId, mapIndex, resumeToken, taskId, tryNumber }) as TData, ...options });
 /**
 * List Teams
 * @param data The data for the request.

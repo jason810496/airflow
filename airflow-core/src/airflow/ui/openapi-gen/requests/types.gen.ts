@@ -4786,6 +4786,17 @@ export type GetCalendarDeadlinesData = {
 
 export type GetCalendarDeadlinesResponse = CalendarDeadlineCollectionResponse;
 
+export type StreamTaskLogData = {
+    dagId: string;
+    dagRunId: string;
+    mapIndex?: number;
+    resumeToken?: string | null;
+    taskId: string;
+    tryNumber: number;
+};
+
+export type StreamTaskLogResponse = unknown;
+
 export type ListTeamsData = {
     limit?: number;
     offset?: number;
@@ -8683,6 +8694,29 @@ export type $OpenApiTs = {
                  * Successful Response
                  */
                 200: CalendarDeadlineCollectionResponse;
+                /**
+                 * Validation Error
+                 */
+                422: HTTPValidationError;
+            };
+        };
+    };
+    '/ui/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/logs/{try_number}/stream': {
+        get: {
+            req: StreamTaskLogData;
+            res: {
+                /**
+                 * Successful Response
+                 */
+                200: unknown;
+                /**
+                 * Bad Request
+                 */
+                400: HTTPExceptionResponse;
+                /**
+                 * Not Found
+                 */
+                404: HTTPExceptionResponse;
                 /**
                  * Validation Error
                  */
