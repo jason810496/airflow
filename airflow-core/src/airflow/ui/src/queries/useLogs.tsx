@@ -34,6 +34,8 @@ import { isStatePending, useAutoRefresh } from "src/utils";
 import { getTaskInstanceLink } from "src/utils/links";
 import { parseStreamingLogContent } from "src/utils/logs";
 
+import { useStreamingLogs } from "./useStreamingLogs";
+
 export type ParsedLogEntry = {
   element: JSX.Element | string | undefined;
   group?: { id: number; level: number; parentId?: number; type: "header" | "line" };
@@ -253,7 +255,21 @@ export const useLogs = (
   const { t: translate } = useTranslation("common");
   const refetchInterval = useAutoRefresh({ dagId });
 
-  const { data, ...rest } = useTaskInstanceServiceGetLog(
+  const isPending = isStatePending(taskInstance?.state);
+  const streaming = useStreamingLogs({
+    dagId,
+    dagRunId: taskInstance?.dag_run_id ?? "",
+    enabled: Boolean(taskInstance) && isPending && options?.enabled !== false,
+    mapIndex: taskInstance?.map_index ?? -1,
+    taskId: taskInstance?.task_id ?? "",
+    tryNumber,
+  });
+  // While the task runs, the stream endpoint delivers new lines over one
+  // connection; the polling endpoint takes over for terminal states, the final
+  // canonical read after the stream ends, and as fallback on stream errors.
+  const useStream = isPending && !streaming.hasStreamError && !streaming.isStreamComplete;
+
+  const { data: queryData, ...rest } = useTaskInstanceServiceGetLog(
     {
       accept,
       dagId,
@@ -264,7 +280,7 @@ export const useLogs = (
     },
     undefined,
     {
-      enabled: Boolean(taskInstance),
+      enabled: Boolean(taskInstance) && !useStream,
       refetchInterval: (query) =>
         isStatePending(taskInstance?.state) ||
         dayjs(query.state.dataUpdatedAt).isBefore(taskInstance?.end_date)
@@ -273,6 +289,9 @@ export const useLogs = (
       ...options,
     },
   );
+
+  const streamedData: TaskInstancesLogResponse = { content: streaming.content, continuation_token: null };
+  const data = useStream ? streamedData : queryData;
 
   const parsedData = parseLogs({
     data: parseStreamingLogContent(truncateData(data, limit)),

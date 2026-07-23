@@ -27,6 +27,7 @@ import {
 import type { GridTISummaries, TaskInstanceState } from "openapi/requests";
 import { OpenAPI } from "openapi/requests/core/OpenAPI";
 import { isStatePending, useAutoRefresh } from "src/utils";
+import { readNdjsonStream } from "src/utils/ndjsonStream";
 
 const GRID_MUTATION_WATCHED_KEYS = new Set([
   useTaskInstanceServiceGetTaskInstancesKey,
@@ -70,7 +71,6 @@ export const useGridTiSummariesStream = ({
     }
 
     const abortController = new AbortController();
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
     const fetchStream = async () => {
       // Keep stale data visible while the new stream loads — columns update in
@@ -85,29 +85,11 @@ export const useGridTiSummariesStream = ({
           return;
         }
 
-        reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+        await readNdjsonStream({
+          body: response.body,
+          onLines: (lines) => {
+            const newSummaries = lines.map((line) => JSON.parse(line) as GridTISummaries);
 
-        // eslint-disable-next-line no-await-in-loop -- sequential reads required; each chunk depends on the previous buffer state
-        for (let result = await reader.read(); !result.done; result = await reader.read()) {
-          if (abortController.signal.aborted) {
-            break;
-          }
-
-          const { value } = result;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split("\n");
-
-          buffer = lines.pop() ?? "";
-
-          const newSummaries = lines
-            .filter((ln) => ln.trim())
-            .map((line) => JSON.parse(line) as GridTISummaries);
-
-          if (newSummaries.length > 0) {
             setSummariesByRunId((prev) => {
               const next = new Map(prev);
 
@@ -115,8 +97,9 @@ export const useGridTiSummariesStream = ({
 
               return next;
             });
-          }
-        }
+          },
+          signal: abortController.signal,
+        });
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
           // eslint-disable-next-line no-console
@@ -129,11 +112,6 @@ export const useGridTiSummariesStream = ({
 
     return () => {
       abortController.abort();
-      if (reader) {
-        reader.cancel().catch(() => {
-          // Ignore cancellation errors
-        });
-      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runIdsKey (stable join) intentionally replaces runIds array to avoid spurious re-streams
   }, [dagId, runIdsKey, refreshTick]);
