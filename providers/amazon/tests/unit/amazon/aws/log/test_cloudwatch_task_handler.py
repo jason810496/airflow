@@ -387,6 +387,93 @@ class TestCloudRemoteLogIO:
             assert self.subject.handler.shutting_down is True
 
 
+class TestCloudWatchRemoteLogIOPositionalRead:
+    @pytest.fixture(autouse=True)
+    def setup_io(self):
+        self.remote_log_group = "log_group_name"
+        self.region_name = "us-west-2"
+        self.stream_name = "dag_id=a/task_id=b/0_0.log"
+        self.subject = CloudWatchRemoteLogIO(
+            base_log_folder="/tmp/local-cloudwatch-log-location",
+            log_group_arn=f"arn:aws:logs:{self.region_name}:11111111:log-group:{self.remote_log_group}",
+        )
+        self.conn = boto3.client("logs", region_name=self.region_name)
+        self.conn.create_log_group(logGroupName=self.remote_log_group)
+        self.conn.create_log_stream(logGroupName=self.remote_log_group, logStreamName=self.stream_name)
+        self.ti = mock.MagicMock(end_date=None)
+
+    def put_events(self, log_events):
+        self.conn.put_log_events(
+            logGroupName=self.remote_log_group,
+            logStreamName=self.stream_name,
+            logEvents=log_events,
+        )
+
+    def test_positional_read_resumes_from_recorded_position(self):
+        base_ts = int(time.time()) * 1000 - 10_000
+        self.put_events(
+            [
+                {"timestamp": base_ts, "message": "line-1"},
+                {"timestamp": base_ts, "message": "line-2"},
+                {"timestamp": base_ts + 1000, "message": "line-3"},
+            ]
+        )
+        metadata: dict = {}
+        events = list(self.subject.get_cloudwatch_logs(self.stream_name, self.ti, metadata=metadata))
+        assert [e["message"] for e in events] == ["line-1", "line-2", "line-3"]
+        assert metadata["source_positions"]["cloudwatch"] == {"end_ts": base_ts + 1000, "skip": 1}
+
+        # more events arrive, one of them at the already-consumed timestamp
+        self.put_events(
+            [
+                {"timestamp": base_ts + 1000, "message": "line-4"},
+                {"timestamp": base_ts + 2000, "message": "line-5"},
+            ]
+        )
+        events = list(self.subject.get_cloudwatch_logs(self.stream_name, self.ti, metadata=metadata))
+        assert [e["message"] for e in events] == ["line-4", "line-5"]
+        assert metadata["source_positions"]["cloudwatch"] == {"end_ts": base_ts + 2000, "skip": 1}
+
+        events = list(self.subject.get_cloudwatch_logs(self.stream_name, self.ti, metadata=metadata))
+        assert events == []
+        assert metadata["source_positions"]["cloudwatch"] == {"end_ts": base_ts + 2000, "skip": 1}
+
+    def test_read_without_metadata_returns_all_events_every_time(self):
+        base_ts = int(time.time()) * 1000 - 10_000
+        self.put_events(
+            [
+                {"timestamp": base_ts, "message": "line-1"},
+                {"timestamp": base_ts + 1000, "message": "line-2"},
+            ]
+        )
+        for _ in range(2):
+            events = list(self.subject.get_cloudwatch_logs(self.stream_name, self.ti))
+            assert [e["message"] for e in events] == ["line-1", "line-2"]
+
+    def test_stream_records_position(self):
+        base_ts = int(time.time()) * 1000 - 10_000
+        self.put_events([{"timestamp": base_ts, "message": "line-1"}])
+        metadata: dict = {}
+
+        _, logs = self.subject.stream(self.stream_name, self.ti, metadata=metadata)
+
+        assert len(list(logs[0])) == 1
+        assert metadata["source_positions"]["cloudwatch"] == {"end_ts": base_ts, "skip": 1}
+
+    @mock.patch.object(AwsLogsHook, "get_log_events")
+    def test_missing_stream_hint_does_not_advance_position(self, mock_get_log_events):
+        def _raise_not_found(*args, **kwargs):
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "GetLogEvents")
+            yield  # pragma: no cover -- makes this a generator function
+
+        mock_get_log_events.side_effect = _raise_not_found
+        metadata: dict = {}
+        events = list(self.subject.get_cloudwatch_logs(self.stream_name, self.ti, metadata=metadata))
+        assert len(events) == 1
+        assert "No log stream found in CloudWatch" in events[0]["message"]
+        assert metadata["source_positions"]["cloudwatch"] == {}
+
+
 @pytest.mark.db_test
 class TestCloudwatchTaskHandler:
     def clear_db(self):
@@ -564,8 +651,28 @@ class TestCloudwatchTaskHandler:
         mock_get_log_events.assert_called_once_with(
             log_group=self.remote_log_group,
             log_stream_name=self.remote_log_stream,
+            start_time=0,
+            skip=0,
             end_time=expected_end_time,
         )
+
+    @mock.patch.object(AwsLogsHook, "get_log_events")
+    def test_read_remote_logs_resumes_from_metadata_position(self, mock_get_log_events):
+        self.ti.end_date = None
+        mock_get_log_events.return_value = iter([{"timestamp": 1000, "message": "new"}])
+        metadata: dict = {"source_positions": {"cloudwatch": {"end_ts": 500, "skip": 2}}}
+
+        _, logs = self.cloudwatch_task_handler._read_remote_logs(self.ti, 1, metadata=metadata)
+
+        mock_get_log_events.assert_called_once_with(
+            log_group=self.remote_log_group,
+            log_stream_name=self.remote_log_stream,
+            start_time=500,
+            skip=2,
+            end_time=None,
+        )
+        assert logs == [f"[{get_time_str(1000)}] new"]
+        assert metadata["source_positions"]["cloudwatch"] == {"end_ts": 1000, "skip": 1}
 
     @mock.patch.object(AwsLogsHook, "get_log_events")
     def test_get_cloudwatch_logs_missing_stream_yields_hint(self, mock_get_log_events):

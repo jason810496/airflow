@@ -122,7 +122,15 @@ class TestLocalKubernetesExecutor:
         local_k8s_exec.get_streaming_task_log(ti=simple_task_instance, try_number=3)
 
         k8s_executor_mock.get_streaming_task_log.assert_called_once_with(
-            ti=simple_task_instance, try_number=3
+            ti=simple_task_instance, try_number=3, metadata=None
+        )
+
+        k8s_executor_mock.reset_mock()
+        metadata: dict = {}
+        local_k8s_exec.get_streaming_task_log(ti=simple_task_instance, try_number=3, metadata=metadata)
+
+        k8s_executor_mock.get_streaming_task_log.assert_called_once_with(
+            ti=simple_task_instance, try_number=3, metadata=metadata
         )
 
         k8s_executor_mock.reset_mock()

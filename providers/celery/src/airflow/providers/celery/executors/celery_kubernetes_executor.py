@@ -207,10 +207,14 @@ class CeleryKubernetesExecutor(BaseExecutor):
             return self.kubernetes_executor.get_task_log(ti=ti, try_number=try_number)
         return [], []
 
-    def get_streaming_task_log(self, ti: TaskInstance, try_number: int) -> StreamingLogResponse:
+    def get_streaming_task_log(
+        self, ti: TaskInstance, try_number: int, *, metadata: dict[str, Any] | None = None
+    ) -> StreamingLogResponse:
         """Fetch streaming task log from Kubernetes executor."""
         if ti.queue == self.kubernetes_executor.kubernetes_queue:
-            return self.kubernetes_executor.get_streaming_task_log(ti=ti, try_number=try_number)
+            return self.kubernetes_executor.get_streaming_task_log(
+                ti=ti, try_number=try_number, metadata=metadata
+            )
         return [], []
 
     def has_task(self, task_instance: TaskInstance) -> bool:

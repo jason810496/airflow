@@ -208,7 +208,15 @@ class TestCeleryKubernetesExecutor:
         cke.get_streaming_task_log(ti=simple_task_instance, try_number=1)
 
         k8s_executor_mock.get_streaming_task_log.assert_called_once_with(
-            ti=simple_task_instance, try_number=1
+            ti=simple_task_instance, try_number=1, metadata=None
+        )
+
+        k8s_executor_mock.reset_mock()
+        metadata: dict = {}
+        cke.get_streaming_task_log(ti=simple_task_instance, try_number=1, metadata=metadata)
+
+        k8s_executor_mock.get_streaming_task_log.assert_called_once_with(
+            ti=simple_task_instance, try_number=1, metadata=metadata
         )
 
         k8s_executor_mock.reset_mock()

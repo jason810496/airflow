@@ -27,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import math
 import multiprocessing
 import time
 from collections import Counter, defaultdict
@@ -36,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import chain
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from deprecated import deprecated
 from kubernetes.dynamic import DynamicClient
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
 
     from kubernetes import client
     from kubernetes.client import models as k8s
+    from pendulum import DateTime
     from sqlalchemy.orm import Session
 
     from airflow._shared.logging.remote import RawLogStream, StreamingLogResponse
@@ -78,6 +80,13 @@ if TYPE_CHECKING:
     from airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils import (
         AirflowKubernetesScheduler,
     )
+
+# Per-source read-position contract shared with the API server's task-log tick loop:
+# a position for this source lives under metadata["source_positions"]["kubernetes_pod"]
+# and is advanced in place as the returned log stream is consumed.
+SOURCE_POSITIONS_KEY = "source_positions"
+POD_LOG_POSITION_KEY = "kubernetes_pod"
+POD_LOG_READ_OVERLAP_SECONDS = 2
 
 
 @dataclass
@@ -753,11 +762,54 @@ class KubernetesExecutor(BaseExecutor):
         for line in logs:
             yield remove_escape_codes(line.decode())
 
-    def get_streaming_task_log(self, ti: TaskInstance, try_number: int) -> StreamingLogResponse:
+    @staticmethod
+    def _create_positional_log_stream(
+        logs: Iterable[bytes], position: dict[str, Any], watermark: DateTime | None
+    ) -> RawLogStream:
+        """
+        Yield pod log lines newer than ``watermark``, advancing ``position`` as consumed.
+
+        The lines must carry the kubelet timestamp prefix (``timestamps=True``); it is
+        stripped from the yielded lines. Lines at or before the watermark are the
+        deliberate ``since_seconds`` overlap and are dropped. A line whose timestamp
+        does not parse belongs to the previous line, so it follows that line's
+        keep/drop decision and does not advance the position.
+        """
+        from airflow.providers.cncf.kubernetes.utils.pod_manager import parse_log_line
+
+        in_overlap = watermark is not None
+        for raw_line in logs:
+            line_timestamp, message = parse_log_line(remove_escape_codes(raw_line.decode()))
+            if line_timestamp is None:
+                if not in_overlap:
+                    yield message
+                continue
+            if in_overlap:
+                if watermark is not None and line_timestamp <= watermark:
+                    continue
+                in_overlap = False
+            position["last_captured_ts"] = line_timestamp.isoformat()
+            yield message
+
+    def get_streaming_task_log(
+        self, ti: TaskInstance, try_number: int, *, metadata: dict[str, Any] | None = None
+    ) -> StreamingLogResponse:
+        """
+        Stream pod logs for the given task instance try.
+
+        When ``metadata`` is provided, the read is positional: it resumes after the
+        position recorded under ``metadata["source_positions"]["kubernetes_pod"]``
+        (or from the start of the pod log when none is recorded yet) and advances
+        that position as the returned stream is consumed, so the caller can carry
+        it between polls. Without ``metadata``, only the last
+        ``RUNNING_POD_LOG_LINES`` lines are fetched, fresh on every call.
+        """
         messages: list[str] = []
         log_streams: list[RawLogStream] = []
 
         try:
+            import pendulum
+
             from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
             from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
 
@@ -782,19 +834,50 @@ class KubernetesExecutor(BaseExecutor):
                 raise RuntimeError("Cannot find pod for ti %s", ti)
             if len(pod_list) > 1:
                 raise RuntimeError("Found multiple pods for ti %s: %s", ti, pod_list)
+
+            read_kwargs: dict[str, Any] = {}
+            position: dict[str, Any] | None = None
+            watermark: DateTime | None = None
+            if metadata is None:
+                read_kwargs["tail_lines"] = self.RUNNING_POD_LOG_LINES
+            else:
+                position = metadata.setdefault(SOURCE_POSITIONS_KEY, {}).setdefault(POD_LOG_POSITION_KEY, {})
+                read_kwargs["timestamps"] = True
+                if last_captured_ts := position.get("last_captured_ts"):
+                    try:
+                        watermark = cast("DateTime", pendulum.parse(last_captured_ts))
+                    except Exception:
+                        self.log.warning(
+                            "Could not parse stored pod log read position %r; re-reading the pod log from the start",
+                            last_captured_ts,
+                        )
+                if watermark is not None:
+                    # since_seconds is evaluated against the kubelet clock while the watermark
+                    # comes from kubelet line timestamps: the overlap absorbs clock skew up to
+                    # its size (same pattern as PodManager.fetch_container_logs), and the
+                    # overlapped lines <= watermark are dropped client-side, never duplicated
+                    since_seconds = (pendulum.now("UTC") - watermark).total_seconds()
+                    read_kwargs["since_seconds"] = (
+                        max(0, math.ceil(since_seconds)) + POD_LOG_READ_OVERLAP_SECONDS
+                    )
+
             res = client.read_namespaced_pod_log(
                 name=pod_list[0].metadata.name,
                 namespace=namespace,
                 container="base",
                 follow=False,
-                tail_lines=self.RUNNING_POD_LOG_LINES,
                 _preload_content=False,
+                **read_kwargs,
             )
 
             log_iter = iter(res)
             first_line = next(log_iter, None)
             if first_line is not None:
-                log_streams.append(self._create_log_stream(chain([first_line], log_iter)))
+                stream = chain([first_line], log_iter)
+                if position is None:
+                    log_streams.append(self._create_log_stream(stream))
+                else:
+                    log_streams.append(self._create_positional_log_stream(stream, position, watermark))
                 messages.append("Found logs through kube API")
         except Exception as e:
             messages.append(f"Reading from k8s pod logs failed: {e}")

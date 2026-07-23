@@ -56,6 +56,13 @@ if TYPE_CHECKING:
     )
 
 
+# Per-source read-position contract shared with the API server's task-log tick loop:
+# a position for this source lives under metadata["source_positions"]["cloudwatch"]
+# and is advanced in place as the returned event stream is consumed.
+SOURCE_POSITIONS_KEY = "source_positions"
+CLOUDWATCH_POSITION_KEY = "cloudwatch"
+
+
 def json_serialize_legacy(value: Any) -> str | None:
     """
     JSON serializer replicating legacy watchtower behavior.
@@ -257,7 +264,9 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
 
         return messages, str_logs
 
-    def stream(self, relative_path: str, ti: RuntimeTI) -> StreamingLogResponse:
+    def stream(
+        self, relative_path: str, ti: RuntimeTI, *, metadata: dict[str, Any] | None = None
+    ) -> StreamingLogResponse:
         logs: list[RawLogStream] = []
         messages = [
             f"Reading remote log from Cloudwatch log_group: {self.log_group} log_stream: {relative_path}"
@@ -265,7 +274,7 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
         try:
             gen: RawLogStream = (
                 self._parse_log_event_as_dumped_json(event)
-                for event in self.get_cloudwatch_logs(relative_path, ti)
+                for event in self.get_cloudwatch_logs(relative_path, ti, metadata=metadata)
             )
             logs = [gen]
         except Exception as e:
@@ -274,14 +283,21 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
         return messages, logs
 
     def get_cloudwatch_logs(
-        self, stream_name: str, task_instance: RuntimeTI
+        self, stream_name: str, task_instance: RuntimeTI, *, metadata: dict[str, Any] | None = None
     ) -> Generator[CloudWatchLogEvent, None, None]:
         """
-        Return all logs from the given log stream.
+        Return logs from the given log stream.
 
-        :param stream_name: name of the Cloudwatch log stream to get all logs from
+        When ``metadata`` is provided, the read is positional: it resumes after the
+        position recorded under ``metadata["source_positions"]["cloudwatch"]`` (or
+        from the start of the stream when none is recorded yet) and advances that
+        position as the returned generator is consumed, so the caller can carry it
+        between polls. Without ``metadata``, all events are returned on every call.
+
+        :param stream_name: name of the Cloudwatch log stream to get logs from
         :param task_instance: the task instance to get logs about
-        :return: string of all logs from the given log stream
+        :param metadata: optional per-poll metadata dict carrying the read position
+        :return: generator of log events from the given log stream
         """
         stream_name = stream_name.replace(":", "_")
         # If there is an end_date to the task instance, fetch logs until that date + 30 seconds
@@ -291,15 +307,33 @@ class CloudWatchRemoteLogIO(LoggingMixin):  # noqa: D101
             if (end_date := getattr(task_instance, "end_date", None)) is None
             else datetime_to_epoch_utc_ms(end_date + timedelta(seconds=30))
         )
+        position: dict[str, Any] | None = None
+        start_time = 0
+        skip = 0
+        if metadata is not None:
+            position = metadata.setdefault(SOURCE_POSITIONS_KEY, {}).setdefault(CLOUDWATCH_POSITION_KEY, {})
+            # start_time is inclusive, so events at end_ts come back again; skip drops
+            # exactly the ones already consumed at that timestamp
+            start_time = position.get("end_ts", 0)
+            skip = position.get("skip", 0)
         events = self.hook.get_log_events(
             log_group=self.log_group,
             log_stream_name=stream_name,
+            start_time=start_time,
+            skip=skip,
             end_time=end_time,
         )
 
         def _iter_events() -> Generator[CloudWatchLogEvent, None, None]:
             try:
-                yield from events
+                for event in events:
+                    if position is not None:
+                        if event["timestamp"] == position.get("end_ts"):
+                            position["skip"] = position.get("skip", 0) + 1
+                        else:
+                            position["end_ts"] = event["timestamp"]
+                            position["skip"] = 1
+                    yield event
             except ClientError as e:
                 # A missing log stream means no logs were written for this stream
                 # (e.g. the task logged to stdout instead of remote storage, or has
@@ -417,13 +451,11 @@ class CloudwatchTaskHandler(FileTaskHandler, LoggingMixin):
         self, task_instance, try_number, metadata=None
     ) -> tuple[LogSourceInfo, LogMessages]:
         stream_name = self._render_filename(task_instance, try_number)
-        messages, logs = self.io.read(stream_name, task_instance)
-
         messages = [
             f"Reading remote log from Cloudwatch log_group: {self.io.log_group} log_stream: {stream_name}"
         ]
         try:
-            events = self.io.get_cloudwatch_logs(stream_name, task_instance)
+            events = self.io.get_cloudwatch_logs(stream_name, task_instance, metadata=metadata)
             logs = ["\n".join(self._event_to_str(event) for event in events)]
         except Exception as e:
             logs = []

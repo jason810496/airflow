@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from unittest import mock
 
 import pytest
+import time_machine
 import yaml
 from kubernetes.client import models as k8s
 from kubernetes.client.rest import ApiException
@@ -2651,6 +2652,10 @@ class TestKubernetesExecutor:
         messages, log_streams = executor.get_streaming_task_log(ti=ti, try_number=1)
 
         mock_kube_client.read_namespaced_pod_log.assert_called_once()
+        call_kwargs = mock_kube_client.read_namespaced_pod_log.call_args.kwargs
+        assert call_kwargs["tail_lines"] == executor.RUNNING_POD_LOG_LINES
+        assert "timestamps" not in call_kwargs
+        assert "since_seconds" not in call_kwargs
         assert messages == [
             "Attempting to fetch logs from pod through kube API",
             "Found logs through kube API",
@@ -2666,6 +2671,118 @@ class TestKubernetesExecutor:
             "Attempting to fetch logs from pod through kube API",
             "Reading from k8s pod logs failed: error_fetching_pod_log",
         ]
+
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_get_streaming_task_log_positional_first_read(self, mock_get_kube_client):
+        """A metadata dict without a position reads the full pod log and records the position."""
+        mock_kube_client = mock_get_kube_client.return_value
+        mock_kube_client.read_namespaced_pod_log.return_value = [
+            b"2026-07-23T10:00:00.100000Z a_",
+            b"2026-07-23T10:00:01.200000Z b_",
+            b"2026-07-23T10:00:02.300000Z c_",
+        ]
+        mock_pod = mock.Mock()
+        mock_pod.metadata.name = "x"
+        mock_kube_client.list_namespaced_pod.return_value.items = [mock_pod]
+        ti = mock.MagicMock(
+            dag_id="test_k8s_log_dag",
+            task_id="test_task",
+            map_index=-1,
+            run_id="test_run",
+            queued_by_job_id=None,
+            hostname="",
+            executor_config={},
+        )
+
+        executor = KubernetesExecutor()
+        metadata: dict = {}
+        messages, log_streams = executor.get_streaming_task_log(ti=ti, try_number=1, metadata=metadata)
+
+        call_kwargs = mock_kube_client.read_namespaced_pod_log.call_args.kwargs
+        assert call_kwargs["timestamps"] is True
+        assert "tail_lines" not in call_kwargs
+        assert "since_seconds" not in call_kwargs
+        assert messages == [
+            "Attempting to fetch logs from pod through kube API",
+            "Found logs through kube API",
+        ]
+        assert list(log_streams[0]) == ["a_", "b_", "c_"]
+        assert metadata["source_positions"]["kubernetes_pod"] == {
+            "last_captured_ts": "2026-07-23T10:00:02.300000+00:00"
+        }
+
+    @time_machine.travel("2026-07-23 10:00:10 +0000", tick=False)
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_get_streaming_task_log_positional_resume(self, mock_get_kube_client):
+        """A recorded position resumes with an overlap, drops consumed lines, and advances."""
+        mock_kube_client = mock_get_kube_client.return_value
+        mock_kube_client.read_namespaced_pod_log.return_value = [
+            b"2026-07-23T10:00:01.200000Z b_",  # overlap: at the watermark, already consumed
+            b"in-overlap-continuation",  # belongs to the dropped line above
+            b"2026-07-23T10:00:02.300000Z c_",
+            b"kept-continuation",  # unparsable timestamp after a kept line
+            b"2026-07-23T10:00:03.400000Z d_",
+        ]
+        mock_pod = mock.Mock()
+        mock_pod.metadata.name = "x"
+        mock_kube_client.list_namespaced_pod.return_value.items = [mock_pod]
+        ti = mock.MagicMock(
+            dag_id="test_k8s_log_dag",
+            task_id="test_task",
+            map_index=-1,
+            run_id="test_run",
+            queued_by_job_id=None,
+            hostname="",
+            executor_config={},
+        )
+
+        executor = KubernetesExecutor()
+        metadata: dict = {
+            "source_positions": {"kubernetes_pod": {"last_captured_ts": "2026-07-23T10:00:01.200000+00:00"}}
+        }
+        _, log_streams = executor.get_streaming_task_log(ti=ti, try_number=1, metadata=metadata)
+
+        call_kwargs = mock_kube_client.read_namespaced_pod_log.call_args.kwargs
+        assert call_kwargs["timestamps"] is True
+        assert "tail_lines" not in call_kwargs
+        # ceil(10:00:10 - 10:00:01.2) + 2 = 9 + 2
+        assert call_kwargs["since_seconds"] == 11
+        assert list(log_streams[0]) == ["c_", "kept-continuation", "d_"]
+        assert metadata["source_positions"]["kubernetes_pod"] == {
+            "last_captured_ts": "2026-07-23T10:00:03.400000+00:00"
+        }
+
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_get_streaming_task_log_positional_corrupt_position_rereads_from_start(
+        self, mock_get_kube_client
+    ):
+        """An unparsable stored position falls back to a full read and gets replaced."""
+        mock_kube_client = mock_get_kube_client.return_value
+        mock_kube_client.read_namespaced_pod_log.return_value = [b"2026-07-23T10:00:00.100000Z a_"]
+        mock_pod = mock.Mock()
+        mock_pod.metadata.name = "x"
+        mock_kube_client.list_namespaced_pod.return_value.items = [mock_pod]
+        ti = mock.MagicMock(
+            dag_id="test_k8s_log_dag",
+            task_id="test_task",
+            map_index=-1,
+            run_id="test_run",
+            queued_by_job_id=None,
+            hostname="",
+            executor_config={},
+        )
+
+        executor = KubernetesExecutor()
+        metadata: dict = {"source_positions": {"kubernetes_pod": {"last_captured_ts": "not-a-timestamp"}}}
+        _, log_streams = executor.get_streaming_task_log(ti=ti, try_number=1, metadata=metadata)
+
+        call_kwargs = mock_kube_client.read_namespaced_pod_log.call_args.kwargs
+        assert "since_seconds" not in call_kwargs
+        assert "tail_lines" not in call_kwargs
+        assert list(log_streams[0]) == ["a_"]
+        assert metadata["source_positions"]["kubernetes_pod"] == {
+            "last_captured_ts": "2026-07-23T10:00:00.100000+00:00"
+        }
 
     @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
     def test_get_task_log(self, mock_get_kube_client):
