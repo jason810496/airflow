@@ -308,6 +308,36 @@ repos:
         additional_dependencies: ['rich>=13.6.0']
         pass_filenames: false
         require_serial: true
+      - id: check-ts-sdk-capabilities-in-sync
+        name: Check ts-sdk/generated/lang-sdk/capabilities.json matches the TypeScript capability constant
+        entry: ./ts-sdk/scripts/ci/prek/check_capabilities_in_sync.py
+        # node so prek provisions node + pnpm; the entry is a Python script (run via its python3
+        # shebang, which CI/Linux provides on PATH) that shells out to `pnpm run
+        # generate:capabilities`, matching the ts-sdk supervisor-schema hook. Pin node to match
+        # ts-sdk's `engines.node` (>=22).
+        language: node
+        language_version: '22.22.0'
+        files: >
+          (?x)
+          ^ts-sdk/src/conformance/.*\.ts$|
+          ^ts-sdk/scripts/generate-capabilities\.ts$|
+          ^ts-sdk/generated/lang-sdk/capabilities\.json$
+        additional_dependencies: ['pnpm@10.28.1']
+        pass_filenames: false
+        require_serial: true
+      - id: update-ts-sdk-readme-matrix
+        name: Update the TypeScript SDK compatibility matrix in ts-sdk/README.md
+        entry: ./scripts/ci/prek/update_ts_sdk_readme_matrix.py
+        language: python
+        files: >
+          (?x)
+          ^ts-sdk/generated/lang-sdk/capabilities\.json$|
+          ^ts-sdk/README\.md$|
+          ^scripts/ci/prek/lang_sdk_compat_matrix\.py$|
+          ^scripts/ci/prek/update_ts_sdk_readme_matrix\.py$
+        additional_dependencies: ['rich>=13.6.0']
+        pass_filenames: false
+        require_serial: true
       - id: check-go-example-mod-tidy
         name: Check lang-SDK Go example module is tidy against the Go SDK
         entry: ./scripts/ci/prek/check_go_example_mod_tidy.py
