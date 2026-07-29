@@ -78,11 +78,11 @@ means.
      - Java
      - TypeScript
    * - Min. Airflow version
-     - –
+     - 3.3
      - –
      - –
    * - Supervisor schema
-     - –
+     - 2026-06-16
      - –
      - –
    * - **TaskInstance states**
@@ -90,35 +90,35 @@ means.
      -
      -
    * - ``success`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``failed`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``up_for_retry`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``skipped`` (SHOULD)
-     - –
+     - ✗
      - –
      - –
    * - ``deferred`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``up_for_reschedule`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``awaiting_input`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``removed`` (MAY)
-     - –
+     - ✓
      - –
      - –
    * - **Runtime capabilities**
@@ -126,43 +126,43 @@ means.
      -
      -
    * - ``mixed-lang-stub-target`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``task-logging`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``xcom-read-write`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``connection-read`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``variable-read-write`` (MUST)
-     - –
+     - ✗
      - –
      - –
    * - ``self-contained-bundle`` (MUST)
-     - –
+     - ✓
      - –
      - –
    * - ``task-state-store`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``asset-state-store`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``asset-event-emit`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - ``asset-event-read`` (MAY)
-     - –
+     - ✗
      - –
      - –
    * - **Native-Dag authoring**
@@ -170,47 +170,47 @@ means.
      -
      -
    * - ``native-dag-authoring`` (SHOULD)
-     - –
+     - ✗
      - –
      - –
    * - ``task-args`` (MUST †)
-     - –
+     - n/a
      - –
      - –
    * - ``dag-params`` (MUST †)
-     - –
+     - n/a
      - –
      - –
    * - ``taskflow-dependencies`` (MUST †)
-     - –
+     - n/a
      - –
      - –
    * - ``branching`` (SHOULD †)
-     - –
+     - n/a
      - –
      - –
    * - ``dag-test`` (SHOULD †)
-     - –
+     - n/a
      - –
      - –
    * - ``task-group`` (MAY †)
-     - –
+     - n/a
      - –
      - –
    * - ``dynamic-task-mapping`` (MAY †)
-     - –
+     - n/a
      - –
      - –
    * - ``asset-inlets-outlets`` (MAY †)
-     - –
+     - n/a
      - –
      - –
    * - ``asset-scheduling`` (MAY †)
-     - –
+     - n/a
      - –
      - –
    * - ``object-store`` (MAY)
-     - –
+     - ✗
      - –
      - –
 

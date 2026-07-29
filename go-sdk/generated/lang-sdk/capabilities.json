@@ -1,0 +1,154 @@
+{
+  "sdk": "go",
+  "supervisor_schema_version": "2026-06-16",
+  "min_airflow_version": "3.3",
+  "states": {
+    "awaiting_input": {
+      "supported": false,
+      "since": null,
+      "note": "runtime does not emit AwaitInputTask yet"
+    },
+    "deferred": {
+      "supported": false,
+      "since": null,
+      "note": "runtime does not emit DeferTask yet"
+    },
+    "failed": {
+      "supported": true,
+      "since": "3.3",
+      "note": ""
+    },
+    "removed": {
+      "supported": true,
+      "since": "3.3",
+      "note": ""
+    },
+    "skipped": {
+      "supported": false,
+      "since": null,
+      "note": "runtime does not emit TaskState skipped yet"
+    },
+    "success": {
+      "supported": true,
+      "since": "3.3",
+      "note": ""
+    },
+    "up_for_reschedule": {
+      "supported": false,
+      "since": null,
+      "note": "runtime does not emit RescheduleTask yet"
+    },
+    "up_for_retry": {
+      "supported": true,
+      "since": "3.3",
+      "note": "RetryTask"
+    }
+  },
+  "capabilities": {
+    "asset-event-emit": {
+      "supported": false,
+      "since": null,
+      "note": "runtime does not emit asset events yet"
+    },
+    "asset-event-read": {
+      "supported": false,
+      "since": null,
+      "note": "no task-facing asset-event API yet"
+    },
+    "asset-inlets-outlets": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "asset-scheduling": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "asset-state-store": {
+      "supported": false,
+      "since": null,
+      "note": "no task-facing state-store API yet"
+    },
+    "branching": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "connection-read": {
+      "supported": true,
+      "since": "3.3",
+      "note": "GetConnection"
+    },
+    "dag-params": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "dag-test": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "dynamic-task-mapping": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "mixed-lang-stub-target": {
+      "supported": true,
+      "since": "3.3",
+      "note": "@task.stub"
+    },
+    "native-dag-authoring": {
+      "supported": false,
+      "since": null,
+      "note": "native Dag authoring not implemented yet"
+    },
+    "object-store": {
+      "supported": false,
+      "since": null,
+      "note": "no object-storage API yet"
+    },
+    "self-contained-bundle": {
+      "supported": true,
+      "since": "3.3",
+      "note": "AFBNDL01 native binary via airflow-go-pack"
+    },
+    "task-args": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "task-group": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "task-logging": {
+      "supported": true,
+      "since": "3.3",
+      "note": "slog records streamed over the logs socket"
+    },
+    "task-state-store": {
+      "supported": false,
+      "since": null,
+      "note": "no task-facing state-store API yet"
+    },
+    "taskflow-dependencies": {
+      "supported": false,
+      "since": null,
+      "note": ""
+    },
+    "variable-read-write": {
+      "supported": false,
+      "since": null,
+      "note": "GetVariable only; no write over the comm socket yet"
+    },
+    "xcom-read-write": {
+      "supported": true,
+      "since": "3.3",
+      "note": "PushXCom / GetXCom"
+    }
+  }
+}
