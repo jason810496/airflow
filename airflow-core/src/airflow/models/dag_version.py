@@ -238,6 +238,37 @@ class DagVersion(Base):
 
         return session.scalar(version_select_obj.order_by(cls.version_number.desc()).limit(1))
 
+    @classmethod
+    @provide_session
+    def get_version_data(
+        cls,
+        dag_id: str,
+        bundle_version: str,
+        *,
+        session: Session = NEW_SESSION,
+    ) -> dict[str, Any] | None:
+        """
+        Get the ``version_data`` manifest recorded for ``bundle_version``, if a row still holds it.
+
+        Only the latest version of a Dag has its ``bundle_version`` pointer refreshed in place, so a
+        version an older pinned run still needs may survive on a historical row.
+
+        :param dag_id: The DAG ID.
+        :param bundle_version: The bundle version the manifest must describe.
+        :param session: The database session.
+        :return: The manifest, or None if no row records one for this bundle version.
+        """
+        return session.scalar(
+            select(cls.version_data)
+            .where(
+                cls.dag_id == dag_id,
+                cls.bundle_version == bundle_version,
+                cls.version_data.is_not(None),
+            )
+            .order_by(cls.version_number.desc())
+            .limit(1)
+        )
+
     @property
     def version(self) -> str:
         """A human-friendly representation of the version."""
@@ -245,12 +276,38 @@ class DagVersion(Base):
 
 
 def _resolve_version_data(
-    dag_version: DagVersion | None, bundle_version: str | None
+    dag_id: str,
+    bundle_version: str | None,
+    *,
+    hint: DagVersion | None = None,
+    session: Session | None = None,
 ) -> dict[str, Any] | None:
-    """Return a bundle version's ``version_data`` manifest, but only for pinned runs."""
-    # Expose version_data only when the run is pinned (bundle_version set) and a DagVersion is
-    # present, so the bundle initializes against the exact version the run used. Unpinned runs
-    # follow the latest bundle state, and legacy rows have no DagVersion.
-    if dag_version is not None and bundle_version is not None:
-        return dag_version.version_data
-    return None
+    """
+    Get the ``version_data`` manifest describing ``bundle_version``.
+
+    ``bundle_version`` is authoritative: the returned manifest describes it or is None, never some
+    other version's manifest. That matters because ``version_data`` is a property of a bundle
+    version but is stored on ``dag_version``, keyed by ``(dag_id, version_number)``, whose pointer
+    ``SerializedDagModel.write_dag`` refreshes in place when the bundle advances with no Dag change.
+    A pinned run holding the same row would otherwise ship its version string alongside a newer
+    version's manifest, and the bundle would silently materialize the wrong code.
+
+    A None result is safe: it is what every unpinned run already ships, and leaves the bundle to
+    resolve ``bundle_version`` itself.
+
+    :param dag_id: The DAG ID.
+    :param bundle_version: The bundle version being shipped, or None for an unpinned run.
+    :param hint: A DagVersion the caller already holds, used directly when its pointer still
+        matches. Callers reading it off a transient or detached object must have eager-loaded
+        ``bundle_version``, or it reads as None and the hint never matches.
+    :param session: Session used to recover the manifest from a historical row when ``hint`` does
+        not match. Resolution is hint-only when omitted.
+    :return: The manifest, or None if none is recorded for this bundle version.
+    """
+    if bundle_version is None:
+        return None
+    if hint is not None and hint.bundle_version == bundle_version:
+        return hint.version_data
+    if session is None:
+        return None
+    return DagVersion.get_version_data(dag_id, bundle_version, session=session)

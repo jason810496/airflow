@@ -1529,7 +1529,11 @@ class DagRun(Base, LoggingMixin):
 
             # Only carry version_data for pinned runs so the callback initializes the bundle
             # against the same version the run used.
-            version_data = _resolve_version_data(self.created_dag_version, self.bundle_version)
+            version_data = _resolve_version_data(
+                self.dag_id,
+                self.bundle_version,
+                hint=self.created_dag_version,
+            )
             return DagCallbackRequest(
                 filepath=self.dag_model.relative_fileloc,
                 dag_id=self.dag_id,

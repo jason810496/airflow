@@ -585,7 +585,10 @@ def _(event: BaseTaskEndEvent, *, task_instance: TaskInstance, session: Session)
                 else task_instance.dag_run.bundle_version
             )
             version_data = _resolve_version_data(
-                task_instance.dag_version, task_instance.dag_run.bundle_version
+                task_instance.dag_id,
+                bundle_version,
+                hint=task_instance.dag_version,
+                session=session,
             )
             request = TaskCallbackRequest(
                 filepath=task_instance.dag_model.relative_fileloc,

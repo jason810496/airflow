@@ -173,6 +173,10 @@ def test_workload_ti_round_trips_through_sdk_generated_model():
     assert not hasattr(received, "pool_slots")
 
 
+_SAME_AS_RUN = object()
+"""Sentinel: the DagVersion row's bundle pointer still matches the run's pin."""
+
+
 class TestExecuteTaskMakeVersionData:
     """Tests for ExecuteTask.make() threading version_data through BundleInfo."""
 
@@ -190,6 +194,7 @@ class TestExecuteTaskMakeVersionData:
         *,
         has_created_dag_version=True,
         ti_dag_version_data=None,
+        created_dag_version_bundle_version=_SAME_AS_RUN,
     ):
         """Build a mock TI with the attributes ExecuteTask.make() reads.
 
@@ -199,6 +204,8 @@ class TestExecuteTaskMakeVersionData:
         must IGNORE (it can diverge from the run's pin after a mid-run DAG re-parse).
         ``has_created_dag_version`` toggles whether the run has a pinned DagVersion
         (legacy/backfilled runs may not).
+        ``created_dag_version_bundle_version`` is the row's bundle pointer; it defaults to the run's
+        pin and can be set to a different value to simulate the pointer being refreshed in place.
         """
         from unittest.mock import Mock
 
@@ -229,6 +236,11 @@ class TestExecuteTaskMakeVersionData:
 
         if has_created_dag_version:
             ti.dag_run.created_dag_version.version_data = version_data
+            ti.dag_run.created_dag_version.bundle_version = (
+                bundle_version
+                if created_dag_version_bundle_version is _SAME_AS_RUN
+                else created_dag_version_bundle_version
+            )
         else:
             ti.dag_run.created_dag_version = None
 
@@ -282,12 +294,35 @@ class TestExecuteTaskMakeVersionData:
         assert workload.bundle_info.version_data == run_manifest
         assert workload.bundle_info.version_data != bumped_manifest
 
+    def test_refreshed_bundle_pointer_suppresses_mismatched_manifest(self):
+        """The run stays pinned to v1, but the bundle advanced to v2 with no Dag change, so
+        write_dag refreshed created_dag_version's pointer and manifest in place. Shipping that
+        manifest alongside version="v1" would make a versioned bundle materialize v2's tree while
+        claiming v1, so it must be dropped rather than paired with the wrong version.
+        """
+        ti = self._make_mock_ti(
+            bundle_version="v1hash",
+            version_data={"schema_version": 1, "files": {"dags/my_dag.py": "v2-object-id"}},
+            created_dag_version_bundle_version="v2hash",
+        )
+
+        workload = ExecuteTask.make(ti)
+
+        assert workload.bundle_info.version == "v1hash"
+        assert workload.bundle_info.version_data is None
+
 
 class TestExecuteCallbackMakeVersionData:
     """Tests for ExecuteCallback.make() threading version_data through BundleInfo."""
 
     @staticmethod
-    def _make_mocks(bundle_version, version_data, *, has_created_dag_version=True):
+    def _make_mocks(
+        bundle_version,
+        version_data,
+        *,
+        has_created_dag_version=True,
+        created_dag_version_bundle_version=_SAME_AS_RUN,
+    ):
         """Build mock Callback + DagRun with the attributes ExecuteCallback.make() reads."""
         from unittest.mock import Mock
 
@@ -304,6 +339,11 @@ class TestExecuteCallbackMakeVersionData:
         dag_run.dag_model.relative_fileloc = "dags/test_dag.py"
         if has_created_dag_version:
             dag_run.created_dag_version.version_data = version_data
+            dag_run.created_dag_version.bundle_version = (
+                bundle_version
+                if created_dag_version_bundle_version is _SAME_AS_RUN
+                else created_dag_version_bundle_version
+            )
         else:
             dag_run.created_dag_version = None
 
@@ -338,4 +378,17 @@ class TestExecuteCallbackMakeVersionData:
         workload = ExecuteCallback.make(callback=callback, dag_run=dag_run)
 
         assert workload.bundle_info.version == "abc123"
+        assert workload.bundle_info.version_data is None
+
+    def test_refreshed_bundle_pointer_suppresses_mismatched_manifest(self):
+        """A manifest belonging to a newer bundle version must not be paired with the run's pin."""
+        callback, dag_run = self._make_mocks(
+            bundle_version="v1hash",
+            version_data={"schema_version": 1, "files": {"dags/my_dag.py": "v2-object-id"}},
+            created_dag_version_bundle_version="v2hash",
+        )
+
+        workload = ExecuteCallback.make(callback=callback, dag_run=dag_run)
+
+        assert workload.bundle_info.version == "v1hash"
         assert workload.bundle_info.version_data is None

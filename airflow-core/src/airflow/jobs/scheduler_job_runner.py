@@ -188,7 +188,7 @@ def _eager_load_dag_run_for_validation() -> tuple[LoaderOption, LoaderOption]:
     )
 
 
-def _resolve_ti_callback_bundle_info(ti: TaskInstance) -> tuple[str, str | None, Any]:
+def _resolve_ti_callback_bundle_info(ti: TaskInstance, *, session: Session) -> tuple[str, str | None, Any]:
     """
     Resolve the bundle name/version/version-data needed to build a TaskCallbackRequest or EmailRequest.
 
@@ -204,7 +204,7 @@ def _resolve_ti_callback_bundle_info(ti: TaskInstance) -> tuple[str, str | None,
         if ti.dag_version and ti.dag_run.bundle_version is not None
         else ti.dag_run.bundle_version
     )
-    version_data = _resolve_version_data(ti.dag_version, ti.dag_run.bundle_version)
+    version_data = _resolve_version_data(ti.dag_id, bundle_version, hint=ti.dag_version, session=session)
     return bundle_name, bundle_version, version_data
 
 
@@ -782,14 +782,16 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 .options(selectinload(TI.dag_model))
                 # Eager-load the run's pinned DagVersion (dag_run.created_dag_version): TIs become
                 # transient (via make_transient) before ExecuteTask.make() reads
-                # ti.dag_run.created_dag_version.version_data to ship the bundle manifest matching
-                # the run's pinned bundle_version. Lazy loads on transient objects silently return
-                # None instead of raising DetachedInstanceError. Scope the SELECT to version_data
-                # (the PK is auto-included) so we read two columns rather than the full row.
+                # ti.dag_run.created_dag_version to ship the bundle manifest matching the run's
+                # pinned bundle_version. Lazy loads on transient objects silently return None
+                # instead of raising DetachedInstanceError, so bundle_version must be loaded here
+                # too — otherwise it reads as None, never matches the run's pin, and the manifest
+                # is dropped for every pinned run. Scope the SELECT to the two columns actually
+                # read (the PK is auto-included) rather than the full row.
                 .options(
                     joinedload(TI.dag_run)
                     .selectinload(DagRun.created_dag_version)
-                    .load_only(DagVersion.version_data)
+                    .load_only(DagVersion.version_data, DagVersion.bundle_version)
                 )
             )
 
@@ -1589,7 +1591,9 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                         if ti.dag_version and ti.dag_run.bundle_version is not None
                         else ti.dag_run.bundle_version
                     )
-                    _version_data = _resolve_version_data(ti.dag_version, ti.dag_run.bundle_version)
+                    _version_data = _resolve_version_data(
+                        ti.dag_id, _bundle_version, hint=ti.dag_version, session=session
+                    )
                     # Backfill dag_version_id for legacy tasks (Pydantic requires uuid.UUID).
                     if not _ensure_ti_has_dag_version_id(ti, session, cls.logger()):
                         continue
@@ -1640,7 +1644,9 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                     _email_bundle_version = (
                         ti.dag_version.bundle_version if ti.dag_version else ti.dag_run.bundle_version
                     )
-                    _email_version_data = _resolve_version_data(ti.dag_version, ti.dag_run.bundle_version)
+                    _email_version_data = _resolve_version_data(
+                        ti.dag_id, _email_bundle_version, hint=ti.dag_version, session=session
+                    )
                     # Backfill dag_version_id for legacy tasks (Pydantic requires uuid.UUID).
                     if not _ensure_ti_has_dag_version_id(ti, session, cls.logger()):
                         continue
@@ -3166,7 +3172,9 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                         if ti.dag_version and ti.dag_run.bundle_version is not None
                         else ti.dag_run.bundle_version
                     )
-                    _stuck_version_data = _resolve_version_data(ti.dag_version, ti.dag_run.bundle_version)
+                    _stuck_version_data = _resolve_version_data(
+                        ti.dag_id, _stuck_bundle_version, hint=ti.dag_version, session=session
+                    )
                     # Backfill dag_version_id for legacy tasks (Pydantic requires uuid.UUID).
                     # Note: we cannot use `continue` here because this method is not
                     # inside a loop.  If backfilling fails we simply skip the callback.
@@ -3678,7 +3686,7 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
                 TaskInstanceState.UP_FOR_RETRY if ti.is_eligible_to_retry() else TaskInstanceState.FAILED
             )
 
-            bundle_name, bundle_version, version_data = _resolve_ti_callback_bundle_info(ti)
+            bundle_name, bundle_version, version_data = _resolve_ti_callback_bundle_info(ti, session=session)
             # Backfill dag_version_id for legacy tasks (Pydantic requires uuid.UUID).
             if not _ensure_ti_has_dag_version_id(ti, session, self.log):
                 continue

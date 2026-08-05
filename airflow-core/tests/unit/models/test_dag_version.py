@@ -184,28 +184,133 @@ class TestDagVersion:
 
 
 class TestResolveVersionData:
-    """Unit tests for the _resolve_version_data pin-guard helper."""
+    """Unit tests for the _resolve_version_data guard.
+
+    The invariant under test: the returned manifest describes the ``bundle_version`` passed in, or
+    is None. It is never some other version's manifest.
+    """
 
     @pytest.mark.parametrize(
-        ("dag_version", "bundle_version", "expected"),
+        ("hint", "bundle_version", "expected"),
         [
             pytest.param(
-                mock.Mock(version_data={"schema_version": 1}),
+                mock.Mock(bundle_version="abc123", version_data={"schema_version": 1}),
                 "abc123",
                 {"schema_version": 1},
-                id="pinned-with-data",
+                id="hint-matches-pin",
             ),
             pytest.param(
-                mock.Mock(version_data={"schema_version": 1}),
+                mock.Mock(bundle_version="abc123", version_data={"schema_version": 1}),
                 None,
                 None,
                 id="unpinned-suppresses-present-data",
+            ),
+            pytest.param(
+                mock.Mock(bundle_version="def456", version_data={"schema_version": 1}),
+                "abc123",
+                None,
+                id="hint-pointer-moved-on",
+            ),
+            pytest.param(
+                mock.Mock(bundle_version=None, version_data={"schema_version": 1}),
+                "abc123",
+                None,
+                id="hint-pointer-unreadable-on-transient-object",
             ),
             pytest.param(None, "abc123", None, id="missing-dag-version"),
             pytest.param(None, None, None, id="unpinned-and-missing"),
         ],
     )
-    def test_resolve_version_data(self, dag_version, bundle_version, expected):
+    def test_resolve_version_data_without_session_is_hint_only(self, hint, bundle_version, expected):
         from airflow.models.dag_version import _resolve_version_data
 
-        assert _resolve_version_data(dag_version, bundle_version) == expected
+        assert _resolve_version_data("some_dag", bundle_version, hint=hint) == expected
+
+    def test_unpinned_run_does_not_query(self):
+        """An unpinned run short-circuits before the recovery lookup, even with a session in hand."""
+        from airflow.models.dag_version import _resolve_version_data
+
+        session = mock.Mock()
+        assert _resolve_version_data("some_dag", None, session=session) is None
+        session.scalar.assert_not_called()
+
+    def test_matching_hint_does_not_query(self):
+        """The fast path must avoid a query per call; this runs per task instance in the scheduler."""
+        from airflow.models.dag_version import _resolve_version_data
+
+        session = mock.Mock()
+        hint = mock.Mock(bundle_version="abc123", version_data={"schema_version": 1})
+
+        assert _resolve_version_data("some_dag", "abc123", hint=hint, session=session) == {
+            "schema_version": 1
+        }
+        session.scalar.assert_not_called()
+
+
+class TestGetVersionData:
+    """Unit tests for DagVersion.get_version_data recovery lookups."""
+
+    def setup_method(self):
+        clear_db_dags()
+
+    def teardown_method(self):
+        clear_db_dags()
+
+    def test_recovers_manifest_from_historical_row(self, dag_maker, session):
+        """The latest row's pointer is refreshed in place when the bundle advances with no Dag
+        change, but an older row still records the version an in-flight pinned run needs.
+        """
+        v1_manifest = {"schema_version": 1, "files": {"dags/my_dag.py": "v1-object-id"}}
+        with dag_maker("test_recover_manifest"):
+            pass
+
+        latest = DagVersion.get_latest_version("test_recover_manifest", session=session)
+        latest.bundle_version = "v1hash"
+        latest.version_data = v1_manifest
+        session.flush()
+
+        # A Dag change mints version 2 at v2hash; version 1 keeps v1hash's manifest.
+        DagVersion.write_dag(
+            dag_id="test_recover_manifest",
+            bundle_name="testing",
+            bundle_version="v2hash",
+            version_data={"schema_version": 1, "files": {"dags/my_dag.py": "v2-object-id"}},
+            session=session,
+        )
+        session.flush()
+
+        assert DagVersion.get_version_data("test_recover_manifest", "v1hash", session=session) == v1_manifest
+
+    def test_returns_none_when_no_row_records_the_version(self, dag_maker, session):
+        """Recovery is best-effort: if the only row holding the version moved on, nothing holds it."""
+        with dag_maker("test_manifest_lost"):
+            pass
+
+        latest = DagVersion.get_latest_version("test_manifest_lost", session=session)
+        latest.bundle_version = "v2hash"
+        latest.version_data = {"schema_version": 1, "files": {"dags/my_dag.py": "v2-object-id"}}
+        session.flush()
+
+        assert DagVersion.get_version_data("test_manifest_lost", "v1hash", session=session) is None
+
+    def test_skips_rows_without_a_manifest(self, dag_maker, session):
+        """Bundles that record no manifest (every in-tree bundle today) resolve to None, not a row."""
+        with dag_maker("test_no_manifest"):
+            pass
+
+        latest = DagVersion.get_latest_version("test_no_manifest", session=session)
+        latest.bundle_version = "v1hash"
+        session.flush()
+
+        assert DagVersion.get_version_data("test_no_manifest", "v1hash", session=session) is None
+
+    def test_scoped_to_the_requested_dag(self, dag_maker, session):
+        """A manifest recorded for another Dag at the same bundle version must not leak across."""
+        with dag_maker("test_other_dag"):
+            pass
+        other = DagVersion.get_latest_version("test_other_dag", session=session)
+        other.bundle_version = "v1hash"
+        other.version_data = {"schema_version": 1, "files": {"dags/other.py": "v1-object-id"}}
+        session.flush()
+
+        assert DagVersion.get_version_data("test_missing_dag", "v1hash", session=session) is None

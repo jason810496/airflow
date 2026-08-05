@@ -111,7 +111,13 @@ class ExecuteTask(BaseDagBundleWorkload):
                 # not the TI's dag_version. A mid-run DAG re-parse can bump the TI's dag_version
                 # to a newer version while the run stays pinned; sourcing from created_dag_version
                 # keeps the shipped hash and manifest consistent so versioned bundles stay reproducible.
-                version_data=_resolve_version_data(ti.dag_run.created_dag_version, ti.dag_run.bundle_version),
+                # No session: TIs reach here transient (scheduler) or from an executor with no
+                # session, so resolution is hint-only.
+                version_data=_resolve_version_data(
+                    ti.dag_id,
+                    ti.dag_run.bundle_version,
+                    hint=ti.dag_run.created_dag_version,
+                ),
             )
         fname = log_filename_template_renderer()(ti=ti)
 
