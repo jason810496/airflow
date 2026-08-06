@@ -212,9 +212,9 @@ def wait_for_dag_run(dag_id: str, run_id: str, max_wait_time: int):
 def wait_for_ti_state(dag_id: str, run_id: str, task_id: str, states: list, max_wait_time: int) -> str | None:
     # max_wait_time, is the timeout for the task instance to reach one of the given states. The value is
     # in seconds.
-    start_time = timezone.utcnow().timestamp()
+    start_time = time.monotonic()
 
-    while timezone.utcnow().timestamp() - start_time < max_wait_time:
+    while time.monotonic() - start_time < max_wait_time:
         with create_session() as session:
             ti = session.scalar(
                 select(TaskInstance).where(
