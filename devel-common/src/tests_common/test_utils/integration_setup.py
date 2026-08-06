@@ -28,6 +28,7 @@ from airflow.dag_processing.bundles.manager import DagBundlesManager
 from airflow.dag_processing.dagbag import DagBag
 from airflow.models import DagRun
 from airflow.models.serialized_dag import SerializedDagModel
+from airflow.models.taskinstance import TaskInstance
 from airflow.serialization.definitions.dag import SerializedDAG
 from airflow.utils.session import create_session
 from airflow.utils.state import State
@@ -107,6 +108,23 @@ def start_scheduler(capture_output: bool = False):
     time.sleep(10)
 
     return scheduler_process, apiserver_process
+
+
+def start_triggerer(capture_output: bool = False) -> subprocess.Popen:
+    stdout = None if capture_output else subprocess.DEVNULL
+    stderr = None if capture_output else subprocess.DEVNULL
+
+    triggerer_command_args = [
+        "airflow",
+        "triggerer",
+    ]
+
+    return subprocess.Popen(
+        triggerer_command_args,
+        env=os.environ.copy(),
+        stdout=stdout,
+        stderr=stderr,
+    )
 
 
 def serialize_and_get_dags(dag_folder) -> dict[str, SerializedDAG]:
@@ -189,6 +207,31 @@ def wait_for_dag_run(dag_id: str, run_id: str, max_wait_time: int):
             if dag_run_state in [State.SUCCESS, State.FAILED]:
                 break
     return dag_run_state
+
+
+def wait_for_ti_state(dag_id: str, run_id: str, task_id: str, states: list, max_wait_time: int) -> str | None:
+    # max_wait_time, is the timeout for the task instance to reach one of the given states. The value is
+    # in seconds.
+    start_time = timezone.utcnow().timestamp()
+
+    while timezone.utcnow().timestamp() - start_time < max_wait_time:
+        with create_session() as session:
+            ti = session.scalar(
+                select(TaskInstance).where(
+                    TaskInstance.dag_id == dag_id,
+                    TaskInstance.run_id == run_id,
+                    TaskInstance.task_id == task_id,
+                )
+            )
+
+            ti_state = ti.state if ti is not None else None
+            log.debug("Task instance state: %s.", ti_state)
+
+            if ti_state in states:
+                return ti_state
+
+        time.sleep(1)
+    return None
 
 
 def terminate_process(proc: subprocess.Popen, timeout: int = 30) -> None:

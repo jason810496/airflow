@@ -79,6 +79,7 @@ POSSIBLE_TEST_FOLDERS = [
     "testconfig",
     "ti_deps",
     "timetables",
+    "triggerer",
     "triggers",
     "utils",
     "www",
