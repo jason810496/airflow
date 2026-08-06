@@ -128,7 +128,7 @@ A *Trigger* is written as a class that inherits from ``BaseTrigger``, and implem
 Two optional lifecycle hooks are also available:
 
 * ``cleanup``: Called after ``run`` exits for any reason (success, timeout, triggerer shutdown, or user kill). Use this to release local resources held by the trigger instance, such as open connections or temporary files.
-* ``on_kill``: Called only when a user explicitly kills the deferred task (mark-failed, clear, or mark-succeeded). Use this to cancel external work — for example, cancelling a BigQuery job or terminating a Databricks run — that you do not want to keep running after the user acts on the task. Unlike ``cleanup``, ``on_kill`` is **not** called on triggerer restart or redistribution, so you can safely put external cancellation logic here without risk of cancelling in-flight work during a rolling deploy.
+* ``on_kill``: Called only when a user explicitly kills the deferred task (mark-failed, clear, or mark-succeeded). See `Cancelling External Work on Kill`_ below for details.
 
 This example shows the structure of a basic trigger, a very simplified version of Airflow's ``DateTimeTrigger``:
 
@@ -181,6 +181,29 @@ There's some design constraints to be aware of when writing your own trigger:
 Sensitive information in triggers
 '''''''''''''''''''''''''''''''''
 Since Airflow 2.9.0, triggers kwargs are serialized and encrypted before being stored in the database. This means that any sensitive information you pass to a trigger will be stored in the database in an encrypted form, and decrypted when it is read from the database.
+
+Cancelling External Work on Kill
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 3.3.0
+
+If your trigger manages an external job — for example, a BigQuery job or a Databricks run — you can override ``on_kill`` to cancel that work when a user explicitly kills the deferred task, by marking it failed, clearing it, or marking it succeeded:
+
+.. code-block:: python
+
+    class MyTrigger(BaseTrigger):
+        async def on_kill(self) -> None:
+            await cancel_my_external_job(self.job_id)
+
+``on_kill`` is symmetric with ``BaseOperator.on_kill`` on the worker side. It is only called for user-initiated cancellations, and it is **not** called on:
+
+* Triggerer shutdown or restart — the trigger is redistributed, not cancelled.
+* Trigger timeout.
+* Normal trigger completion.
+
+This is the key difference from ``cleanup``: ``cleanup`` runs on *every* trigger exit, including triggerer restarts and rolling deploys, so putting external cancellation logic there would cancel in-flight work on every restart. ``on_kill`` only runs in response to a user action, making it the right place for cancellation that should happen once, only when the user has acted on the task.
+
+``on_kill`` runs in the triggerer's asyncio event loop and is given a bounded time to complete, configurable via ``[triggerer] on_kill_timeout`` (default 30 seconds). Implementations that call slow external APIs should apply their own timeouts rather than rely on this bound. Exceptions raised by ``on_kill`` are logged as warnings and do not propagate — they will not affect the task state or the triggerer.
 
 Triggering Deferral
 ~~~~~~~~~~~~~~~~~~~
