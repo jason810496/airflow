@@ -17,10 +17,13 @@
  * under the License.
  */
 
+import org.cyclonedx.gradle.CyclonedxDirectTask
+import org.gradle.api.file.RegularFile
 import org.gradle.process.CommandLineArgumentProvider
 
 plugins {
     id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
+    id("org.cyclonedx.bom") version "3.3.0"
 }
 
 val projectVersion: String by project
@@ -52,14 +55,70 @@ if (!project.hasProperty("mavenUrl")) {
 val sourceReleaseDir = layout.buildDirectory.dir("distributions")
 
 // Derive the version from the tag, so the tarball's name matches its contents.
+val sourceReleaseRef = providers.gradleProperty("gitRef")
 val sourceReleaseVersion =
-    providers.gradleProperty("gitRef").map {
+    sourceReleaseRef.map {
         it.substringAfterLast('/').replace(Regex("-rc\\d+$"), "")
     }
+val releaseMetadataVersion = sourceReleaseVersion.orElse(projectVersion)
 val sourceReleaseTarball =
     sourceReleaseDir.zip(sourceReleaseVersion) { dir, version ->
         dir.file("apache-airflow-java-sdk-$version-src.tar.gz")
     }
+
+val verifyReleaseMetadataRef by tasks.registering(Exec::class) {
+    val gitRef = sourceReleaseRef.orElse("HEAD").get()
+    val expectedVersion = projectVersion.removeSuffix("-SNAPSHOT")
+    inputs.property("gitRef", gitRef)
+    inputs.property("expectedVersion", expectedVersion)
+    workingDir = rootDir
+    commandLine(
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        """
+        test "${'$'}(git rev-parse "${'$'}1^{commit}")" = "${'$'}(git rev-parse HEAD)" || {
+          echo "gitRef ${'$'}1 does not resolve to the checked-out commit" >&2
+          exit 1
+        }
+        case "${'$'}1" in
+          java-sdk/*)
+            if [[ "${'$'}1" =~ ^java-sdk/(.+)-rc[0-9]+${'$'} ]]; then
+              tag_version="${'$'}{BASH_REMATCH[1]}"
+            else
+              tag_version="${'$'}{1#java-sdk/}"
+            fi
+            test "${'$'}tag_version" = "${'$'}2" || {
+              echo "Java SDK tag version ${'$'}tag_version does not match projectVersion ${'$'}2" >&2
+              exit 1
+            }
+            ;;
+        esac
+        """.trimIndent(),
+        "_",
+        gitRef,
+        expectedVersion,
+    )
+}
+
+allprojects {
+    tasks.named<CyclonedxDirectTask>("cyclonedxDirectBom") {
+        includeConfigs = listOf("runtimeClasspath")
+        xmlOutput.convention(null as RegularFile?)
+    }
+}
+
+tasks.cyclonedxBom {
+    dependsOn(verifyReleaseMetadataRef)
+    componentVersion = releaseMetadataVersion.get()
+    jsonOutput.set(
+        sourceReleaseDir.zip(releaseMetadataVersion) { dir, version ->
+            dir.file("apache-airflow-java-sdk-$version.cdx.json")
+        },
+    )
+    xmlOutput.convention(null as RegularFile?)
+}
 
 val sourceTarball by tasks.registering(Exec::class) {
     group = "release"

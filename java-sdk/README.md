@@ -265,6 +265,42 @@ apache-airflow-java-sdk-<VERSION>-src.tar.gz.asc
 apache-airflow-java-sdk-<VERSION>-src.tar.gz.sha512
 ```
 
+Generate the aggregate CycloneDX SBOM for the same release ref with:
+
+```bash
+./gradlew cyclonedxBom -PgitRef=java-sdk/<VERSION>-rc<N>
+```
+
+The ref must resolve to the currently checked-out commit. For a release tag,
+`<VERSION>` must also match `projectVersion` (without its `-SNAPSHOT` suffix).
+
+The JSON document is written next to the source tarball as
+`apache-airflow-java-sdk-<VERSION>.cdx.json`. It aggregates each SDK module's
+resolved `runtimeClasspath`. The CycloneDX generator may identify itself and
+other build-tool components as metadata, but this is not a complete inventory
+of build-time dependencies. It does not include the standalone example builds
+or establish build provenance by itself.
+
+Tag-triggered CI builds create separate Sigstore attestations for the source
+tarball's build provenance and CycloneDX SBOM. Verify a downloaded tarball with:
+
+```bash
+gh attestation verify apache-airflow-java-sdk-<VERSION>-src.tar.gz \
+  --repo apache/airflow \
+  --signer-workflow apache/airflow/.github/workflows/java-sdk-release-verify.yml \
+  --source-ref refs/tags/java-sdk/<VERSION>-rc<N> \
+  --predicate-type https://slsa.dev/provenance/v1
+gh attestation verify apache-airflow-java-sdk-<VERSION>-src.tar.gz \
+  --repo apache/airflow \
+  --signer-workflow apache/airflow/.github/workflows/java-sdk-release-verify.yml \
+  --source-ref refs/tags/java-sdk/<VERSION>-rc<N> \
+  --predicate-type https://cyclonedx.org/bom
+```
+
+Attestations are bound to the artifact digest. They cover an ASF-staged or
+released tarball only when it is byte-for-byte identical to the tag-built CI
+artifact, and they complement rather than replace the ASF signature and vote.
+
 **NOTE:** The source archive omits the Gradle wrapper scripts (`gradlew`,
 `gradlew.bat`) and `gradle/wrapper/gradle-wrapper.jar` since ASF source releases
 must not contain compiled code (see [LEGAL-570]), and the scripts are not useful

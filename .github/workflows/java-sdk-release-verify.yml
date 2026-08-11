@@ -90,9 +90,19 @@ jobs:
           else  # A PR HEAD.
             echo "RELEASE_REF=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           fi
-      - name: Build the source tarball from the ref (project's wrapper)
+      - name: Build the source tarball and SBOM from the ref
         working-directory: java-sdk
-        run: ./gradlew --no-daemon sourceTarball checksumSourceTarball -PgitRef="${RELEASE_REF}"
+        run: ./gradlew --no-daemon sourceTarball checksumSourceTarball cyclonedxBom -PgitRef="${RELEASE_REF}"
+      - name: Save tag-built artifacts for attestation
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: java-sdk-release-artifacts
+          path: |
+            java-sdk/build/distributions/apache-airflow-java-sdk-*-src.tar.gz
+            java-sdk/build/distributions/apache-airflow-java-sdk-*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Install the latest Gradle to bootstrap a new wrapper for the source extracted from the tarball
         run: |
           set -euo pipefail
@@ -175,3 +185,45 @@ jobs:
           java-sdk/scripts/ci/smoke-test-staged-binaries.sh \
             --nexus-repo-id "${NEXUS_REPO_ID}" \
             --version "${version}"
+
+  attest:
+    name: Attest tag-built source artifact
+    needs: source-release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download tag-built artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: java-sdk-release-artifacts
+          path: artifacts
+      - name: Resolve release artifact paths
+        id: release-artifacts
+        run: |
+          set -euo pipefail
+          tarballs=(artifacts/apache-airflow-java-sdk-*-src.tar.gz)
+          sboms=(artifacts/apache-airflow-java-sdk-*.cdx.json)
+          if [ "${#tarballs[@]}" -ne 1 ] || [ ! -f "${tarballs[0]}" ]; then
+            echo "Expected exactly one Java SDK source tarball" >&2
+            exit 1
+          fi
+          if [ "${#sboms[@]}" -ne 1 ] || [ ! -f "${sboms[0]}" ]; then
+            echo "Expected exactly one Java SDK CycloneDX SBOM" >&2
+            exit 1
+          fi
+          echo "tarball=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+          echo "path=${sboms[0]}" >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: ${{ steps.release-artifacts.outputs.tarball }}
+      - name: Attest CycloneDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: ${{ steps.release-artifacts.outputs.tarball }}
+          sbom-path: ${{ steps.release-artifacts.outputs.path }}
