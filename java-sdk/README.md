@@ -422,7 +422,8 @@ manager, before sending the vote — should run against the source package in
    This should print nothing.
 
 5. **Build from source.** Regenerate the Gradle wrapper from a locally installed
-   Gradle (see the *Upload the source package* section above):
+   Gradle matching the pinned distribution in the wrapper properties (the CI
+   verifier downloads that exact distribution and checks its SHA-256):
 
    ```bash
    cd apache-airflow-java-sdk-<VERSION>

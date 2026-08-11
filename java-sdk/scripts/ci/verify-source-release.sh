@@ -46,6 +46,11 @@ if [ -z "$tarball" ] || [ -z "$tag" ]; then
   echo "ERROR: --tarball and --tag are required" >&2
   exit 2
 fi
+if [[ ! "$tag" =~ ^java-sdk/([0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?)(-rc[0-9]+)?$ ]] &&
+  [[ ! "$tag" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: --tag must be a Java SDK RC tag or a full commit SHA" >&2
+  exit 2
+fi
 tarball="$(cd "$(dirname "$tarball")" && pwd)/$(basename "$tarball")"
 [ -z "$sha512" ] || sha512="$(cd "$(dirname "$sha512")" && pwd)/$(basename "$sha512")"
 
@@ -59,14 +64,65 @@ trap cleanup EXIT
 
 echo "==> 1. Checksum"
 if [ -n "$sha512" ]; then
-  ( cd "$(dirname "$tarball")" && sha512sum -c "$sha512" )
+  checksum_line="$(cat "$sha512")"
+  expected_name="$(basename "$tarball")"
+  if [[ ! "$checksum_line" =~ ^([0-9a-f]{128})\ \ ([A-Za-z0-9._-]+)$ ]] ||
+    [ "${BASH_REMATCH[2]}" != "$expected_name" ]; then
+    echo "ERROR: checksum file must contain the tarball's SHA-512 and basename" >&2
+    exit 1
+  fi
+  expected_sha512="${BASH_REMATCH[1]}"
+  if command -v sha512sum >/dev/null 2>&1; then
+    actual_sha512="$(sha512sum "$tarball" | cut -d ' ' -f 1)"
+  else
+    actual_sha512="$(shasum -a 512 "$tarball" | cut -d ' ' -f 1)"
+  fi
+  [ "$actual_sha512" = "$expected_sha512" ] || {
+    echo "ERROR: SHA-512 checksum does not match $expected_name" >&2
+    exit 1
+  }
 else
   echo "    no --sha512 given; skipping"
 fi
 
 echo "==> 2. Extract to a clean directory outside the repo"
-tar -xzf "$tarball" -C "$work"
-extracted="$(find "$work" -maxdepth 1 -type d -name 'apache-airflow-java-sdk-*' | head -n1)"
+archive_entries="$(tar -tzf "$tarball")"
+if [[ "$tag" =~ ^java-sdk/(.*)$ ]]; then
+  release_version="${BASH_REMATCH[1]}"
+  expected_root="apache-airflow-java-sdk-${release_version%-rc[0-9]*}"
+else
+  expected_root="$(basename "$tarball" -src.tar.gz)"
+fi
+if [[ ! "$expected_root" =~ ^apache-airflow-java-sdk-[0-9A-Za-z._-]+$ ]] ||
+  ! awk -v root="$expected_root" 'index($0, root "/") != 1 { bad = 1 } END { exit bad }' <<< "$archive_entries"; then
+  echo "ERROR: tarball contains a path outside its expected top-level directory" >&2
+  exit 1
+fi
+if ! tar -tvzf "$tarball" | awk -v root="$expected_root" '
+  function safe_symlink(name, target, parts, stack, count, i, n) {
+    if (target ~ /^\//) return 0
+    sub(/\/[^/]*$/, "/", name)
+    n = split(name target, parts, "/")
+    for (i = 1; i <= n; i++) {
+      if (parts[i] == "" || parts[i] == ".") continue
+      if (parts[i] == "..") {
+        if (count == 0) return 0
+        count--
+      } else {
+        stack[++count] = parts[i]
+      }
+    }
+    return count > 0 && stack[1] == root
+  }
+  substr($1, 1, 1) == "h" { bad = 1 }
+  substr($1, 1, 1) == "l" && (NF != 8 || $7 != "->" || !safe_symlink($6, $8)) { bad = 1 }
+  END { exit bad }
+'; then
+  echo "ERROR: tarball contains an unsafe symbolic link or a hard link" >&2
+  exit 1
+fi
+tar --no-same-owner --no-same-permissions -xzf "$tarball" -C "$work"
+extracted="$(find "$work" -maxdepth 1 -type d -name 'apache-airflow-java-sdk-*' -print -quit)"
 [ -n "$extracted" ] || { echo "ERROR: no apache-airflow-java-sdk-* directory inside the tarball" >&2; exit 1; }
 echo "    $extracted"
 
@@ -110,8 +166,9 @@ repo="$work/maven-repo"
 ( cd "$extracted" && ./gradlew --no-daemon publish -PmavenUrl="file://$repo" -PskipSigning=true )
 missing=0
 while IFS= read -r jar; do
+  jar_entries="$(unzip -Z1 "$jar")"
   for entry in META-INF/LICENSE META-INF/NOTICE; do
-    if ! unzip -l "$jar" | grep -qE "${entry}$"; then
+    if ! grep -Fxq "$entry" <<< "$jar_entries"; then
       echo "ERROR: ${entry} missing from ${jar##*/}" >&2
       missing=1
     fi

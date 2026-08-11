@@ -27,9 +27,8 @@
 #     package in dist/dev and the closed Nexus staging repo. Run this after
 #     staging, before sending the [VOTE] email.
 #
-# The environment setup intentionally mirror what a human verifying the release
-# would do. An (unpinned) latest Gradle is downloaded to create the Gradle
-# wrapper from, and a more modern JDK is used to run things.
+# The bootstrap Gradle distribution is pinned by the wrapper properties and is
+# checksum-verified before it is used to regenerate the source release wrapper.
 
 ---
 name: Java SDK release verification
@@ -93,17 +92,12 @@ jobs:
       - name: Build the source tarball from the ref (project's wrapper)
         working-directory: java-sdk
         run: ./gradlew --no-daemon sourceTarball checksumSourceTarball -PgitRef="${RELEASE_REF}"
-      - name: Install the latest Gradle to bootstrap a new wrapper for the source extracted from the tarball
+      - name: Install the pinned Gradle bootstrap
         run: |
           set -euo pipefail
-          meta=$(curl -fsSL https://services.gradle.org/versions/current)
-          ver=$(echo "$meta" | jq -r .version)
-          url=$(echo "$meta" | jq -r .downloadUrl)
-          sum=$(curl -fsSL "$(echo "$meta" | jq -r .checksumUrl)")
-          curl -fsSL -o /tmp/gradle.zip "$url"
-          echo "${sum}  /tmp/gradle.zip" | sha256sum -c -
-          unzip -q -d "$HOME/gradle" /tmp/gradle.zip
-          echo "$HOME/gradle/gradle-${ver}/bin" >> "$GITHUB_PATH"
+          bootstrap_bin="$(java-sdk/scripts/ci/install-gradle-bootstrap.sh \
+            --destination "${RUNNER_TEMP}/gradle-bootstrap")"
+          echo "${bootstrap_bin}" >> "$GITHUB_PATH"
       - name: Verify the source tarball
         run: |
           set -euo pipefail
@@ -136,6 +130,10 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          if [[ ! "$TAG" =~ ^java-sdk/[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?-rc[0-9]+$ ]]; then
+            echo "Invalid Java SDK release-candidate tag: $TAG" >&2
+            exit 2
+          fi
           rcdir="${TAG#java-sdk/}"          # <version>-rc<N>
           version="${rcdir%-rc*}"           # <version>
           base="https://dist.apache.org/repos/dist/dev/airflow/java-sdk/${rcdir}"
@@ -143,17 +141,12 @@ jobs:
           mkdir -p staged
           curl -fsSL -o "staged/${file}" "${base}/${file}"
           curl -fsSL -o "staged/${file}.sha512" "${base}/${file}.sha512"
-      - name: Install the latest Gradle to bootstrap a new wrapper for the source extracted from the tarball
+      - name: Install the pinned Gradle bootstrap
         run: |
           set -euo pipefail
-          meta=$(curl -fsSL https://services.gradle.org/versions/current)
-          ver=$(echo "$meta" | jq -r .version)
-          url=$(echo "$meta" | jq -r .downloadUrl)
-          sum=$(curl -fsSL "$(echo "$meta" | jq -r .checksumUrl)")
-          curl -fsSL -o /tmp/gradle.zip "$url"
-          echo "${sum}  /tmp/gradle.zip" | sha256sum -c -
-          unzip -q -d "$HOME/gradle" /tmp/gradle.zip
-          echo "$HOME/gradle/gradle-${ver}/bin" >> "$GITHUB_PATH"
+          bootstrap_bin="$(java-sdk/scripts/ci/install-gradle-bootstrap.sh \
+            --destination "${RUNNER_TEMP}/gradle-bootstrap")"
+          echo "${bootstrap_bin}" >> "$GITHUB_PATH"
       - name: Verify the staged source package
         env:
           TAG: ${{ inputs.tag }}
@@ -171,6 +164,10 @@ jobs:
           NEXUS_REPO_ID: ${{ inputs.nexus_repo_id }}
         run: |
           set -euo pipefail
+          if [[ ! "$NEXUS_REPO_ID" =~ ^[0-9]+$ ]]; then
+            echo "Invalid Nexus repository ID: $NEXUS_REPO_ID" >&2
+            exit 2
+          fi
           rcdir="${TAG#java-sdk/}"; version="${rcdir%-rc*}"
           java-sdk/scripts/ci/smoke-test-staged-binaries.sh \
             --nexus-repo-id "${NEXUS_REPO_ID}" \

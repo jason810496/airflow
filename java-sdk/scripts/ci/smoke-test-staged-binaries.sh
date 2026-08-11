@@ -43,6 +43,14 @@ if [ -z "$nexus_repo_id" ] || [ -z "$version" ]; then
   echo "ERROR: --nexus-repo-id and --version are required" >&2
   exit 2
 fi
+if [[ ! "$nexus_repo_id" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --nexus-repo-id must contain digits only" >&2
+  exit 2
+fi
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+  echo "ERROR: invalid Java SDK version: $version" >&2
+  exit 2
+fi
 
 nexus_url="https://repository.apache.org/content/repositories/orgapacheairflow-$nexus_repo_id"
 work="$(mktemp -d)"
