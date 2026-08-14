@@ -65,21 +65,24 @@ The Go binary, Java jar, and stub Dag share one object store (localstack) but li
 
 ## Which SDK sources get built
 
-`go-sdk/` and `java-sdk/` are only developed on `main`; a release/backport branch may lack them
-entirely or carry a stale, branch-cut-frozen copy. So `breeze k8s setup-lang-sdk-test` (and
-`run-complete-tests --lang-sdk-test`) picks the sources from the branch the run **targets**, resolved
-by `_lang_sdk_resolve_sdk_sources()` in `kubernetes_commands.py`:
+`breeze k8s setup-lang-sdk-test` (and `run-complete-tests --lang-sdk-test`) resolves the SDK sources
+with `_lang_sdk_resolve_sdk_sources()` in `kubernetes_commands.py`:
 
-| Target branch | Go/Java SDK sources |
+| SDK path in checkout | Source used for that SDK |
 | --- | --- |
-| `main` | the checked-out branch's own `go-sdk/` and `java-sdk/` |
-| anything else (`v3-*-test`, …) | upstream `main`, fetched fresh via `_lang_sdk_fetch_upstream_sdk_sources()` |
+| present | the checked-out branch's SDK source |
+| absent | upstream `main`, fetched fresh via `_lang_sdk_fetch_upstream_sdk_sources()` |
 
-The target is `GITHUB_BASE_REF` for a PR, then `DEFAULT_BRANCH` if set, falling back to this
-checkout's own `AIRFLOW_BRANCH`. Building a main-targeting PR's own SDK is what makes the k8s test
-exercise that PR: `go_example`/`java_example` are harness fixtures that track the checked-out branch,
-so compiling them against a *different* SDK means any SDK rename in the PR fails to build. A
-backport to a release-test branch still gets current SDK code, as before.
+Go and Java are resolved independently, so a missing SDK does not replace the other SDK's compatible
+local source. Using the checkout's SDKs makes the k8s test exercise SDK changes in a PR and keeps executable bundle
+schema versions compatible with the checked-out Task SDK supervisor and runtime image. This also
+applies to maintenance branches that carry branch-cut-frozen SDK copies: building their artifacts
+from a newer upstream `main` could produce a bundle schema the maintenance runtime cannot read.
+
+The target shown in setup output is `GITHUB_BASE_REF` for a PR, then `DEFAULT_BRANCH` if set, falling
+back to this checkout's own `AIRFLOW_BRANCH`. `go_example`/`java_example` are harness fixtures that
+track the checked-out branch, so compiling them against that branch's SDK also prevents SDK API
+renames from making the fixtures and SDK disagree.
 
 Everything else — `airflow-core/`, `task-sdk/`, the deployed Airflow image, and this directory's own
 `go_example`/`java_example` fixtures — always comes from the checked-out branch.

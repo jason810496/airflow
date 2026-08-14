@@ -412,21 +412,44 @@ class TestLangSdkTargetBranch:
 
 class TestLangSdkResolveSdkSources:
     @mock.patch.object(kubernetes_commands, "_lang_sdk_fetch_upstream_sdk_sources")
-    def test_targeting_main_uses_the_checked_out_branch(self, mock_fetch, tmp_path, monkeypatch):
-        monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    def test_checkout_with_sdk_sources_uses_them(self, mock_fetch, tmp_path, monkeypatch):
+        monkeypatch.setenv("GITHUB_BASE_REF", "v3-3-test")
+        monkeypatch.setattr(kubernetes_commands, "AIRFLOW_ROOT_PATH", tmp_path)
+        (tmp_path / "go-sdk").mkdir()
+        (tmp_path / "java-sdk").mkdir()
 
         go_sdk, java_sdk = _lang_sdk_resolve_sdk_sources(tmp_path, None)
 
-        assert go_sdk == kubernetes_commands.AIRFLOW_ROOT_PATH / "go-sdk"
-        assert java_sdk == kubernetes_commands.AIRFLOW_ROOT_PATH / "java-sdk"
+        assert go_sdk == tmp_path / "go-sdk"
+        assert java_sdk == tmp_path / "java-sdk"
         mock_fetch.assert_not_called()
 
     @mock.patch.object(kubernetes_commands, "_lang_sdk_fetch_upstream_sdk_sources")
-    def test_targeting_another_branch_falls_back_to_upstream_main(self, mock_fetch, tmp_path, monkeypatch):
+    @pytest.mark.parametrize(
+        ("local_sdks", "expected_go_source", "expected_java_source"),
+        [
+            pytest.param({"java-sdk"}, "upstream-go-sdk", "java-sdk", id="missing-go-sdk"),
+            pytest.param({"go-sdk"}, "go-sdk", "upstream-java-sdk", id="missing-java-sdk"),
+            pytest.param(set(), "upstream-go-sdk", "upstream-java-sdk", id="missing-both-sdks"),
+        ],
+    )
+    def test_missing_sdk_sources_fall_back_independently(
+        self,
+        mock_fetch,
+        tmp_path,
+        monkeypatch,
+        local_sdks,
+        expected_go_source,
+        expected_java_source,
+    ):
         monkeypatch.setenv("GITHUB_BASE_REF", "v3-3-test")
-        mock_fetch.return_value = (tmp_path / "go-sdk", tmp_path / "java-sdk")
+        monkeypatch.setattr(kubernetes_commands, "AIRFLOW_ROOT_PATH", tmp_path)
+        for sdk in local_sdks:
+            (tmp_path / sdk).mkdir()
+        mock_fetch.return_value = (tmp_path / "upstream-go-sdk", tmp_path / "upstream-java-sdk")
 
         go_sdk, java_sdk = _lang_sdk_resolve_sdk_sources(tmp_path, None)
 
         mock_fetch.assert_called_once_with(tmp_path, None)
-        assert (go_sdk, java_sdk) == (tmp_path / "go-sdk", tmp_path / "java-sdk")
+        assert go_sdk == tmp_path / expected_go_source
+        assert java_sdk == tmp_path / expected_java_source

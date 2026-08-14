@@ -2510,15 +2510,10 @@ LANG_SDK_AWS_CONN_URI = (
     "aws://test:test@/?region_name=us-east-1&"
     "endpoint_url=http%3A%2F%2Flocalstack.airflow.svc.cluster.local%3A4566"
 )
-# Runs targeting a branch other than main build the Go/Java SDKs from upstream main, so
-# release/backport branches with stale or missing go-sdk/java-sdk copies still test current SDK
-# sources. See kubernetes-tests/lang_sdk/README.md.
+# Branches without a Go or Java SDK source build the missing SDK from upstream main. See
+# kubernetes-tests/lang_sdk/README.md.
 LANG_SDK_UPSTREAM_GIT_URL = "https://github.com/apache/airflow.git"
 LANG_SDK_UPSTREAM_REF = "main"
-# The target branch for which the lang-SDK artifacts are built from this checkout's own SDK
-# sources rather than fetched from upstream. Distinct from LANG_SDK_UPSTREAM_REF (the ref fetched
-# from upstream) even though both are "main" today -- one names a git ref, the other a sentinel.
-LANG_SDK_LOCAL_SOURCE_BRANCH = "main"
 
 
 def _lang_sdk_target_branch() -> str:
@@ -2529,22 +2524,30 @@ def _lang_sdk_target_branch() -> str:
 def _lang_sdk_resolve_sdk_sources(staging: Path, output: Output | None) -> tuple[Path, Path]:
     """Resolve the go-sdk/java-sdk trees the lang-SDK artifacts are built from.
 
-    A run targeting main builds the checked-out branch's own SDK sources, so a PR's SDK changes
-    are what the k8s test exercises -- without this, ``java_example``/``go_example`` (harness code
-    that tracks the branch) is compiled against a different SDK than the branch it belongs to, and
-    any SDK rename breaks the build. Runs targeting anything else fall back to upstream main.
+    Prefer each SDK from this checkout because it matches the Task SDK supervisor and runtime image
+    under test. Fetch missing SDK sources from upstream main.
     """
     target = _lang_sdk_target_branch()
-    if target == LANG_SDK_LOCAL_SOURCE_BRANCH:
+    local_go_sdk = AIRFLOW_ROOT_PATH / "go-sdk"
+    local_java_sdk = AIRFLOW_ROOT_PATH / "java-sdk"
+    has_local_go_sdk = local_go_sdk.is_dir()
+    has_local_java_sdk = local_java_sdk.is_dir()
+    if has_local_go_sdk and has_local_java_sdk:
         get_console(output=output).print(
-            f"[info]Run targets {target}: building the lang-SDK Go/Java artifacts from this branch"
+            f"[info]Checkout for target {target} contains both SDKs: building the lang-SDK Go/Java "
+            "artifacts from this checkout"
         )
-        return AIRFLOW_ROOT_PATH / "go-sdk", AIRFLOW_ROOT_PATH / "java-sdk"
+        return local_go_sdk, local_java_sdk
+
+    upstream_go_sdk, upstream_java_sdk = _lang_sdk_fetch_upstream_sdk_sources(staging, output)
+    go_sdk_source = local_go_sdk if has_local_go_sdk else upstream_go_sdk
+    java_sdk_source = local_java_sdk if has_local_java_sdk else upstream_java_sdk
     get_console(output=output).print(
-        f"[info]Run targets {target}, not {LANG_SDK_LOCAL_SOURCE_BRANCH}: building the lang-SDK Go/Java "
-        f"artifacts from upstream {LANG_SDK_UPSTREAM_REF}"
+        f"[info]Resolved lang-SDK sources for target {target}: "
+        f"Go={'checkout' if has_local_go_sdk else f'upstream {LANG_SDK_UPSTREAM_REF}'}, "
+        f"Java={'checkout' if has_local_java_sdk else f'upstream {LANG_SDK_UPSTREAM_REF}'}"
     )
-    return _lang_sdk_fetch_upstream_sdk_sources(staging, output)
+    return go_sdk_source, java_sdk_source
 
 
 def _lang_sdk_fetch_upstream_sdk_sources(staging: Path, output: Output | None) -> tuple[Path, Path]:
