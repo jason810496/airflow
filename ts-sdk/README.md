@@ -110,14 +110,14 @@ export async function extract({ client }: TaskHandlerArgs) {
   };
 }
 
-export async function transform({ client }: TaskHandlerArgs) {
-  const extracted = await client.getXCom<{ rowCount: number }>({
-    key: "return_value",
-    taskId: "extract",
-  });
+/** What the Dag's `transform(extract())` call binds. */
+interface TransformArgs {
+  extracted: { rowCount: number };
+}
 
+export async function transform({ extracted }: TransformArgs & TaskHandlerArgs) {
   return {
-    transformedRows: extracted?.rowCount ?? 0,
+    transformedRows: extracted.rowCount,
   };
 }
 
@@ -135,6 +135,14 @@ task's `task_id`. The handler function is the reusable task implementation;
 `dag.task` binds that handler to a Python stub task identity, a `DagRegistry`
 collects the Dags this bundle can execute, and `serveDags` serves them to
 Airflow.
+
+The Python stub's TaskFlow call is what a handler is called with: the arguments
+of `transform(extract())` arrive as extra keys on the handler's argument object,
+alongside `ctx` and `client`. Literals travel in the Dag's serialized form,
+while an upstream task's output is pulled from its `return_value` XCom — every
+one of them at once — before the handler runs. A task whose upstream pushed no
+output fails rather than seeing `undefined`. A handler needing anything else —
+another XCom key, another Dag's data — reads it through `client` itself.
 
 `serveDags` is the entrypoint, and the registry it is given is the whole bundle:
 a Dag left out of the registry is not part of the bundle, and its tasks are
@@ -258,7 +266,7 @@ so a broken docs build fails the PR rather than the release.
 ### Publishing the API docs
 
 Publishing is a separate, deliberate step — a providers-only publish wave will
-not refresh the SDK docs as a side effect. Trigger the *Publish Docs to S3*
+not refresh the SDK docs as a side effect. Trigger the _Publish Docs to S3_
 workflow for the release ref:
 
 ```bash

@@ -89,10 +89,12 @@ export interface TaskOptions {
   /**
    * References to the upstream tasks this task consumes.
    *
-   * Not used yet: a handler receives `{ctx, client}` only, and the Python stub
-   * Dag defines task order. Read an upstream return value explicitly instead —
-   * `client.getXCom({ key: "return_value", taskId: "extract" })`, where
-   * omitting `taskId` reads the *running* task's own XCom, not the upstream.
+   * Not used yet: the Python stub Dag defines task order, and it is that Dag's
+   * TaskFlow call — not this field — that binds an upstream's output to a
+   * handler argument. For anything the call cannot express, read the XCom
+   * explicitly: `client.getXCom({ key: "return_value", taskId: "extract" })`,
+   * where omitting `taskId` reads the *running* task's own XCom, not the
+   * upstream.
    *
    * In the future these will declare dependencies in native TypeScript Dags.
    */

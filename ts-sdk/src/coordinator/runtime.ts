@@ -35,7 +35,7 @@
 //        - DagFileParseRequest → respond with DagFileParsingResult, exit
 //        - StartupDetails      → run task, respond Succeed or Fail, exit
 //
-import { decodeArgBindings } from "./arg-binding.js";
+import { resolveArgBindings } from "./arg-binding.js";
 import { createCoordinatorClient } from "./client.js";
 import { CommChannel } from "./comm-channel.js";
 import { LogChannel } from "./log-channel.js";
@@ -362,12 +362,15 @@ async function handleTask(
 
   const ctx = buildContext(details, signal);
   const client = createCoordinatorClient(comm, ctx, clientLogs);
-  // Stays null until the spec decodes, so a rejected spec is not reported as
+  // Stays null until the spec resolves, so a rejected spec is not reported as
   // having bound anything.
   let boundNames: readonly string[] | null = null;
 
   try {
-    const bound = decodeArgBindings(details.ti_context.arg_bindings);
+    const bound = await resolveArgBindings(details.ti_context.arg_bindings, {
+      client,
+      signal: ctx.signal,
+    });
     boundNames = bound.names;
     // Startup-details fields already logged above (`Received task startup
     // details`); this line marks the handler-call boundary and names what the

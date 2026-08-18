@@ -707,9 +707,10 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
     ts_bundles_dir.mkdir()
     copyfile(TS_SDK_EXAMPLE_PATH / "dist" / "bundle.mjs", ts_bundles_dir / "bundle.mjs")
 
-    copyfile(
-        TS_SDK_EXAMPLE_PATH / "dags" / "typescript_example.py", tmp_dir / "dags" / "typescript_example.py"
-    )
+    # Both Dags the example bundle serves. The bundle's embedded metadata lists
+    # them, so a Dag left behind here has no Airflow-side definition to run.
+    for dag_file in ("typescript_example.py", "typescript_taskflow_example.py"):
+        copyfile(TS_SDK_EXAMPLE_PATH / "dags" / dag_file, tmp_dir / "dags" / dag_file)
 
     coordinator_config = json.dumps(
         {

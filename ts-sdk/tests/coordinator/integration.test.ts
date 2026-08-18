@@ -633,19 +633,68 @@ describe("TaskFlow argument binding", () => {
     expect(runtimeLog(result, "Dispatching to handler")).toMatchObject({ arg_bindings: "absent" });
   });
 
-  it("fails the task when an argument reads an upstream output, pulling no XCom", async () => {
-    testDag.task("wants_xcom", async () => "never runs");
+  it("binds an upstream task's output, pulling it before the handler runs", async () => {
+    const args = captureArgs("bound_upstream");
 
     const result = await driveSupervisor(
-      makeStartupDetails("wants_xcom", "test_dag", "r1", {
+      makeStartupDetails("bound_upstream", "test_dag", "r1", {
+        arg_bindings: [
+          { name: "country", kind: "literal", value: "uk" },
+          { name: "extracted", kind: "xcom", task_id: "fn_extract" },
+        ],
+      }),
+      (msgType, body) =>
+        msgType === "GetXCom"
+          ? { body: { type: "XComResult", key: body["key"], value: { rows: 2 } } }
+          : { body: null },
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(args()).toMatchObject({ country: "uk", extracted: { rows: 2 } });
+    expect(result.runtimeRequests.filter((r) => r.type === "GetXCom")[0]?.body).toMatchObject({
+      key: "return_value",
+      dag_id: "test_dag",
+      run_id: "r1",
+      task_id: "fn_extract",
+    });
+  });
+
+  it("fails the task when the upstream task pushed no output", async () => {
+    testDag.task("upstream_pushed_nothing", async () => "never runs");
+
+    const result = await driveSupervisor(
+      makeStartupDetails("upstream_pushed_nothing", "test_dag", "r1", {
         arg_bindings: [{ name: "extracted", kind: "xcom", task_id: "fn_extract" }],
+      }),
+      (msgType) =>
+        msgType === "GetXCom"
+          ? { body: { type: "ErrorResponse", error: "XCOM_NOT_FOUND" } }
+          : { body: null },
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
+    expect(String(runtimeLog(result, "Task failed")?.["error"])).toContain(
+      'Task argument "extracted" takes the output of upstream task "fn_extract", which pushed no ' +
+        "return_value XCom",
+    );
+  });
+
+  it("fails a spec it cannot honour without pulling anything", async () => {
+    testDag.task("unbindable_spec", async () => "never runs");
+
+    const result = await driveSupervisor(
+      makeStartupDetails("unbindable_spec", "test_dag", "r1", {
+        arg_bindings: [
+          { name: "extracted", kind: "xcom", task_id: "fn_extract" },
+          { name: "ctx", kind: "literal", value: "shadowed" },
+        ],
       }),
     );
 
     expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
     expect(result.runtimeRequests.filter((r) => r.type === "GetXCom")).toHaveLength(0);
     expect(String(runtimeLog(result, "Task failed")?.["error"])).toContain(
-      "XCom-backed arguments are not supported yet",
+      'Task argument "ctx" collides with an argument the TypeScript SDK passes',
     );
   });
 

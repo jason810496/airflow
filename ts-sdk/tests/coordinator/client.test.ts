@@ -88,6 +88,35 @@ describe("getXCom not-found contract", () => {
     const c = client([{ body: { type: "ErrorResponse", error: "XCOM_NOT_FOUND" } }]);
     expect(await c.getXCom({ key: "k" })).toBeNull();
   });
+
+  it.each<[string, { body: unknown }]>([
+    ["an absent row", { body: { type: "ErrorResponse", error: "XCOM_NOT_FOUND" } }],
+    ["a stored null", { body: { type: "XComResult", key: "k", value: null } }],
+  ])("answers null for %s, the JS-friendly shape handlers see", async (_case, frame) => {
+    const c = client([frame]);
+    expect(await c.getXCom({ key: "k" })).toBeNull();
+  });
+});
+
+describe("getXComEntry tells an absent row from a stored null", () => {
+  it.each<[string, unknown, unknown]>([
+    ["an object", { count: 2 }, { count: 2 }],
+    ["a stored null, which an upstream can legitimately push", null, null],
+    ["false, which is a value like any other", false, false],
+  ])("reports %s as found", async (_case, wireValue, expected) => {
+    const c = client([{ body: { type: "XComResult", key: "k", value: wireValue } }]);
+    expect(await c.getXComEntry({ key: "k" })).toEqual({ found: true, value: expected });
+  });
+
+  it("reports XCOM_NOT_FOUND as absent", async () => {
+    const c = client([{ body: { type: "ErrorResponse", error: "XCOM_NOT_FOUND" } }]);
+    expect(await c.getXComEntry({ key: "k" })).toEqual({ found: false, value: null });
+  });
+
+  it("throws rather than reporting absence when the pull itself failed", async () => {
+    const c = client([{ body: { type: "ErrorResponse", error: "API_SERVER_ERROR" } }]);
+    await expect(c.getXComEntry({ key: "k" })).rejects.toThrow(/API_SERVER_ERROR/);
+  });
 });
 
 describe("client is bound to TaskContext", () => {

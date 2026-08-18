@@ -26,7 +26,11 @@ def python_start():
 
 
 @task.stub(queue="typescript")
-def build_message(): ...
+def build_message(upstream: str, country: str): ...
+
+
+@task.stub(queue="typescript")
+def read_message(): ...
 
 
 @task.stub(queue="typescript")
@@ -35,11 +39,13 @@ def read_connection(): ...
 
 @dag(dag_id="typescript_example", schedule=None, catchup=False, tags=["typescript", "example"])
 def typescript_example():
-    start = python_start()
-    message = build_message()
+    # The TaskFlow call is what the TypeScript handler receives: `upstream` is
+    # pulled from python_start's return value, `country` travels as a literal.
+    message = build_message(python_start(), "uk")
+    # A call argument carries an upstream task's return value and nothing else,
+    # so read_message pulls the custom XCom key for itself.
+    message >> read_message()
     read_connection()
-
-    start >> message
 
 
 typescript_example()

@@ -73,35 +73,37 @@ Python Dag (the scheduling side)
             return "hello from Python"
 
         @task.stub(queue="typescript")
-        def build_message(): ...
+        def build_message(upstream: str): ...
 
-        python_start() >> build_message()
+        build_message(python_start())
 
 
     typescript_example()
 
 ``@task.stub`` declares the *shape* of the TypeScript task without any Python implementation. The ``queue``
-value routes the task to the Node.js coordinator.
+value routes the task to the Node.js coordinator. Calling it TaskFlow-style declares both the dependency
+and the arguments the TypeScript handler receives.
 
 TypeScript implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A task is an ordinary (usually ``async``) function receiving ``TaskHandlerArgs``. Create a ``Dag`` with
-the ``dag_id`` it implements, attach each handler with ``dag.task``, collect the Dags in a ``DagRegistry``,
-then serve them to Airflow with ``serveDags``; that top-level ``await`` makes the module a runnable bundle
-entry point.
+A task is an ordinary (usually ``async``) function receiving ``TaskHandlerArgs`` plus whatever the Dag's
+call bound to it. Create a ``Dag`` with the ``dag_id`` it implements, attach each handler with ``dag.task``,
+collect the Dags in a ``DagRegistry``, then serve them to Airflow with ``serveDags``; that top-level
+``await`` makes the module a runnable bundle entry point.
 
 .. code-block:: typescript
 
     import { Dag, DagRegistry, serveDags, type TaskHandlerArgs } from "@apache-airflow/ts-sdk";
 
-    export async function buildMessage({ ctx, client }: TaskHandlerArgs) {
-      const upstream = await client.getXCom<string>({
-        key: "return_value",
-        taskId: "python_start",
-      });
+    /** What the Dag's ``build_message(python_start())`` call binds. */
+    interface BuildMessageArgs {
+      upstream: string;
+    }
+
+    export async function buildMessage({ client, upstream }: BuildMessageArgs & TaskHandlerArgs) {
       const greeting = await client.getVariable("typescript_example_greeting");
-      return `${greeting ?? "hello from TypeScript"}; upstream=${upstream ?? "missing"}`;
+      return `${greeting ?? "hello from TypeScript"}; upstream=${upstream}`;
     }
 
     const dag = new Dag("typescript_example");
@@ -123,9 +125,12 @@ These are not used yet; do not set them. Any other key is rejected.
 
 .. note::
 
-  As with the other language SDKs, XCom *dependencies* are declared in the Python stub Dag (they define task
-  order). The value must still be read explicitly in TypeScript via ``client.getXCom``, and produced either
-  by the task's return value or by ``client.setXCom``.
+  As with the other language SDKs, task *order* is declared in the Python stub Dag. Its TaskFlow call is also
+  what a handler is called with: literal arguments travel in the serialized Dag, and an upstream task's
+  output is pulled from that task's ``return_value`` XCom — all of them concurrently — before the handler
+  runs. An upstream that pushed no output fails the task rather than binding ``undefined``. Only a direct
+  upstream return value can be bound this way; any other read — a custom XCom key, another Dag's data —
+  still goes through ``client.getXCom`` inside the handler.
 
 Coordinator configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~

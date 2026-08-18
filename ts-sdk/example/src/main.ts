@@ -18,23 +18,42 @@
  */
 
 import { Dag, DagRegistry, serveDags, type TaskHandlerArgs } from "@apache-airflow/ts-sdk";
+import { report, summarize } from "./taskflow.js";
 
 const dag = new Dag("typescript_example");
 
-export async function buildMessage({ client }: TaskHandlerArgs) {
-  const upstream = await client.getXCom<string>({
-    key: "return_value",
-    taskId: "python_start",
-  });
+/** What the Dag's `build_message(python_start(), "uk")` call binds. */
+interface BuildMessageArgs {
+  /** python_start's return value, pulled before this handler is called. */
+  upstream: string;
+  /** A literal from the Dag file. */
+  country: string;
+}
+
+export async function buildMessage({
+  client,
+  upstream,
+  country,
+}: TaskHandlerArgs & BuildMessageArgs) {
   const greeting = await client.getVariable("typescript_example_greeting");
-  const message = `${greeting ?? "hello from TypeScript"}; upstream=${upstream ?? "missing"}`;
+  const message = `${greeting ?? "hello from TypeScript"} (${country}); upstream=${upstream}`;
 
   await client.setXCom({ key: "typescript_message", value: message });
 
-  return {
-    message,
-    upstream,
-  };
+  return { message, country };
+}
+
+/**
+ * A call argument binds an upstream task's return value, so anything else — a
+ * custom XCom key, another Dag's output — is still read through the client.
+ */
+export async function readMessage({ client }: TaskHandlerArgs) {
+  const message = await client.getXCom<string>({
+    key: "typescript_message",
+    taskId: "build_message",
+  });
+
+  return { message: message ?? "missing" };
 }
 
 export async function readConnection({ client }: TaskHandlerArgs) {
@@ -50,6 +69,13 @@ export async function readConnection({ client }: TaskHandlerArgs) {
 }
 
 dag.task("build_message", buildMessage);
+dag.task("read_message", readMessage);
 dag.task("read_connection", readConnection);
 
-await serveDags(new DagRegistry(dag));
+// A second Dag in the same bundle, dedicated to argument binding: `summarize`
+// types its arguments flat, `report` declares one interface. See taskflow.ts.
+const taskflowDag = new Dag("typescript_taskflow_example");
+taskflowDag.task("summarize", summarize);
+taskflowDag.task("report", report);
+
+await serveDags(new DagRegistry(dag, taskflowDag));

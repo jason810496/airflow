@@ -22,9 +22,33 @@
 This example shows the coordinator-mode shape for TypeScript task handlers:
 
 - `dags/typescript_example.py` declares the Airflow Dag and stub tasks.
+- `dags/typescript_taskflow_example.py` is a second Dag focused on argument
+  binding.
 - `src/main.ts` registers TypeScript handlers for the same Dag/task IDs and
-  starts the coordinator runtime.
-- `dist/bundle.mjs` is the generated Node.js bundle that Airflow launches.
+  starts the coordinator runtime; `src/taskflow.ts` holds the second Dag's
+  handlers.
+- `dist/bundle.mjs` is the generated Node.js bundle that Airflow launches. One
+  bundle serves both Dags.
+
+The Dag's `build_message(python_start(), "uk")` call is what the matching
+handler is called with: `upstream` is pulled from the Python task's
+`return_value` XCom before the handler runs, and `country` travels as a literal.
+`read_message` shows the other direction — a custom XCom key no call argument
+can name, read through the client inside the handler.
+
+`typescript_taskflow_example` exercises binding on its own, with several
+arguments per task and one handler in each authoring style. A handler always
+receives a single object holding `ctx`, `client`, and one key per bound
+argument; how that object is typed is the author's choice:
+
+- `summarize` annotates its arguments **flat**, inline in the parameter.
+- `report` declares them on **one interface** intersected with
+  `TaskHandlerArgs`, which is worth naming once a handler has several arguments
+  or is exported for testing.
+
+Both are ordinary TypeScript annotations — `dag.task` infers the parameter type
+from the handler, so neither needs a cast. Bound arguments keep their Python
+names, so `dry_run` and `region_code` are renamed while destructuring.
 
 The build uses the SDK's `airflow-ts-pack` tool, which bundles the entrypoint
 with esbuild and embeds the Airflow metadata generated from the bundle's
