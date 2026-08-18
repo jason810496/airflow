@@ -27,6 +27,7 @@ import type {
   TaskClient,
   TaskContext,
   TaskHandler,
+  TaskHandlerArgs,
   TaskInputs,
   TaskOptions,
   TaskRef,
@@ -171,6 +172,31 @@ describe("public API", () => {
     expectTypeOf(SUPERVISOR_API_VERSION).toMatchTypeOf<string>();
   });
 
+  it("merges a task's bound call arguments into the handler's single argument object", () => {
+    expectTypeOf<TaskHandler<string, TaskHandlerArgs & { country: string }>>()
+      .parameter(0)
+      .toEqualTypeOf<TaskHandlerArgs & { country: string }>();
+    // A handler written before argument binding keeps the argument type it had,
+    // so naming the second parameter stays opt-in.
+    expectTypeOf<(args: TaskHandlerArgs) => Promise<string>>().toMatchTypeOf<TaskHandler<string>>();
+  });
+
+  it("registers a handler that declares its bound arguments on an interface", () => {
+    interface TransformArgs {
+      readonly country: string;
+    }
+    const dag = new Dag("interface_injection");
+    // One interface carries the bound arguments, is placed as the handler's
+    // parameter, and `dag.task` infers it. Needing a cast here would mean the
+    // authoring surface had regressed.
+    const transform = async ({ ctx, country }: TransformArgs & TaskHandlerArgs) =>
+      `${ctx.taskId}:${country}`;
+    expect(dag.task("transform", transform)).toEqual({
+      dagId: "interface_injection",
+      taskId: "transform",
+    });
+  });
+
   it("keeps the Dag authoring signatures extensible via trailing specs", () => {
     expectTypeOf<TaskRef>().toEqualTypeOf<{
       readonly dagId: string;
@@ -183,9 +209,9 @@ describe("public API", () => {
     }>();
     expectTypeOf<ConstructorParameters<typeof Dag>>().toEqualTypeOf<[string, DagSpec?]>();
     expectTypeOf<Dag["task"]>().toEqualTypeOf<
-      <TReturn = unknown>(
+      <TArgs extends object = TaskHandlerArgs, TReturn = unknown>(
         taskId: string,
-        handler: TaskHandler<TReturn>,
+        handler: TaskHandler<TReturn, TArgs>,
         options?: TaskOptions,
       ) => TaskRef
     >();

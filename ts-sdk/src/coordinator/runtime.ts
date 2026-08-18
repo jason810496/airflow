@@ -35,6 +35,7 @@
 //        - DagFileParseRequest → respond with DagFileParsingResult, exit
 //        - StartupDetails      → run task, respond Succeed or Fail, exit
 //
+import { decodeArgBindings } from "./arg-binding.js";
 import { createCoordinatorClient } from "./client.js";
 import { CommChannel } from "./comm-channel.js";
 import { LogChannel } from "./log-channel.js";
@@ -361,12 +362,22 @@ async function handleTask(
 
   const ctx = buildContext(details, signal);
   const client = createCoordinatorClient(comm, ctx, clientLogs);
-  const args: TaskHandlerArgs = { ctx, client };
-  // Startup-details fields already logged above (`Received task
-  // startup details`); this line just marks the handler-call boundary.
-  logs.debug("Dispatching to handler", { task_id: ctx.taskId });
+  // Stays null until the spec decodes, so a rejected spec is not reported as
+  // having bound anything.
+  let boundNames: readonly string[] | null = null;
 
   try {
+    const bound = decodeArgBindings(details.ti_context.arg_bindings);
+    boundNames = bound.names;
+    // Startup-details fields already logged above (`Received task startup
+    // details`); this line marks the handler-call boundary and names what the
+    // Dag's call bound, which a mistyped destructure otherwise loses silently.
+    logs.debug("Dispatching to handler", {
+      task_id: ctx.taskId,
+      arg_bindings: bound.names ?? "absent",
+    });
+    // Reserved names are rejected while decoding, so nothing can displace these.
+    const args: TaskHandlerArgs = { ...bound.values, ctx, client };
     const result = await handler(args);
     if (result !== undefined) {
       await client.setXCom({ key: "return_value", value: result as JsonValue });
@@ -382,7 +393,7 @@ async function handleTask(
     };
     return response;
   } catch (err) {
-    const message = (err as Error).message ?? String(err);
+    const message = describeTaskFailure(err, boundNames);
     logs.error("Task failed", {
       task_id: ctx.taskId,
       error: message,
@@ -390,6 +401,16 @@ async function handleTask(
     });
     return buildFailureResponse(details, message);
   }
+}
+
+/** The failure text, naming what the Dag's call bound: a handler that
+ *  destructures an argument under the wrong name sees `undefined` rather than
+ *  an error, so the names it could have used belong in the report. */
+function describeTaskFailure(err: unknown, boundNames: readonly string[] | null): string {
+  const message = (err as Error).message ?? String(err);
+  return boundNames?.length
+    ? `${message} (bound arguments were: ${boundNames.join(", ")})`
+    : message;
 }
 
 async function sendSupervisorResponse(

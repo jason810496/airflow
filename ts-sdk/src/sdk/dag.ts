@@ -20,7 +20,7 @@
 // The Dag authoring surface: `new Dag(dagId)` plus `dag.task(taskId, handler)`.
 
 import { brand, hasBrand } from "./brand.js";
-import type { TaskHandler } from "./task.js";
+import type { TaskHandler, TaskHandlerArgs } from "./task.js";
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
@@ -164,10 +164,14 @@ export class Dag {
    *
    * `taskId` must match the Dag-side operator's `task_id` exactly, including
    * any TaskGroup prefix. Returns this task's handle.
+   *
+   * `TArgs` is inferred from the handler's own parameter, so a handler that
+   * declares its bound TaskFlow arguments on an interface registers without a
+   * cast — see {@link TaskHandler}.
    */
-  task<TReturn = unknown>(
+  task<TArgs extends object = TaskHandlerArgs, TReturn = unknown>(
     taskId: string,
-    handler: TaskHandler<TReturn>,
+    handler: TaskHandler<TReturn, TArgs>,
     options: TaskOptions = {},
   ): TaskRef {
     if (typeof handler !== "function") {

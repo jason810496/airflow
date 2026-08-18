@@ -588,3 +588,87 @@ describe("coordinator runtime integration", () => {
     expect(setXComReqs).toHaveLength(0);
   });
 });
+
+describe("TaskFlow argument binding", () => {
+  /** Registers a handler that captures the argument object it was called with. */
+  function captureArgs(taskId: string): () => Record<string, unknown> {
+    let captured: Record<string, unknown> = {};
+    testDag.task(taskId, async (args) => {
+      captured = { ...args };
+    });
+    return () => captured;
+  }
+
+  function runtimeLog(result: MockResult, event: string): Record<string, unknown> | undefined {
+    return result.logRecords.find((r) => r["event"] === `[ts-sdk.runtime] ${event}`);
+  }
+
+  it("passes the Dag's call arguments to the handler alongside ctx and client", async () => {
+    const args = captureArgs("bound_literals");
+
+    const result = await driveSupervisor(
+      makeStartupDetails("bound_literals", "test_dag", "r1", {
+        arg_bindings: [
+          { name: "country", kind: "literal", value: "uk", value_schema: { type: "string" } },
+          { name: "retries_num", kind: "literal", value: 3, from_default: true },
+        ],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(args()).toMatchObject({ country: "uk", retries_num: 3 });
+    expect(Object.keys(args()).sort()).toEqual(["client", "country", "ctx", "retries_num"]);
+    expect(runtimeLog(result, "Dispatching to handler")).toMatchObject({
+      arg_bindings: ["country", "retries_num"],
+    });
+  });
+
+  it("calls a handler written before argument binding with ctx and client only", async () => {
+    const args = captureArgs("unbound_task");
+
+    const result = await driveSupervisor(makeStartupDetails("unbound_task"));
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(Object.keys(args()).sort()).toEqual(["client", "ctx"]);
+    expect(runtimeLog(result, "Dispatching to handler")).toMatchObject({ arg_bindings: "absent" });
+  });
+
+  it("fails the task when an argument reads an upstream output, pulling no XCom", async () => {
+    testDag.task("wants_xcom", async () => "never runs");
+
+    const result = await driveSupervisor(
+      makeStartupDetails("wants_xcom", "test_dag", "r1", {
+        arg_bindings: [{ name: "extracted", kind: "xcom", task_id: "fn_extract" }],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
+    expect(result.runtimeRequests.filter((r) => r.type === "GetXCom")).toHaveLength(0);
+    expect(String(runtimeLog(result, "Task failed")?.["error"])).toContain(
+      "XCom-backed arguments are not supported yet",
+    );
+  });
+
+  it("names the bound arguments when the handler throws", async () => {
+    testDag.task("misreads_argument", async () => {
+      throw new Error("Cannot read properties of undefined");
+    });
+
+    const result = await driveSupervisor(
+      makeStartupDetails("misreads_argument", "test_dag", "r1", {
+        should_retry: true,
+        max_tries: 3,
+        arg_bindings: [
+          { name: "country", kind: "literal", value: "uk" },
+          { name: "retries_num", kind: "literal", value: 3 },
+        ],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({
+      type: "RetryTask",
+      retry_reason:
+        "Cannot read properties of undefined (bound arguments were: country, retries_num)",
+    });
+  });
+});

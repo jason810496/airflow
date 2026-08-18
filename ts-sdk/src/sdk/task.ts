@@ -43,7 +43,15 @@ export interface TaskContext {
   readonly signal: AbortSignal;
 }
 
-/** Arguments passed to every task handler. */
+/**
+ * The arguments the SDK itself passes to every task handler.
+ *
+ * `ctx` and `client` are reserved names, permanently: they are the whole
+ * top-level surface the SDK injects, and whatever it injects in future belongs
+ * inside `ctx` rather than as a third key. Every other key on a handler's
+ * argument object is a bound TaskFlow call argument, so a Dag that names a
+ * parameter `ctx` or `client` fails the task rather than shadowing one of these.
+ */
 export interface TaskHandlerArgs {
   /** Runtime metadata for the current task invocation. */
   readonly ctx: TaskContext;
@@ -54,8 +62,31 @@ export interface TaskHandlerArgs {
 /**
  * Function signature for a TypeScript task handler.
  *
+ * A handler takes a single object, `TArgs`: {@link TaskHandlerArgs} plus one key
+ * per argument the Dag's TaskFlow call bound to this task. Declare those on an
+ * interface matching the `@task.stub` signature the Dag calls, and intersect it
+ * with `TaskHandlerArgs` to name the whole parameter:
+ *
+ * ```ts
+ * interface TransformArgs {
+ *   country: string;
+ * }
+ *
+ * async function transform({ ctx, country }: TransformArgs & TaskHandlerArgs) {
+ *   return `${ctx.taskId}:${country}`;
+ * }
+ *
+ * dag.task("transform", transform);
+ * ```
+ *
+ * `TArgs` is the parameter type itself rather than the bound arguments alone, so
+ * `dag.task(...)` infers it straight from the handler — registering one that
+ * names its arguments needs no cast.
+ *
  * Non-`undefined` return values are automatically pushed to XCom under
  * the `"return_value"` key, matching Python `@task` behavior. Return
  * `undefined` or omit a return value to skip the automatic XCom push.
  */
-export type TaskHandler<TReturn = unknown> = (args: TaskHandlerArgs) => TReturn | Promise<TReturn>;
+export type TaskHandler<TReturn = unknown, TArgs = TaskHandlerArgs> = (
+  args: TArgs,
+) => TReturn | Promise<TReturn>;
