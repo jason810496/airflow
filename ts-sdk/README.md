@@ -41,7 +41,7 @@ export async function sayHello({ ctx, client }: TaskHandlerArgs) {
 }
 
 const dag = new Dag("example_dag");
-dag.task("say_hello", sayHello);
+dag.task("say_hello", sayHello)();
 
 await serveDags(new DagRegistry(dag));
 ```
@@ -49,14 +49,54 @@ await serveDags(new DagRegistry(dag));
 Non-`undefined` return values are pushed to XCom under the `"return_value"`
 key by the active runtime, matching Python `@task` behavior.
 
+## Declaring a Dag
+
+`dag.task(taskId, handler)` declares a task and returns a factory. Calling that
+factory is what places the task in the Dag: the call says where each of the
+handler's arguments comes from, and returns a reference the next task can
+consume.
+
+```ts
+const dag = new Dag("sales_pipeline");
+
+const extract = dag.task("extract", async ({ client }) => {
+  const rowCount = Number((await client.getVariable("daily_row_count")) ?? "0");
+  return { rowCount };
+});
+
+const transform = dag.task(
+  "transform",
+  async ({ extracted, regionCode }: { extracted: { rowCount: number }; regionCode: string }) => ({
+    transformedRows: extracted.rowCount,
+    regionCode,
+  }),
+);
+
+transform({ extracted: extract(), regionCode: "us" });
+```
+
+`ctx` and `client` come from the runtime, so they are never passed here; every
+other argument the handler declares has to be supplied, as an upstream
+reference or as a JSON literal of that argument's own type. The compiler
+rejects a missing argument, a misspelled one, and a literal of the wrong type,
+so a broken graph does not reach Airflow.
+
+Each task is called exactly once. Calling one twice throws, and a task that is
+never called is reported as an import error when Airflow parses the bundle,
+instead of silently dropping out of the Dag. A reference exists only after the
+call that produced it, which is what makes a cycle unwritable.
+
+> **Not served yet:** the runtime does not turn these Dags into serialized Dags,
+> so Airflow still sees no Dags in a TypeScript bundle. Declare the Dag in
+> Python until it does — see below.
+
 ## Coordinator Usage
 
 Airflow runs TypeScript task bundles through the Python-side
-`airflow.sdk.coordinators.node.NodeCoordinator`. Declaring Airflow Dags in
-TypeScript is not supported yet; the Dag is still declared in Python. The
-intended authoring shape matches the other non-Python SDKs: a Python Dag
-declares the scheduling shape with stub tasks, and the TypeScript module
-registers handlers with matching task IDs.
+`airflow.sdk.coordinators.node.NodeCoordinator`. Because a Dag declared in
+TypeScript is not served to Airflow yet, the working shape matches the other
+non-Python SDKs: a Python Dag declares the scheduling shape with stub tasks,
+and the TypeScript module binds handlers to matching task IDs.
 
 Python Dag:
 
@@ -121,7 +161,7 @@ export async function transform({ client }: TaskHandlerArgs) {
   };
 }
 
-const salesPipeline = new Dag("sales_pipeline");
+const salesPipeline = new Dag("sales_pipeline", { isMixedLanguageDag: true });
 salesPipeline.task("extract", extract);
 salesPipeline.task("transform", transform);
 
@@ -136,14 +176,20 @@ task's `task_id`. The handler function is the reusable task implementation;
 collects the Dags this bundle can execute, and `serveDags` serves them to
 Airflow.
 
+`isMixedLanguageDag` marks that split: the Python file owns the Dag, so this
+side declares no dependencies and its tasks are not called. The flag stays in
+the bundle and is never sent to Airflow — every other Dag option describes the
+Dag Airflow schedules, this one describes where the Dag is written.
+
 `serveDags` is the entrypoint, and the registry it is given is the whole bundle:
 a Dag left out of the registry is not part of the bundle, and its tasks are
 marked removed at runtime. The registry itself holds no sockets and starts
 nothing, so a unit test can build one and dispatch through
 `registry.getTaskHandler(dagId, taskId)` without any runtime involved.
 
-`new Dag` and `dag.task` take a trailing options object — `spec` on both, plus
-`inputs` on a task. These are not used yet; do not set them.
+`new Dag` and `dag.task` take a trailing options object. `spec` on a task is
+reserved for the task-level options a Dag declared in TypeScript will carry
+(retries, queue, ...); it has no fields yet, so do not set it.
 
 For larger projects, declare each Dag in its own module and keep one Airflow
 entrypoint that serves them all:
@@ -258,7 +304,7 @@ so a broken docs build fails the PR rather than the release.
 ### Publishing the API docs
 
 Publishing is a separate, deliberate step — a providers-only publish wave will
-not refresh the SDK docs as a side effect. Trigger the *Publish Docs to S3*
+not refresh the SDK docs as a side effect. Trigger the _Publish Docs to S3_
 workflow for the release ref:
 
 ```bash

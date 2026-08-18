@@ -48,17 +48,25 @@ export async function sayHello({ ctx, client }: TaskHandlerArgs) {
 }
 
 const dag = new Dag("example_dag");
-dag.task("say_hello", sayHello);
+dag.task("say_hello", sayHello)();
 
 await serveDags(new DagRegistry(dag));
 ```
 
+`dag.task(...)` returns a factory, and calling it is what places the task in the
+Dag: the call supplies every handler argument the runtime does not, either from
+an upstream task's reference or as a literal, and returns the reference that
+wires the next task to this one. Each task is called exactly once.
+
 ## Coordinators
 
 Airflow runs TypeScript task bundles through the Python-side `NodeCoordinator`
-(`airflow.sdk.coordinators.node.NodeCoordinator`). A Python Dag declares the
-scheduling shape with stub tasks and owns the task dependencies between them,
-and the TypeScript module registers handlers with matching task IDs. See the
+(`airflow.sdk.coordinators.node.NodeCoordinator`). A Dag declared in TypeScript
+is not served to Airflow yet, so a Python Dag declares the scheduling shape with
+stub tasks and owns the task dependencies between them, and the TypeScript
+module binds handlers to matching task IDs — with
+`new Dag(dagId, { isMixedLanguageDag: true })`, which says the Python file owns
+the layout and leaves the tasks uncalled on this side. See the
 [Non-Python Task SDKs guide](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/index.html)
 for the conceptual overview of language SDKs.
 

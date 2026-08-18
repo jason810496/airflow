@@ -20,9 +20,9 @@
 import { Dag, DagRegistry, serveDags } from "../../../src/index.js";
 
 const fixtureDag = new Dag("fixture_dag");
-fixtureDag.task("extract", async () => "extracted");
-fixtureDag.task("transform", async () => "transformed");
+fixtureDag.task("extract", async () => "extracted")();
+fixtureDag.task("transform", async () => "transformed")();
 const otherDag = new Dag("other_dag");
-otherDag.task("solo", async () => undefined);
+otherDag.task("solo", async () => undefined)();
 
 await serveDags(new DagRegistry(fixtureDag, otherDag));

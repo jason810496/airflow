@@ -24,9 +24,9 @@
 //     node my-bundle.mjs --comm=host:port --logs=host:port
 //
 // where `my-bundle.mjs` is a user-bundled Node script that imports
-// the SDK, creates `Dag` objects, attaches a handler per task with
-// `dag.task(...)`, collects them in a `DagRegistry`, then awaits
-// `serveDags(registry)`.
+// the SDK, creates `Dag` objects, declares a handler per task with
+// `dag.task(...)` and calls what that returns to place the task,
+// collects the Dags in a `DagRegistry`, then awaits `serveDags(registry)`.
 //
 // Lifecycle:
 //   1. Parse --comm / --logs from argv
@@ -52,7 +52,12 @@ import {
   type RuntimeTaskState,
   type StartupDetails,
 } from "./protocol.js";
-import { DagRegistry, isDagRegistry, listRegistryTasks } from "../sdk/registry.js";
+import {
+  DagRegistry,
+  finalizeRegistryDags,
+  isDagRegistry,
+  listRegistryTasks,
+} from "../sdk/registry.js";
 import { DUPLICATE_COPY_HINT } from "../sdk/brand.js";
 import type { TaskContext, TaskHandlerArgs } from "../sdk/task.js";
 import type { JsonValue } from "../sdk/client-types.js";
@@ -72,12 +77,13 @@ function serveLatch(): Record<symbol, boolean | undefined> {
 /**
  * Serve a bundle's Dags to Airflow. The entry point of a TypeScript Dag bundle.
  *
- * Build the Dags, attach a handler per task with `dag.task(...)`, collect them
- * in a {@link DagRegistry}, then await this at module top level:
+ * Build the Dags, declare a handler per task with `dag.task(...)` and call what
+ * that returns to place the task, collect the Dags in a {@link DagRegistry},
+ * then await this at module top level:
  *
  * ```ts
  * const dag = new Dag("my_dag");
- * dag.task("extract", extractFn);
+ * dag.task("extract", extractFn)();
  * await serveDags(new DagRegistry(dag));
  * ```
  *
@@ -176,6 +182,10 @@ export async function startCoordinator(
 ): Promise<void> {
   const argv = opts.argv ?? process.argv;
   if (argv.includes(AIRFLOW_METADATA_FLAG)) {
+    // Packing is the author's fastest feedback loop and runs once per build, so
+    // a Dag that is not fully declared fails here rather than waiting to become
+    // an import error on a deployed bundle.
+    finalizeRegistryDags(registry);
     process.stdout.write(
       `${AIRFLOW_METADATA_SENTINEL}${JSON.stringify(buildBundleManifest(registry))}\n`,
     );
@@ -319,6 +329,24 @@ function handleParse(
   registry: DagRegistry,
   logs: LogChannel,
 ): RuntimeDagFileParsingResult {
+  // The Dags are checked here, on the parse path, and deliberately nowhere on
+  // the task-execution path: a Dag whose tasks are not all wired never reaches
+  // the scheduler, so no worker can be running one of its tasks, and re-walking
+  // every Dag in the bundle would cost time at every task start.
+  try {
+    finalizeRegistryDags(registry);
+  } catch (err) {
+    const message = (err as Error).message ?? String(err);
+    logs.error("Dag is not fully declared", { file: request.file, error: message });
+    // Reported as an import error, which is how Airflow surfaces a Dag file
+    // that does not describe a valid Dag.
+    return {
+      type: "DagFileParsingResult",
+      fileloc: request.file,
+      serialized_dags: [],
+      import_errors: { [request.file]: message },
+    };
+  }
   // TypeScript-native Dag parsing is not yet supported.
   // Respond with an empty result so the Python-stub-Dag workflow works.
   logs.info("Parse-mode response (TS Dag parsing not yet supported)", {

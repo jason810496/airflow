@@ -185,7 +185,7 @@ describe("runPack", () => {
       [
         `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
         'const bigDag = new Dag("big_dag");',
-        'for (let i = 0; i < 4000; i += 1) bigDag.task(String(i).padStart(240, "t"), async () => undefined);',
+        'for (let i = 0; i < 4000; i += 1) bigDag.task(String(i).padStart(240, "t"), async () => undefined)();',
         "await serveDags(new DagRegistry(bigDag));",
       ].join("\n"),
     );
@@ -230,7 +230,7 @@ describe("runPack", () => {
         [
           `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
           `const invalidDag = new Dag(${JSON.stringify(dagId)});`,
-          `invalidDag.task(${JSON.stringify(taskId)}, async () => undefined);`,
+          `invalidDag.task(${JSON.stringify(taskId)}, async () => undefined)();`,
           "await serveDags(new DagRegistry(invalidDag));",
         ].join("\n"),
       );
@@ -299,7 +299,7 @@ describe("runPack", () => {
       [
         `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
         'const salesDag = new Dag("sales_dag");',
-        'salesDag.task("extract", async () => undefined);',
+        'salesDag.task("extract", async () => undefined)();',
         'await serveDags(new DagRegistry(salesDag, new Dag("empty_dag")));',
       ].join("\n"),
     );
@@ -321,9 +321,9 @@ describe("runPack", () => {
       [
         `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
         'const salesDag = new Dag("sales_dag");',
-        'salesDag.task("extract", async () => undefined);',
+        'salesDag.task("extract", async () => undefined)();',
         'const billingDag = new Dag("billing_dag");',
-        'billingDag.task("charge", async () => undefined);',
+        'billingDag.task("charge", async () => undefined)();',
         "await serveDags(new DagRegistry(salesDag));",
       ].join("\n"),
     );

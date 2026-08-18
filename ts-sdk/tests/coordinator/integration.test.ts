@@ -38,8 +38,10 @@ import {
 import { Dag } from "../../src/sdk/dag.js";
 import { DagRegistry } from "../../src/sdk/registry.js";
 
-const testDag = new Dag("test_dag");
-const otherDag = new Dag("other_dag");
+// Bound to Dags declared in Python: these tests dispatch the task IDs the
+// supervisor sends rather than laying out a Dag of their own.
+const testDag = new Dag("test_dag", { isMixedLanguageDag: true });
+const otherDag = new Dag("other_dag", { isMixedLanguageDag: true });
 // The registry the runtime dispatches through. startCoordinator() is driven
 // directly rather than through serveDags(), so these tests can supply mock
 // socket addresses.
@@ -142,14 +144,18 @@ function isFrameWithBodyType(chunk: unknown, type: string): boolean {
   }
 }
 
-async function driveSupervisor(initialFrame: unknown, responder?: Responder): Promise<MockResult> {
+async function driveSupervisor(
+  initialFrame: unknown,
+  responder?: Responder,
+  served: DagRegistry = registry,
+): Promise<MockResult> {
   const comm = await listen();
   const logs = await listen();
 
   const commAccept = acceptOne(comm.server);
   const logsAccept = acceptOne(logs.server);
 
-  const runtimeDone = startCoordinator(registry, {
+  const runtimeDone = startCoordinator(served, {
     commAddr: `127.0.0.1:${comm.port}`,
     logsAddr: `127.0.0.1:${logs.port}`,
     argv: [],
@@ -553,6 +559,25 @@ describe("coordinator runtime integration", () => {
     const body = result.firstResponse!.body as Record<string, unknown>;
     expect(body.type).toBe("DagFileParsingResult");
     expect(body.serialized_dags).toEqual([]);
+    expect(body.import_errors).toBeUndefined();
+  });
+
+  it("reports a Dag with an uncalled task as an import error", async () => {
+    const halfWired = new Dag("half_wired_dag");
+    halfWired.task("extract", async () => undefined)();
+    halfWired.task("orphan", async () => undefined);
+
+    const result = await driveSupervisor(
+      { type: "DagFileParseRequest", file: "/dags/half_wired.mjs", bundle_path: "/dags" },
+      undefined,
+      new DagRegistry(halfWired),
+    );
+
+    const body = result.firstResponse!.body as Record<string, unknown>;
+    expect(body.serialized_dags).toEqual([]);
+    expect(body.import_errors).toEqual({
+      "/dags/half_wired.mjs": expect.stringContaining('Task "orphan" of Dag "half_wired_dag"'),
+    });
   });
 
   it("auto-pushes return_value XCom when handler returns a value", async () => {

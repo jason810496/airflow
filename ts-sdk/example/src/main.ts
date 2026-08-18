@@ -19,7 +19,9 @@
 
 import { Dag, DagRegistry, serveDags, type TaskHandlerArgs } from "@apache-airflow/ts-sdk";
 
-const dag = new Dag("typescript_example");
+// The Dag itself lives in dags/typescript_example.py; this module only binds
+// TypeScript handlers to its stub tasks.
+const dag = new Dag("typescript_example", { isMixedLanguageDag: true });
 
 export async function buildMessage({ client }: TaskHandlerArgs) {
   const upstream = await client.getXCom<string>({

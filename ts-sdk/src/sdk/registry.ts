@@ -18,7 +18,7 @@
  */
 
 import { brand, DUPLICATE_COPY_HINT, hasBrand } from "./brand.js";
-import { Dag, getDagTaskRecords, isDag, type TaskRef } from "./dag.js";
+import { Dag, finalizeDag, getDagTaskRecords, isDag, type TaskRef } from "./dag.js";
 import type { TaskHandler } from "./task.js";
 
 // Assigned inside DagRegistry's static block, as Dag does for its tasks.
@@ -45,7 +45,7 @@ export interface RegisteredDag {
  *
  * ```ts
  * const dag = new Dag("my_dag");
- * dag.task("extract", extractFn);
+ * dag.task("extract", extractFn)();
  * await serveDags(new DagRegistry(dag));
  * ```
  *
@@ -113,6 +113,14 @@ export function listRegistryTasks(registry: DagRegistry): TaskRef[] {
   return [...dagsOf(registry).values()].flatMap((dag) =>
     [...getDagTaskRecords(dag).values()].map((record) => record.task),
   );
+}
+
+/** Internal: check that every registered Dag is fully laid out, and close them
+ *  to further wiring. Throws on the first one that is not. */
+export function finalizeRegistryDags(registry: DagRegistry): void {
+  for (const dag of dagsOf(registry).values()) {
+    finalizeDag(dag);
+  }
 }
 
 /** Internal: every registered Dag with its task IDs, empty Dags included. */

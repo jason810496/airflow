@@ -104,22 +104,29 @@ entry point.
       return `${greeting ?? "hello from TypeScript"}; upstream=${upstream ?? "missing"}`;
     }
 
-    const dag = new Dag("typescript_example");
+    const dag = new Dag("typescript_example", { isMixedLanguageDag: true });
     dag.task("build_message", buildMessage);
 
     await serveDags(new DagRegistry(dag));
 
 The ``dagId`` passed to ``new Dag(...)`` must match the ``dag_id`` of the Python Dag, and each ``taskId``
-passed to ``dag.task`` must match a ``@task.stub`` function in that Dag. The registry passed to
-``serveDags`` is the bundle's complete set of Dags; a second ``serveDags`` call is rejected. A Dag left out
-of the registry is not part of the packed bundle, and its tasks are marked removed at runtime.
+passed to ``dag.task`` must match a ``@task.stub`` function in that Dag. ``isMixedLanguageDag`` says that
+the Python file owns the Dag: the TypeScript side declares no task dependencies of its own, and the flag
+itself stays in the bundle rather than being sent to Airflow. The registry passed to ``serveDags`` is the
+bundle's complete set of Dags; a second ``serveDags`` call is rejected. A Dag left out of the registry is
+not part of the packed bundle, and its tasks are marked removed at runtime.
 
 ``DagRegistry`` holds no sockets and starts nothing, so a unit test can build one and dispatch a handler
 through ``registry.getTaskHandler(dagId, taskId)`` without a coordinator runtime. A bundle that collects
 its Dags across several modules can add them incrementally with ``registry.register(...)``.
 
-``new Dag`` and ``dag.task`` take a trailing options object — ``spec`` on both, plus ``inputs`` on a task.
-These are not used yet; do not set them. Any other key is rejected.
+Leaving ``isMixedLanguageDag`` unset declares a Dag in TypeScript instead, where ``dag.task`` returns a
+factory and calling it places the task in the Dag. That syntax is settled but not yet served to Airflow:
+parsing a TypeScript bundle still yields no Dags, so keep declaring the Dag in Python for now. See the
+`TypeScript SDK README <https://github.com/apache/airflow/blob/main/ts-sdk/README.md>`__.
+
+``new Dag`` and ``dag.task`` take a trailing options object: ``spec`` on both, plus ``isMixedLanguageDag``
+on a Dag. ``spec`` has no fields yet; do not set it. Any other key is rejected.
 
 .. note::
 

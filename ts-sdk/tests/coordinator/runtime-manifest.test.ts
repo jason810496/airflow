@@ -28,7 +28,7 @@ import { DagRegistry } from "../../src/sdk/registry.js";
 function buildDag(dagId: string, ...taskIds: string[]): Dag {
   const dag = new Dag(dagId);
   for (const taskId of taskIds) {
-    dag.task(taskId, async () => undefined);
+    dag.task(taskId, async () => undefined)();
   }
   return dag;
 }
@@ -128,5 +128,34 @@ describe("startCoordinator --airflow-metadata", () => {
     const payload = JSON.parse(written.slice(AIRFLOW_METADATA_SENTINEL.length));
     expect(payload.supervisor_schema_version).toBe(SUPERVISOR_API_VERSION);
     expect(payload.dags).toEqual({ metadata_dag: { tasks: ["only"] } });
+  });
+
+  it("keeps isMixedLanguageDag out of what the bundle reports to Airflow", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const dag = new Dag("python_dag", { isMixedLanguageDag: true });
+    dag.task("only", async () => undefined);
+
+    await startCoordinator(new DagRegistry(dag), {
+      argv: ["node", "bundle.mjs", "--airflow-metadata"],
+    });
+
+    const written = String(write.mock.calls[0]![0]);
+    expect(written).not.toContain("isMixedLanguageDag");
+    expect(JSON.parse(written.slice(AIRFLOW_METADATA_SENTINEL.length)).dags).toEqual({
+      python_dag: { tasks: ["only"] },
+    });
+  });
+
+  it("fails the pack when a Dag has a task nothing calls", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const dag = buildDag("half_wired_dag", "extract");
+    dag.task("orphan", async () => undefined);
+
+    await expect(
+      startCoordinator(new DagRegistry(dag), {
+        argv: ["node", "bundle.mjs", "--airflow-metadata"],
+      }),
+    ).rejects.toThrow(/Task "orphan" of Dag "half_wired_dag" is never called/);
+    expect(write).not.toHaveBeenCalled();
   });
 });

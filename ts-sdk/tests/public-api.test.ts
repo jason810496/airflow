@@ -26,7 +26,9 @@ import type {
   SetXComOpts,
   TaskClient,
   TaskContext,
+  TaskFactory,
   TaskHandler,
+  TaskHandlerArgs,
   TaskInputs,
   TaskOptions,
   TaskRef,
@@ -42,15 +44,29 @@ import {
   VariableNotFoundError,
 } from "../src/index.js";
 
+/** An `interface`, which unlike a type literal has no implicit index signature,
+ *  so wiring it as a literal only works if `TaskInputs` maps it structurally. */
+interface ExtractedRows {
+  rowCount: number;
+}
+
 describe("public API", () => {
   it("exports the Dag authoring surface", async () => {
     const dag = new Dag("public_api_dag");
-    const upstream = dag.task("public_api_task", async () => undefined);
-    const downstream = dag.task("public_api_downstream", async () => undefined, {
-      inputs: { upstream },
+    const extract = dag.task("public_api_task", async () => ({ rows: 12 }));
+    const load = dag.task(
+      "public_api_downstream",
+      async ({ extracted, regionCode }: { extracted: TaskRef; regionCode: string }) => {
+        void extracted;
+        void regionCode;
+      },
+    );
+    const extracted = extract();
+    expect(load({ extracted, regionCode: "us" })).toEqual({
+      dagId: "public_api_dag",
+      taskId: "public_api_downstream",
     });
-    expect(upstream).toEqual({ dagId: "public_api_dag", taskId: "public_api_task" });
-    expect(downstream).toEqual({ dagId: "public_api_dag", taskId: "public_api_downstream" });
+    expect(extracted).toEqual({ dagId: "public_api_dag", taskId: "public_api_task" });
     expect(dag.taskIds).toEqual(["public_api_task", "public_api_downstream"]);
     // serveDags hands the registry to the runtime, which needs the supervisor's
     // socket addresses that Airflow puts on argv.
@@ -176,24 +192,42 @@ describe("public API", () => {
       readonly dagId: string;
       readonly taskId: string;
     }>();
-    expectTypeOf<TaskInputs>().toEqualTypeOf<Readonly<Record<string, TaskRef>>>();
+    // A handler that takes only the runtime's own arguments is called with none;
+    // every other argument it declares has to be supplied, as an upstream
+    // reference or as a literal of that argument's own type.
+    expectTypeOf<TaskFactory<TaskHandlerArgs>>().toEqualTypeOf<() => TaskRef>();
+    expectTypeOf<TaskInputs<{ rows: number } & TaskHandlerArgs>>().toEqualTypeOf<{
+      rows: TaskRef | number;
+    }>();
+    // An optional argument stays optional, and an argument typed by an
+    // interface can still be given a literal.
+    expectTypeOf<TaskInputs<{ rows?: number } & TaskHandlerArgs>>().toEqualTypeOf<{
+      rows?: TaskRef | number;
+    }>();
+    expectTypeOf<TaskInputs<{ extracted: ExtractedRows } & TaskHandlerArgs>>().toEqualTypeOf<{
+      extracted: TaskRef | { rowCount: number };
+    }>();
+    // A value JSON cannot carry can only come from an upstream task.
+    expectTypeOf<TaskInputs<{ at: Date } & TaskHandlerArgs>>().toEqualTypeOf<{ at: TaskRef }>();
+    expectTypeOf<TaskFactory<{ rows: number } & TaskHandlerArgs>>().toEqualTypeOf<
+      (inputs: { rows: TaskRef | number }) => TaskRef
+    >();
     expectTypeOf<TaskOptions>().toEqualTypeOf<{
-      readonly inputs?: TaskInputs;
       readonly spec?: TaskSpec;
     }>();
     expectTypeOf<ConstructorParameters<typeof Dag>>().toEqualTypeOf<[string, DagSpec?]>();
     expectTypeOf<Dag["task"]>().toEqualTypeOf<
-      <TReturn = unknown>(
+      <TArgs extends object = TaskHandlerArgs, TReturn = unknown>(
         taskId: string,
-        handler: TaskHandler<TReturn>,
+        handler: TaskHandler<TReturn, TArgs>,
         options?: TaskOptions,
-      ) => TaskRef
+      ) => TaskFactory<TArgs>
     >();
     expectTypeOf<Dag["taskIds"]>().toEqualTypeOf<readonly string[]>();
-    // Reserved with no fields yet, so only `{}` is expressible. Generated specs
-    // will be all-optional (weak) types, and `{}` stays assignable to those, so
-    // filling these in later cannot break a call site.
-    expectTypeOf<DagSpec>().toEqualTypeOf<Record<string, never>>();
+    // The one Dag-level field that is not part of the serialized Dag. The rest
+    // of both specs will be generated, all-optional (weak) types, and `{}` stays
+    // assignable to those, so filling them in later cannot break a call site.
+    expectTypeOf<DagSpec>().toEqualTypeOf<{ readonly isMixedLanguageDag?: boolean }>();
     expectTypeOf<TaskSpec>().toEqualTypeOf<Record<string, never>>();
   });
 
@@ -281,25 +315,61 @@ describe("public API", () => {
       // @ts-expect-error a task handler is required.
       new Dag("example").task("extract");
       const dag = new Dag("example");
-      const upstream = dag.task("extract", async () => undefined);
-      // @ts-expect-error inputs must be task handles, not arbitrary values.
-      dag.task("transform", async () => undefined, { inputs: { count: 1 } });
-      // @ts-expect-error inputs and spec are keyword-only, not positional.
-      dag.task("transform2", async () => undefined, { upstream });
+      const extract = dag.task("extract", async () => undefined);
+      // @ts-expect-error spec is keyword-only, not positional.
+      dag.task("transform2", async () => undefined, { extract });
       // @ts-expect-error a Dag spec is an options object, not a primitive.
       new Dag("spec_dag", 42);
-      // @ts-expect-error DagSpec has no fields yet, so a schedule cannot be declared here.
+      // @ts-expect-error a Dag declared in TypeScript takes no schedule yet.
       new Dag("spec_dag", { schedule: "@daily" });
+      new Dag("python_dag", { isMixedLanguageDag: true });
       // @ts-expect-error TaskSpec has no fields yet, so retries cannot be declared here.
       dag.task("transform3", async () => undefined, { spec: { retries: 2 } });
-      // @ts-expect-error the TaskRef handle is data, not callable.
-      upstream();
+      // @ts-expect-error the reference a task call returns is data, not callable.
+      extract()();
       // @ts-expect-error serveDags takes the registry, not a bare Dag.
       serveDags(dag);
-      // @ts-expect-error a registry is built from Dags, not from task handles.
-      new DagRegistry(upstream);
+      // @ts-expect-error a registry is built from Dags, not from task factories.
+      new DagRegistry(extract);
     };
     void rejectsPositionalMisuse;
+
+    // The wiring the compiler has to reject: an argument the task declares is
+    // missing, is of the wrong type, or is not one of its arguments at all.
+    const rejectsMiswiredTasks = () => {
+      const dag = new Dag("wiring_example");
+      const extract = dag.task("extract", async () => ({ rows: 12 }));
+      const transform = dag.task(
+        "transform",
+        async (_args: { extracted: TaskRef; regionCode: string } & TaskHandlerArgs) => undefined,
+      );
+      transform({ extracted: extract(), regionCode: "us" });
+      const interfaceArgs = dag.task(
+        "interface_args",
+        async (_args: { extracted: ExtractedRows; at?: string } & TaskHandlerArgs) => undefined,
+      );
+      // An interface-typed argument takes a literal, and an optional one may be
+      // left out entirely.
+      interfaceArgs({ extracted: { rowCount: 1 } });
+      // @ts-expect-error every declared argument has to be supplied.
+      transform({ extracted: extract() });
+      // @ts-expect-error a literal has to match the argument's own type.
+      transform({ extracted: extract(), regionCode: 7 });
+      // @ts-expect-error an argument the task does not declare is a typo.
+      transform({ extracted: extract(), regionCode: "us", region: "us" });
+      // @ts-expect-error a task that declares no arguments is called with none.
+      extract({ regionCode: "us" });
+      // @ts-expect-error an upstream reference cannot be replaced by any value.
+      transform({ extracted: "extract", regionCode: "us" });
+      const withDate = dag.task(
+        "with_date",
+        async (_args: { at: Date } & TaskHandlerArgs) => undefined,
+      );
+      withDate({ at: extract() });
+      // @ts-expect-error a value JSON cannot carry has to come from a task.
+      withDate({ at: new Date() });
+    };
+    void rejectsMiswiredTasks;
     // @ts-expect-error the TaskRef handle is opaque and does not expose the handler.
     expectTypeOf<TaskRef>().toHaveProperty("handler");
     // @ts-expect-error XCom values must be JSON-compatible.

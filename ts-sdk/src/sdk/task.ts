@@ -54,8 +54,14 @@ export interface TaskHandlerArgs {
 /**
  * Function signature for a TypeScript task handler.
  *
+ * A handler takes a single argument object. `ctx` and `client` come from the
+ * runtime; a handler that declares more — `({ rows, ctx }: { rows: number } &
+ * TaskHandlerArgs)` — takes those from the task's call in the Dag.
+ *
  * Non-`undefined` return values are automatically pushed to XCom under
  * the `"return_value"` key, matching Python `@task` behavior. Return
  * `undefined` or omit a return value to skip the automatic XCom push.
  */
-export type TaskHandler<TReturn = unknown> = (args: TaskHandlerArgs) => TReturn | Promise<TReturn>;
+export type TaskHandler<TReturn = unknown, TArgs = TaskHandlerArgs> = (
+  args: TArgs,
+) => TReturn | Promise<TReturn>;
