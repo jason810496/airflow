@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   EMBEDDED_METADATA_PREFIX,
+  EMBEDDED_SOURCE_PREFIX,
   parsePackArgs,
   renderMetadataYaml,
   runPack,
@@ -98,6 +99,14 @@ describe("renderMetadataYaml", () => {
 function readEmbeddedMetadata(bundlePath: string): string {
   const firstLine = readFileSync(bundlePath, "utf-8").split("\n")[0]!;
   return Buffer.from(firstLine.slice(EMBEDDED_METADATA_PREFIX.length), "base64").toString("utf-8");
+}
+
+/** Decode the packed entrypoint source the way NodeCoordinator does. */
+function readEmbeddedSource(bundlePath: string): string {
+  const line = readFileSync(bundlePath, "utf-8")
+    .split("\n")
+    .find((candidate) => candidate.startsWith(EMBEDDED_SOURCE_PREFIX))!;
+  return Buffer.from(line.slice(EMBEDDED_SOURCE_PREFIX.length), "base64").toString("utf-8");
 }
 
 /** Collect what runPack writes to stderr; returns a reader for the text so far. */
@@ -333,5 +342,59 @@ describe("runPack", () => {
     const metadata = readEmbeddedMetadata(path.join(outdir, "bundle.mjs"));
     expect(metadata).toContain('  "sales_dag":');
     expect(metadata).not.toContain("billing_dag");
+  });
+
+  it("packs the entrypoint source verbatim and leaves the bundle runnable", async () => {
+    outdir = mkdtempSync(path.join(tmpdir(), "ts-pack-"));
+    const entry = path.join(outdir, "unicode-entry.ts");
+    const source = [
+      `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
+      "// naïve café ☕ — backticks and non-ASCII must survive the round trip",
+      'const dag = new Dag("unicode_dag");',
+      'dag.task("greet", async () => `héllo ${"wörld"}`)();',
+      "await serveDags(new DagRegistry(dag));",
+      "",
+    ].join("\n");
+    writeFileSync(entry, source);
+
+    await runPack([entry, "--outdir", outdir, "--source", "unicode-entry.ts"]);
+
+    const bundlePath = path.join(outdir, "bundle.mjs");
+    const lines = readFileSync(bundlePath, "utf-8").split("\n");
+    // The metadata comment stays line 1; the source rides on its own line below.
+    expect(lines[0]!.startsWith(EMBEDDED_METADATA_PREFIX)).toBe(true);
+    expect(lines[1]!.startsWith(EMBEDDED_SOURCE_PREFIX)).toBe(true);
+    expect(readEmbeddedSource(bundlePath)).toBe(source);
+    expect(readEmbeddedMetadata(bundlePath)).toContain('source: "unicode-entry.ts"');
+
+    const dumped = execFileSync(process.execPath, [bundlePath, "--airflow-metadata"], {
+      encoding: "utf-8",
+    });
+    expect(
+      JSON.parse(
+        dumped.slice(dumped.indexOf(AIRFLOW_METADATA_SENTINEL) + AIRFLOW_METADATA_SENTINEL.length),
+      ).dags,
+    ).toHaveProperty("unicode_dag");
+  });
+
+  it("leaves no bundle behind when the entrypoint source exceeds the embedded size limit", async () => {
+    outdir = mkdtempSync(path.join(tmpdir(), "ts-pack-"));
+    const entry = path.join(outdir, "bulky-entry.ts");
+    writeFileSync(
+      entry,
+      [
+        `import { Dag, DagRegistry, serveDags } from ${JSON.stringify(SDK_INDEX)};`,
+        'const dag = new Dag("bulky_dag");',
+        'dag.task("noop", async () => undefined)();',
+        "await serveDags(new DagRegistry(dag));",
+        `// ${"padding ".repeat(150_000)}`,
+      ].join("\n"),
+    );
+
+    await expect(runPack([entry, "--outdir", outdir])).rejects.toThrow(
+      "move code out of the entrypoint into imported modules",
+    );
+    expect(existsSync(path.join(outdir, "bundle.mjs"))).toBe(false);
+    expect(existsSync(path.join(outdir, "bundle.pack-staging.mjs"))).toBe(false);
   });
 });

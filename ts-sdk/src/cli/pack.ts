@@ -19,7 +19,8 @@
 
 // airflow-ts-pack: bundle a TypeScript entrypoint into the single-file
 // artifact NodeCoordinator consumes — `bundle.mjs` with the airflow
-// metadata embedded as a leading `//# airflowMetadata=<base64>` comment.
+// metadata embedded as a leading `//# airflowMetadata=<base64>` comment and
+// the entrypoint source as a `//# airflowDagCode=<base64>` comment below it.
 //
 // Mirrors airflow-go-pack: build first, then run the built bundle with
 // --airflow-metadata so the manifest comes from the bundle's own task
@@ -42,12 +43,15 @@ const STAGING_FILENAME = "bundle.pack-staging.mjs";
 const MANIFEST_TIMEOUT_MS = 60_000;
 const MANIFEST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const EMBEDDED_METADATA_MAX_BYTES = 1024 * 1024;
+const EMBEDDED_SOURCE_MAX_BYTES = 1024 * 1024;
 export const EMBEDDED_METADATA_PREFIX = "//# airflowMetadata=";
+export const EMBEDDED_SOURCE_PREFIX = "//# airflowDagCode=";
 
 const USAGE = `Usage: airflow-ts-pack <entry> [--outdir <dir>] [--source <name>]
 
 Bundles <entry> into <outdir>/${BUNDLE_FILENAME} with esbuild and embeds the
-airflow metadata generated from the bundle's registered tasks.
+airflow metadata generated from the bundle's registered tasks, plus the
+entrypoint source Airflow shows in the Dag code view.
 
 Options:
   --outdir <dir>   Output directory (default: dist)
@@ -196,6 +200,16 @@ function isTaskIdList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length > 0);
 }
 
+// A `//` comment ends at the first line terminator, so both embedded payloads
+// have to be base64: its ASCII alphabet cannot hold the newline, lone `\r`, or
+// U+2028/U+2029 that would close the comment early and splice the rest of the
+// payload into the bundle as executable code. It also round-trips arbitrary
+// bytes, so an entrypoint's backticks and non-ASCII text survive verbatim, and
+// it stays a plain one-line comment that a later esbuild pass cannot reflow.
+function renderEmbeddedLine(prefix: string, payload: Buffer): string {
+  return `${prefix}${payload.toString("base64")}\n`;
+}
+
 // esbuild keeps an entry hashbang as line 1, where the metadata comment must go;
 // NodeCoordinator always runs the bundle through `node`, so drop it.
 function stripShebang(bundle: string): string {
@@ -254,14 +268,31 @@ export async function runPack(argv: readonly string[]): Promise<void> {
       source: args.source,
       dags: manifest.dags,
     });
-    const metadataLine = `${EMBEDDED_METADATA_PREFIX}${Buffer.from(metadataYaml, "utf-8").toString("base64")}\n`;
+    const metadataLine = renderEmbeddedLine(
+      EMBEDDED_METADATA_PREFIX,
+      Buffer.from(metadataYaml, "utf-8"),
+    );
     if (metadataLine.length > EMBEDDED_METADATA_MAX_BYTES) {
       throw new Error(
         `Embedded airflow metadata is ${metadataLine.length} bytes, ` +
           `over the ${EMBEDDED_METADATA_MAX_BYTES} byte limit; reduce the number of registered tasks`,
       );
     }
-    writeFileSync(bundlePath, metadataLine + stripShebang(readFileSync(stagingPath, "utf-8")));
+
+    // Only the entrypoint is packed, mirroring the Java SDK's single
+    // Airflow-Java-SDK-Dag-Code attribute; ADR-0006 declined multi-file display.
+    const sourceLine = renderEmbeddedLine(EMBEDDED_SOURCE_PREFIX, readFileSync(args.entry));
+    if (sourceLine.length > EMBEDDED_SOURCE_MAX_BYTES) {
+      throw new Error(
+        `Embedded ${args.source} source is ${sourceLine.length} bytes, over the ` +
+          `${EMBEDDED_SOURCE_MAX_BYTES} byte limit; move code out of the entrypoint into imported modules`,
+      );
+    }
+
+    writeFileSync(
+      bundlePath,
+      metadataLine + sourceLine + stripShebang(readFileSync(stagingPath, "utf-8")),
+    );
   } finally {
     rmSync(stagingPath, { force: true });
   }

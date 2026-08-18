@@ -45,37 +45,52 @@ if TYPE_CHECKING:
 log: FilteringBoundLogger = structlog.get_logger(logger_name="coordinators.node")
 
 BUNDLE_FILENAME = "bundle.mjs"
+SENTINEL_PREFIX = b"//# "
 EMBEDDED_METADATA_MARKER = b"//# airflowMetadata="
 EMBEDDED_METADATA_MAX_BYTES = 1024 * 1024
+EMBEDDED_SOURCE_MARKER = b"//# airflowDagCode="
+EMBEDDED_SOURCE_MAX_BYTES = 1024 * 1024
 
 
-def _read_embedded_metadata(bundle_path: pathlib.Path) -> dict[str, Any]:
+def _read_sentinel_payload(bundle_path: pathlib.Path, marker: bytes, max_bytes: int, *, what: str) -> bytes:
     """
-    Read the manifest ``airflow-ts-pack`` embeds in the bundle itself.
+    Decode the payload of the ``marker`` comment in the bundle's sentinel block.
 
-    The packer prepends the metadata as a leading
-    ``//# airflowMetadata=<base64>`` line comment, keeping bundle and metadata
-    a single artifact. Raises ``ValueError`` when the bundle has no such marker.
+    ``airflow-ts-pack`` heads the bundle with one ``//# <name>=<base64>`` line
+    comment per embedded payload, so a bundle and everything Airflow needs to
+    read off it stay a single artifact. The block ends at the first line that is
+    not such a comment. *what* names the payload in error messages; a missing,
+    oversized, or undecodable one raises ``ValueError``.
     """
     try:
         with bundle_path.open("rb") as bundle_file:
-            line = bundle_file.readline(EMBEDDED_METADATA_MAX_BYTES + 1)
+            while True:
+                line = bundle_file.readline(max_bytes + 1)
+                if not line.startswith(SENTINEL_PREFIX):
+                    raise ValueError(
+                        f"{bundle_path.name} has no embedded {what}; rebuild with airflow-ts-pack"
+                    )
+                if line.startswith(marker):
+                    break
     except OSError as exc:
         raise ValueError(f"cannot read {bundle_path.name}: {exc}") from exc
 
-    if not line.startswith(EMBEDDED_METADATA_MARKER):
-        raise ValueError(f"{bundle_path.name} has no embedded airflow metadata; rebuild with airflow-ts-pack")
-    if len(line) > EMBEDDED_METADATA_MAX_BYTES:
+    if len(line) > max_bytes:
         raise ValueError(
-            f"embedded airflow metadata exceeds {EMBEDDED_METADATA_MAX_BYTES} bytes; "
-            f"rebuild {bundle_path.name} with airflow-ts-pack"
+            f"embedded {what} exceeds {max_bytes} bytes; rebuild {bundle_path.name} with airflow-ts-pack"
         )
 
-    payload = line[len(EMBEDDED_METADATA_MARKER) :].strip()
     try:
-        decoded = base64.b64decode(payload, validate=True)
+        return base64.b64decode(line[len(marker) :].strip(), validate=True)
     except ValueError as exc:
-        raise ValueError(f"cannot parse embedded airflow metadata: {exc}") from exc
+        raise ValueError(f"cannot parse embedded {what}: {exc}") from exc
+
+
+def _read_embedded_metadata(bundle_path: pathlib.Path) -> dict[str, Any]:
+    """Read the manifest ``airflow-ts-pack`` embeds in the bundle itself."""
+    decoded = _read_sentinel_payload(
+        bundle_path, EMBEDDED_METADATA_MARKER, EMBEDDED_METADATA_MAX_BYTES, what="airflow metadata"
+    )
     return parse_metadata_mapping(decoded, source="embedded airflow metadata")
 
 
@@ -155,6 +170,31 @@ class NodeCoordinator(SubprocessCoordinator):
         converter=convert_roots,
         validator=attrs.validators.min_len(1),
     )
+
+    @staticmethod
+    def get_code_from_file(bundle_path: pathlib.Path) -> str:
+        """
+        Return the Dag entrypoint source ``airflow-ts-pack`` embedded in *bundle_path*.
+
+        Only the entrypoint is packed, so this is the single-file source display
+        of a natively authored TypeScript Dag, not the whole project tree that
+        `ADR-0006 <https://github.com/apache/airflow/blob/main/airflow-core/adr/lang-sdk/0006-no-lang-sdk-source-display.md>`_
+        declined for mixed-language Dags.
+
+        Nothing calls this yet: ``DagCode`` reads Dag source straight off the
+        filesystem and no coordinator hook exists on that path until AIP-85
+        lands a Dag importer that can delegate to one.
+
+        :param bundle_path: Path to the ``bundle.mjs`` to read.
+        :raises ValueError: If the bundle carries no readable embedded source.
+        """
+        decoded = _read_sentinel_payload(
+            bundle_path, EMBEDDED_SOURCE_MARKER, EMBEDDED_SOURCE_MAX_BYTES, what="Dag source"
+        )
+        try:
+            return decoded.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"embedded Dag source of {bundle_path.name} is not valid UTF-8: {exc}") from exc
 
     def _build_execute_task_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
         # Multi-bundle routing should be added here by passing `what.dag_id` and

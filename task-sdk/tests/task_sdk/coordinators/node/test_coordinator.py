@@ -27,11 +27,15 @@ from uuid6 import uuid7
 from airflow.sdk.api.datamodels._generated import TaskInstance
 from airflow.sdk.coordinators.node.coordinator import (
     EMBEDDED_METADATA_MAX_BYTES,
+    EMBEDDED_SOURCE_MAX_BYTES,
     NodeCoordinator,
     _find_bundle,
 )
 
 SCHEMA_VERSION = "2026-06-16"
+
+# Everything a `//` comment would choke on: newlines, backticks, and non-ASCII.
+DAG_SOURCE = 'const dag = new Dag("café");\ndag.task("naïve", async () => `${1}`)();\n'
 
 
 def _make_ti(dag_id: str = "test_dag", queue: str = "ts") -> TaskInstance:
@@ -63,13 +67,23 @@ dags:
 
 
 def write_bundle(
-    root: pathlib.Path, schema_version: str = SCHEMA_VERSION, payload: str | None = None
+    root: pathlib.Path,
+    schema_version: str = SCHEMA_VERSION,
+    payload: str | None = None,
+    source_payload: str | None = None,
 ) -> pathlib.Path:
     if payload is None:
         payload = base64.b64encode(_metadata_yaml(schema_version).encode("utf-8")).decode("ascii")
+    sentinels = f"//# airflowMetadata={payload}\n"
+    if source_payload is not None:
+        sentinels += f"//# airflowDagCode={source_payload}\n"
     bundle = root / "bundle.mjs"
-    bundle.write_text(f"//# airflowMetadata={payload}\nexport {{}};\n", encoding="utf-8")
+    bundle.write_text(f"{sentinels}export {{}};\n", encoding="utf-8")
     return bundle
+
+
+def _encode(source: str | bytes) -> str:
+    return base64.b64encode(source.encode("utf-8") if isinstance(source, str) else source).decode("ascii")
 
 
 class TestNodeCoordinatorAttributes:
@@ -137,6 +151,18 @@ class TestNodeCoordinatorBundleSelection:
 
         with pytest.raises(FileNotFoundError, match="must contain a mapping"):
             _find_bundle([tmp_path])
+
+    def test_find_bundle_reads_metadata_past_other_sentinel_lines(self, tmp_path):
+        (tmp_path / "bundle.mjs").write_text(
+            f"//# airflowDagCode={_encode(DAG_SOURCE)}\n"
+            f"//# airflowMetadata={_encode(_metadata_yaml(SCHEMA_VERSION))}\n"
+            "export {};\n",
+            encoding="utf-8",
+        )
+
+        found = _find_bundle([tmp_path])
+
+        assert found.schema_version == SCHEMA_VERSION
 
     def test_find_bundle_checks_multiple_roots(self, tmp_path):
         first = tmp_path / "first"
@@ -221,3 +247,40 @@ class TestNodeCoordinatorExecuteTaskCommand:
 
         assert command == ["/opt/node/bin/node", str(bundle)]
         assert schema_version == SCHEMA_VERSION
+
+
+class TestNodeCoordinatorDagSource:
+    def test_returns_the_packed_entrypoint_source(self, tmp_path):
+        bundle = write_bundle(tmp_path, source_payload=_encode(DAG_SOURCE))
+
+        assert NodeCoordinator.get_code_from_file(bundle) == DAG_SOURCE
+
+    def test_reports_a_bundle_packed_without_source(self, tmp_path):
+        bundle = write_bundle(tmp_path)
+
+        with pytest.raises(ValueError, match="bundle.mjs has no embedded Dag source"):
+            NodeCoordinator.get_code_from_file(bundle)
+
+    def test_reports_oversized_source(self, tmp_path):
+        bundle = write_bundle(tmp_path, source_payload="A" * EMBEDDED_SOURCE_MAX_BYTES)
+
+        with pytest.raises(ValueError, match="embedded Dag source exceeds"):
+            NodeCoordinator.get_code_from_file(bundle)
+
+    def test_reports_source_that_is_not_base64(self, tmp_path):
+        bundle = write_bundle(tmp_path, source_payload="not-base64!")
+
+        with pytest.raises(ValueError, match="cannot parse embedded Dag source"):
+            NodeCoordinator.get_code_from_file(bundle)
+
+    def test_reports_source_that_is_not_utf8(self, tmp_path):
+        bundle = write_bundle(tmp_path, source_payload=_encode(b"\xff\xfe"))
+
+        with pytest.raises(ValueError, match="embedded Dag source of bundle.mjs is not valid UTF-8"):
+            NodeCoordinator.get_code_from_file(bundle)
+
+    def test_reports_unreadable_bundle(self, tmp_path):
+        missing = tmp_path / "bundle.mjs"
+
+        with pytest.raises(ValueError, match="cannot read bundle.mjs"):
+            NodeCoordinator.get_code_from_file(missing)

@@ -264,6 +264,11 @@ a single self-contained ESM file, ``bundle.mjs``, and embeds the manifest (the `
 map plus the supervisor schema version) as a leading ``//# airflowMetadata=<base64>`` comment — one file to
 deploy, with no separate manifest or ``node_modules``.
 
+The entry module's own source follows on a ``//# airflowDagCode=<base64>`` comment, so the deployed bundle
+carries the Dag source Airflow shows in the Code view. Only the entry file is packed, not the modules it
+imports: a bundle that grows past 1 MiB of entrypoint source is rejected, so keep the entry module thin and
+move task bodies into imported modules.
+
 .. code-block:: bash
 
     npx airflow-ts-pack src/main.ts --outdir dist

@@ -234,6 +234,11 @@ bundle as a leading `//# airflowMetadata=<base64>` comment. The result is a
 single deployable file whose metadata cannot drift from its code; no
 hand-written sidecar is needed.
 
+The entrypoint's own source is embedded next to it on a
+`//# airflowDagCode=<base64>` comment, which is what Airflow displays as the
+Dag source. Only the entrypoint is packed — keep it thin and move task bodies
+into imported modules, since packing fails above 1 MiB of entrypoint source.
+
 Options:
 
 - `--outdir <dir>` — output directory (default `dist`)
