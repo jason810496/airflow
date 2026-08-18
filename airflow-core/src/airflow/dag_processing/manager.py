@@ -56,6 +56,7 @@ from airflow.dag_processing.bundles.base import (
 from airflow.dag_processing.bundles.manager import DagBundlesManager
 from airflow.dag_processing.collection import update_dag_parsing_results_in_db
 from airflow.dag_processing.processor import DagFileParsingResult, DagFileProcessorProcess
+from airflow.dag_processing.validation import validate_serialized_dags
 from airflow.models.asset import remove_references_to_deleted_dags
 from airflow.models.dag import DagModel
 from airflow.models.dagbag import DagPriorityParsingRequest
@@ -1335,6 +1336,19 @@ class DagFileProcessorManager(LoggingMixin):
                 (bundle_name, rel_path): error for rel_path, error in parsing_result.import_errors.items()
             }
 
+        valid_dags, structure_errors = validate_serialized_dags(parsing_result.serialized_dags)
+        if structure_errors:
+            self.log.warning(
+                "Rejected %d malformed Dag(s) from %s in bundle %s",
+                len(structure_errors),
+                parsing_result.fileloc,
+                bundle_name,
+            )
+            error_key = (bundle_name, relative_fileloc or parsing_result.fileloc)
+            import_errors[error_key] = "\n".join(
+                filter(None, [import_errors.get(error_key), *structure_errors])
+            )
+
         # Build the set of files that were parsed. This includes the file that was parsed,
         # even if it no longer contains DAGs, so we can clear old import errors.
         files_parsed: set[tuple[str, str]] | None = None
@@ -1350,7 +1364,7 @@ class DagFileProcessorManager(LoggingMixin):
             bundle_name=bundle_name,
             bundle_version=bundle_version,
             version_data=version_data,
-            dags=parsing_result.serialized_dags,
+            dags=valid_dags,
             import_errors=import_errors,
             parse_duration=run_duration,
             warnings=set(warnings),

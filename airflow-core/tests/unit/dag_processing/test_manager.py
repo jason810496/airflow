@@ -77,6 +77,7 @@ from tests_common.test_utils.db import (
     clear_db_serialized_dags,
     clear_db_teams,
 )
+from unit.dag_processing.test_validation import build_serialized_dag
 from unit.models import TEST_DAGS_FOLDER
 
 pytestmark = pytest.mark.db_test
@@ -3819,3 +3820,69 @@ def test_normalized_file_path_for_stats_does_not_warn(caplog):
 
     assert result == "dags_test_test_dag.py"
     assert caplog.entries == []
+
+
+class TestPersistParsingResultValidation:
+    """A language SDK's serialized Dags are only structurally checked on the way to the DB."""
+
+    @staticmethod
+    def persist(parsing_result, relative_fileloc="mixed.py"):
+        manager = DagFileProcessorManager(max_runs=1)
+        with mock.patch(
+            "airflow.dag_processing.manager.update_dag_parsing_results_in_db"
+        ) as mock_update_results:
+            manager.persist_parsing_result(
+                bundle_name="testing",
+                bundle_version=None,
+                version_data=None,
+                parsing_result=parsing_result,
+                run_duration=1.0,
+                relative_fileloc=relative_fileloc,
+                session=mock.MagicMock(),
+            )
+        return mock_update_results.call_args.kwargs
+
+    def test_malformed_dag_is_dropped_while_its_siblings_are_persisted(self):
+        good = build_serialized_dag("good_dag", {"a": ["b"], "b": []})
+        cyclic = build_serialized_dag("cyclic_dag", {"a": ["b"], "b": ["a"]})
+        dangling = build_serialized_dag("dangling_dag", {"a": ["ghost"]})
+
+        kwargs = self.persist(
+            DagFileParsingResult(fileloc="/dags/mixed.py", serialized_dags=[good, cyclic, dangling])
+        )
+
+        assert kwargs["dags"] == [good]
+        assert kwargs["import_errors"] == {
+            ("testing", "mixed.py"): (
+                "Dag 'cyclic_dag' is malformed: a dependency cycle is closed by task 'b'\n"
+                "Dag 'dangling_dag' is malformed: task 'a' lists unknown downstream task 'ghost'"
+            )
+        }
+
+    def test_validation_error_joins_an_existing_import_error_for_the_same_file(self):
+        cyclic = build_serialized_dag("cyclic_dag", {"a": ["a"]})
+
+        kwargs = self.persist(
+            DagFileParsingResult(
+                fileloc="/dags/mixed.py",
+                serialized_dags=[cyclic],
+                import_errors={"mixed.py": "a pre-existing traceback"},
+            )
+        )
+
+        assert kwargs["import_errors"] == {
+            ("testing", "mixed.py"): (
+                "a pre-existing traceback\n"
+                "Dag 'cyclic_dag' is malformed: a dependency cycle is closed by task 'a'"
+            )
+        }
+
+    def test_absolute_fileloc_is_used_when_there_is_no_relative_path(self):
+        cyclic = build_serialized_dag("cyclic_dag", {"a": ["a"]})
+
+        kwargs = self.persist(
+            DagFileParsingResult(fileloc="/dags/mixed.py", serialized_dags=[cyclic]),
+            relative_fileloc=None,
+        )
+
+        assert set(kwargs["import_errors"]) == {("testing", "/dags/mixed.py")}
