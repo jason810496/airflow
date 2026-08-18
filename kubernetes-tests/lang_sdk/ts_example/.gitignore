@@ -1,0 +1,6 @@
+# Bundle output and the pnpm state produced by the bundle build. The lockfile is
+# committed, unlike ts-sdk/example's: that one is a member of the SDK's pnpm
+# workspace and covered by its lock, while this project installs on its own.
+.pnpm-store/
+dist/
+node_modules/

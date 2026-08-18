@@ -24,6 +24,7 @@ from airflow_breeze.commands import kubernetes_commands
 from airflow_breeze.commands.kubernetes_commands import (
     _lang_sdk_build_go_bundle,
     _lang_sdk_build_java_jar,
+    _lang_sdk_build_ts_bundle,
     _lang_sdk_fetch_upstream_sdk_sources,
     _lang_sdk_resolve_sdk_sources,
     _lang_sdk_upload_artifacts,
@@ -76,6 +77,19 @@ def upstream_java_sdk(tmp_path):
     sdk_dir.mkdir()
     (sdk_dir / "marker.gradle").write_text("upstream")
     return sdk_dir
+
+
+@pytest.fixture
+def ts_example(tmp_path, monkeypatch):
+    """Point the ts_example dir at a tmp path (under a tmp repo root) with a pre-built bundle."""
+    monkeypatch.setattr(kubernetes_commands, "AIRFLOW_ROOT_PATH", tmp_path)
+    monkeypatch.setattr(kubernetes_commands, "LANG_SDK_TS_SDK_PATH", tmp_path / "ts-sdk")
+    monkeypatch.setattr(kubernetes_commands, "LANG_SDK_PNPM_CACHE_PATH", tmp_path / "files" / "pnpm-home")
+    ts_dir = tmp_path / "ts_example"
+    (ts_dir / "dist").mkdir(parents=True)
+    (ts_dir / "dist" / kubernetes_commands.LANG_SDK_TS_BUNDLE_NAME).write_text("bundle")
+    monkeypatch.setattr(kubernetes_commands, "LANG_SDK_TS_EXAMPLE_PATH", ts_dir)
+    return ts_dir
 
 
 class TestLangSdkBuildGoBundle:
@@ -157,6 +171,82 @@ class TestLangSdkBuildJavaJar:
         assert f"{upstream_java_sdk}:/repo/java-sdk" in mounts
         assert "GRADLE_USER_HOME=/workspace-home/.gradle" in cmd
         assert any(mount.endswith(":/workspace-home/.gradle") for mount in mounts)
+
+
+class TestLangSdkBuildTsBundle:
+    @mock.patch.object(kubernetes_commands, "run_command")
+    def test_native_uses_host_pnpm_toolchain(self, mock_run, tmp_path, ts_example):
+        _lang_sdk_build_ts_bundle(tmp_path, None, native=True)
+
+        sdk_call, example_call = mock_run.call_args_list
+        # Both projects commit a lockfile, so neither install may resolve anything new.
+        frozen = ["bash", "-c", "pnpm install --frozen-lockfile && pnpm run build"]
+        assert sdk_call.args[0] == frozen
+        assert sdk_call.kwargs["cwd"] == kubernetes_commands.LANG_SDK_TS_SDK_PATH
+        assert example_call.args[0] == frozen
+        assert example_call.kwargs["cwd"] == ts_example
+        assert all("docker" not in call.args[0] for call in mock_run.call_args_list)
+        assert (tmp_path / "ts-artifacts" / kubernetes_commands.LANG_SDK_TS_BUNDLE_NAME).exists()
+
+    @mock.patch.object(kubernetes_commands, "run_command")
+    def test_container_mode_runs_in_docker(self, mock_run, tmp_path, ts_example):
+        _lang_sdk_build_ts_bundle(tmp_path, None, native=False)
+
+        cmd = mock_run.call_args.args[0]
+        assert cmd[0] == "docker"
+        assert kubernetes_commands.LANG_SDK_NODE_BUILDER_IMAGE in cmd
+        mounts = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-v"]
+        assert f"{tmp_path}:/repo" in mounts
+        # HOME is the mounted cache dir, so the pnpm store survives between runs.
+        assert "HOME=/repo/files/pnpm-home" in cmd
+        assert (tmp_path / "files" / "pnpm-home").is_dir()
+        # Both builds run in the one container, SDK first so the example can pack with it.
+        assert cmd[-1].index("/repo/ts-sdk") < cmd[-1].index("/repo/ts_example")
+        assert (tmp_path / "ts-artifacts" / kubernetes_commands.LANG_SDK_TS_BUNDLE_NAME).exists()
+
+
+class TestLangSdkBuildWorkerImage:
+    @pytest.mark.parametrize(
+        ("dockerfile", "image_tag", "build_args", "expected_extra_arg"),
+        [
+            pytest.param(
+                kubernetes_commands.LANG_SDK_JAVA_DOCKERFILE,
+                kubernetes_commands.LANG_SDK_JAVA_WORKER_IMAGE,
+                None,
+                None,
+                id="java",
+            ),
+            pytest.param(
+                kubernetes_commands.LANG_SDK_TS_DOCKERFILE,
+                kubernetes_commands.LANG_SDK_TS_WORKER_IMAGE,
+                {"NODE_IMAGE": "node:22-slim"},
+                "NODE_IMAGE=node:22-slim",
+                id="typescript",
+            ),
+        ],
+    )
+    @mock.patch.object(kubernetes_commands, "run_command_with_k8s_env")
+    @mock.patch.object(kubernetes_commands, "run_command")
+    def test_builds_on_the_prod_image_then_loads_into_kind(
+        self, mock_run, mock_k8s_run, dockerfile, image_tag, build_args, expected_extra_arg
+    ):
+        returned = kubernetes_commands._lang_sdk_build_worker_image(
+            "prod-image", dockerfile, image_tag, "3.10", "v1.35.0", None, build_args=build_args
+        )
+
+        assert returned == image_tag
+        build_cmd = mock_run.call_args.args[0]
+        assert build_cmd[:2] == ["docker", "build"]
+        assert "BASE_IMAGE=prod-image" in build_cmd
+        assert build_cmd[build_cmd.index("-t") + 1] == image_tag
+        assert build_cmd[build_cmd.index("-f") + 1] == str(dockerfile)
+        if expected_extra_arg:
+            assert expected_extra_arg in build_cmd
+        else:
+            assert build_cmd.count("--build-arg") == 1
+        load_cmd = mock_k8s_run.call_args.args[0]
+        assert load_cmd[:3] == ["kind", "load", "docker-image"]
+        assert load_cmd[-1] == image_tag
 
 
 class TestLangSdkFetchUpstreamSdkSources:
@@ -304,6 +394,13 @@ class TestLangSdkDryRun:
 
         assert not (tmp_path / "java-artifacts" / "app.jar").exists()
 
+    def test_build_ts_bundle_skips_bundle_copy(self, dry_run, tmp_path, ts_example):
+        (ts_example / "dist" / kubernetes_commands.LANG_SDK_TS_BUNDLE_NAME).unlink()
+
+        _lang_sdk_build_ts_bundle(tmp_path, None, native=True)
+
+        assert not (tmp_path / "ts-artifacts" / kubernetes_commands.LANG_SDK_TS_BUNDLE_NAME).exists()
+
     @mock.patch.object(kubernetes_commands, "run_command_with_k8s_env")
     def test_upload_artifacts_uses_placeholder_for_never_built_jar(self, mock_run, dry_run, tmp_path):
         mock_run.return_value = mock.Mock(stdout="")
@@ -353,9 +450,14 @@ class TestSetupLangSdkTestNativeSelection:
                 java=native, java_sdk=java_sdk_source
             ),
         )
+        monkeypatch.setattr(
+            kubernetes_commands,
+            "_lang_sdk_build_ts_bundle",
+            lambda staging, output, *, native: captured.update(ts=native),
+        )
         for name in (
             "_lang_sdk_deploy_localstack",
-            "_lang_sdk_build_java_worker_image",
+            "_lang_sdk_build_worker_image",
             "_lang_sdk_upload_artifacts",
             "_lang_sdk_apply_configmaps_and_secret",
             "_lang_sdk_deploy_airflow",
@@ -372,6 +474,7 @@ class TestSetupLangSdkTestNativeSelection:
         assert captured == {
             "go": expected_native,
             "java": expected_native,
+            "ts": expected_native,
             "go_sdk": fake_go_sdk,
             "java_sdk": fake_java_sdk,
         }

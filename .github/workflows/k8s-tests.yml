@@ -140,9 +140,10 @@ jobs:
         run: breeze k8s delete-cluster --all
         if: always()
 
-  # The Multi-Lang KubernetesExecutor coordinator system test builds a Go bundle and a Java jar and runs
-  # them as workers under KubernetesExecutor. It is executor/naming/version-independent, so instead of
-  # bolting it onto all six ``KubernetesExecutor``/``use-standard-naming == false`` system-test jobs above
+  # The Multi-Lang KubernetesExecutor coordinator system test builds a Go bundle, a Java jar and a
+  # TypeScript bundle and runs them as workers under KubernetesExecutor. It is
+  # executor/naming/version-independent, so instead of bolting it onto all six
+  # ``KubernetesExecutor``/``use-standard-naming == false`` system-test jobs above
   # (which ran it redundantly and added ~6 minutes each), it runs once here on a single default combo and
   # executes only the lang-SDK test (``-k test_lang_sdk_combined_dag_succeeds``) - not the full suite.
   tests-kubernetes-lang-sdk:
@@ -182,7 +183,7 @@ jobs:
           use-uv: ${{ inputs.use-uv }}
           make-mnt-writeable-and-cleanup: true
         id: breeze
-      # Provision the lang-SDK Go/Java toolchains on the host so breeze builds the artifacts natively
+      # Provision the lang-SDK Go/Java/Node toolchains on the host so breeze builds the artifacts natively
       # (LANG_SDK_NATIVE_TOOLCHAIN=true) instead of in throwaway toolchain containers, skipping the image
       # pulls and reusing the caches restored below. The module/build and Gradle caches are keyed
       # explicitly (rather than via the setup-* built-in caching) so the key carries an ``-vN-`` salt:
@@ -216,6 +217,17 @@ jobs:
           key: lang-sdk-gradle-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('java-sdk/**/*.gradle*', 'java-sdk/**/gradle-wrapper.properties', 'kubernetes-tests/lang_sdk/java_example/**/*.gradle*') }}  # yamllint disable-line rule:line-length
           restore-keys: |
             lang-sdk-gradle-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: "Setup pnpm for lang-SDK build"
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6.0.10
+        with:
+          package_json_file: ts-sdk/package.json
+          run_install: false
+      - name: "Setup Node for lang-SDK build"
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: 'ts-sdk/pnpm-lock.yaml'
       # No --upgrade here: the redeploy/upgrade path is already exercised across the main matrix above;
       # this job only needs a single deploy to validate the Multi-Lang coordinator, saving ~1.5 minutes.
       - name: "Run lang-SDK K8S test ${{ inputs.lang-sdk-kubernetes-combo }}"

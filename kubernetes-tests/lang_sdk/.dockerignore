@@ -1,0 +1,5 @@
+# Neither Dockerfile.java nor Dockerfile.node copies anything out of this
+# context, and the TypeScript bundle build writes into ts_example/node_modules
+# while those image builds run alongside it. Sending nothing keeps the ~38 MB of
+# build output out of the daemon and stops it being read while pnpm writes it.
+*

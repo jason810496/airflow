@@ -24,6 +24,9 @@ on:  # yamllint disable-line rule:truthy
     paths:
       - "ts-sdk/package.json"
       - "ts-sdk/pnpm-lock.yaml"
+      # The k8s system test's bundle fixture installs its own dependency tree.
+      - "kubernetes-tests/lang_sdk/ts_example/package.json"
+      - "kubernetes-tests/lang_sdk/ts_example/pnpm-lock.yaml"
       - ".github/workflows/ts-sdk-dependency-review.yml"
 
 permissions:

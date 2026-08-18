@@ -15,12 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Combined Python + Go + Java stub Dag for the KubernetesExecutor lang-SDK system test.
+Combined Python + Go + Java + TypeScript stub Dag for the KubernetesExecutor lang-SDK system test.
 
-A single ``lang_sdk_combined`` Dag chains native Python tasks, Go stub tasks, and
-Java stub tasks so one run exercises all three runtimes on KubernetesExecutor::
+A single ``lang_sdk_combined`` Dag chains native Python tasks, Go stub tasks, Java
+stub tasks, and a TypeScript stub task so one run exercises all four runtimes on
+KubernetesExecutor::
 
-    python_task_1 >> go_extract >> go_transform >> java_extract >> java_transform >> python_task_2
+    python_task_1 >> go_extract >> go_transform >> java_extract >> java_transform
+        >> ts_build_message >> python_task_2
 
 * ``go_extract`` / ``go_transform`` are ``@task.stub(queue="golang")``; the
   ``golang`` queue is routed to the ``ExecutableCoordinator``. Their Go
@@ -28,10 +30,16 @@ Java stub tasks so one run exercises all three runtimes on KubernetesExecutor::
 * ``java_extract`` / ``java_transform`` are ``@task.stub(queue="java")``; the
   ``java`` queue is routed to the ``JavaCoordinator``. Their Java
   implementations live in ``../java_example`` under this same dag_id.
+* ``ts_build_message`` is ``@task.stub(queue="typescript")``; the ``typescript``
+  queue is routed to the ``NodeCoordinator``. Its TypeScript implementation
+  lives in ``../ts_example`` under this same dag_id. Unlike the Go and Java
+  tasks it is *called with arguments*, which is what makes the run cover
+  TaskFlow argument binding across the language boundary.
 * The Python tasks run on the default Python path.
 
-The dag_id and the Go/Java task ids MUST match the identities the bundles expose
-so each coordinator can locate its artifact by dag_id and look up the task by id.
+The dag_id and the Go/Java/TypeScript task ids MUST match the identities the
+bundles expose so each coordinator can locate its artifact by dag_id and look up
+the task by id.
 """
 
 from __future__ import annotations
@@ -60,6 +68,10 @@ def java_extract(): ...
 def java_transform(): ...
 
 
+@task.stub(queue="typescript")
+def ts_build_message(upstream: str, country: str): ...
+
+
 @task()
 def python_task_2():
     print("python_task_2")
@@ -67,12 +79,14 @@ def python_task_2():
 
 @dag(dag_id="lang_sdk_combined")
 def lang_sdk_combined():
+    start = python_task_1()
     (
-        python_task_1()
+        start
         >> go_extract()
         >> go_transform()
         >> java_extract()
         >> java_transform()
+        >> ts_build_message(start, "uk")
         >> python_task_2()
     )
 
