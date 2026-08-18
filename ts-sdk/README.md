@@ -86,17 +86,19 @@ never called is reported as an import error when Airflow parses the bundle,
 instead of silently dropping out of the Dag. A reference exists only after the
 call that produced it, which is what makes a cycle unwritable.
 
-> **Not served yet:** the runtime does not turn these Dags into serialized Dags,
-> so Airflow still sees no Dags in a TypeScript bundle. Declare the Dag in
-> Python until it does — see below.
+> **Not reachable yet:** the runtime now answers a Dag parse request with these
+> Dags serialized, but no coordinator claims a TypeScript bundle as a Dag file,
+> so Airflow never sends that request. Declare the Dag in Python until one does
+> — see below.
 
 ## Coordinator Usage
 
 Airflow runs TypeScript task bundles through the Python-side
-`airflow.sdk.coordinators.node.NodeCoordinator`. Because a Dag declared in
-TypeScript is not served to Airflow yet, the working shape matches the other
-non-Python SDKs: a Python Dag declares the scheduling shape with stub tasks,
-and the TypeScript module binds handlers to matching task IDs.
+`airflow.sdk.coordinators.node.NodeCoordinator`, which the supervisor picks by
+the task's queue. Because nothing yet asks a TypeScript bundle to parse its own
+Dags, the working shape matches the other non-Python SDKs: a Python Dag declares
+the scheduling shape with stub tasks, and the TypeScript module binds handlers
+to matching task IDs.
 
 Python Dag:
 

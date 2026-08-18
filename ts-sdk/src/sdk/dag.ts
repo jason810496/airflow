@@ -98,8 +98,9 @@ export interface TaskRef {
   readonly taskId: string;
 }
 
-/** Whether `value` is a TaskRef returned by any copy of this package. */
-function isTaskRef(value: unknown): value is TaskRef {
+/** Internal: whether `value` is a TaskRef returned by any copy of this package.
+ *  The serializer uses it to tell an upstream edge from a literal argument. */
+export function isTaskRef(value: unknown): value is TaskRef {
   return hasBrand(value, "TaskRef");
 }
 

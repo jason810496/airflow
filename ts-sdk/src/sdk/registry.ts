@@ -123,6 +123,12 @@ export function finalizeRegistryDags(registry: DagRegistry): void {
   }
 }
 
+/** Internal: the registered Dag objects, in registration order. The serializer
+ *  needs each Dag's spec and wiring, which {@link listRegistryDags} flattens away. */
+export function listRegistryDagObjects(registry: DagRegistry): Dag[] {
+  return [...dagsOf(registry).values()];
+}
+
 /** Internal: every registered Dag with its task IDs, empty Dags included. */
 export function listRegistryDags(registry: DagRegistry): RegisteredDag[] {
   return [...dagsOf(registry).values()].map((dag) => ({

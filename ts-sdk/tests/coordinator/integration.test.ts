@@ -35,8 +35,9 @@ import {
   COORDINATOR_RESPONSE_TIMEOUT_MS,
   startCoordinator,
 } from "../../src/coordinator/runtime.js";
-import { Dag } from "../../src/sdk/dag.js";
+import { Dag, type TaskRef } from "../../src/sdk/dag.js";
 import { DagRegistry } from "../../src/sdk/registry.js";
+import type { TaskHandlerArgs } from "../../src/sdk/task.js";
 
 // Bound to Dags declared in Python: these tests dispatch the task IDs the
 // supervisor sends rather than laying out a Dag of their own.
@@ -547,7 +548,7 @@ describe("coordinator runtime integration", () => {
     expect(calledSecondDag).toBe(false);
   });
 
-  it("returns empty serialized_dags for DagFileParseRequest", async () => {
+  it("serializes nothing for a bundle of mixed-language Dags", async () => {
     const parseRequest = {
       type: "DagFileParseRequest",
       file: "/dags/test.mjs",
@@ -560,6 +561,55 @@ describe("coordinator runtime integration", () => {
     expect(body.type).toBe("DagFileParsingResult");
     expect(body.serialized_dags).toEqual([]);
     expect(body.import_errors).toBeUndefined();
+  });
+
+  it("answers a DagFileParseRequest with a serialized native Dag", async () => {
+    const native = new Dag("native_dag", { schedule: "@once" });
+    const extract = native.task("extract", async () => undefined)();
+    native.task(
+      "load",
+      async (_args: { rows: TaskRef } & TaskHandlerArgs) => undefined,
+    )({
+      rows: extract,
+    });
+
+    const result = await driveSupervisor(
+      { type: "DagFileParseRequest", file: "/dags/native.mjs", bundle_path: "/dags" },
+      undefined,
+      new DagRegistry(native),
+    );
+
+    const body = result.firstResponse!.body as Record<string, unknown>;
+    expect(body.import_errors).toBeUndefined();
+    const dags = body.serialized_dags as { data: Record<string, unknown> }[];
+    expect(dags).toHaveLength(1);
+    expect(dags[0]!.data.__version).toBe(3);
+    const dag = dags[0]!.data.dag as Record<string, unknown>;
+    expect(dag.dag_id).toBe("native_dag");
+    expect(dag.relative_fileloc).toBe("native.mjs");
+    expect((dag.timetable as Record<string, unknown>).__type).toBe(
+      "airflow.timetables.simple.OnceTimetable",
+    );
+    const tasks = dag.tasks as { __var: Record<string, unknown> }[];
+    expect(tasks.map((task) => task.__var.task_id)).toEqual(["extract", "load"]);
+    expect(tasks[0]!.__var.downstream_task_ids).toEqual(["load"]);
+  });
+
+  it("reports a Dag the serializer rejects as an import error", async () => {
+    const badSchedule = new Dag("bad_schedule_dag", { schedule: "" });
+    badSchedule.task("t", async () => undefined)();
+
+    const result = await driveSupervisor(
+      { type: "DagFileParseRequest", file: "/dags/bad.mjs", bundle_path: "/dags" },
+      undefined,
+      new DagRegistry(badSchedule),
+    );
+
+    const body = result.firstResponse!.body as Record<string, unknown>;
+    expect(body.serialized_dags).toEqual([]);
+    expect(body.import_errors).toEqual({
+      "/dags/bad.mjs": expect.stringContaining('schedule for Dag "bad_schedule_dag" is empty'),
+    });
   });
 
   it("reports a Dag with an uncalled task as an import error", async () => {

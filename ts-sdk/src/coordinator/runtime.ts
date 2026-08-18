@@ -52,6 +52,7 @@ import {
   type RuntimeTaskState,
   type StartupDetails,
 } from "./protocol.js";
+import { listSerializableDags, parseDags } from "./serde.js";
 import {
   DagRegistry,
   finalizeRegistryDags,
@@ -329,15 +330,22 @@ function handleParse(
   registry: DagRegistry,
   logs: LogChannel,
 ): RuntimeDagFileParsingResult {
-  // The Dags are checked here, on the parse path, and deliberately nowhere on
-  // the task-execution path: a Dag whose tasks are not all wired never reaches
-  // the scheduler, so no worker can be running one of its tasks, and re-walking
-  // every Dag in the bundle would cost time at every task start.
   try {
+    // The Dags are checked here, on the parse path, and deliberately nowhere on
+    // the task-execution path: a Dag whose tasks are not all wired never reaches
+    // the scheduler, so no worker can be running one of its tasks, and re-walking
+    // every Dag in the bundle would cost time at every task start.
     finalizeRegistryDags(registry);
+    const response = parseDags(registry, request);
+    logs.info("Serialized Dags", {
+      file: request.file,
+      dag_ids: listSerializableDags(registry).map((dag) => dag.dagId),
+      count: response.serialized_dags.length,
+    });
+    return response;
   } catch (err) {
     const message = (err as Error).message ?? String(err);
-    logs.error("Dag is not fully declared", { file: request.file, error: message });
+    logs.error("Dag file could not be parsed", { file: request.file, error: message });
     // Reported as an import error, which is how Airflow surfaces a Dag file
     // that does not describe a valid Dag.
     return {
@@ -347,17 +355,6 @@ function handleParse(
       import_errors: { [request.file]: message },
     };
   }
-  // TypeScript-native Dag parsing is not yet supported.
-  // Respond with an empty result so the Python-stub-Dag workflow works.
-  logs.info("Parse-mode response (TS Dag parsing not yet supported)", {
-    registered_tasks: listRegistryTasks(registry),
-  });
-  const response: RuntimeDagFileParsingResult = {
-    type: "DagFileParsingResult",
-    fileloc: request.file,
-    serialized_dags: [],
-  };
-  return response;
 }
 
 async function handleTask(

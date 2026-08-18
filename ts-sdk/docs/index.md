@@ -61,10 +61,12 @@ wires the next task to this one. Each task is called exactly once.
 ## Coordinators
 
 Airflow runs TypeScript task bundles through the Python-side `NodeCoordinator`
-(`airflow.sdk.coordinators.node.NodeCoordinator`). A Dag declared in TypeScript
-is not served to Airflow yet, so a Python Dag declares the scheduling shape with
-stub tasks and owns the task dependencies between them, and the TypeScript
-module binds handlers to matching task IDs — with
+(`airflow.sdk.coordinators.node.NodeCoordinator`), which the supervisor picks by
+the task's queue. The runtime can serialize a Dag declared in TypeScript, but no
+coordinator claims a TypeScript bundle as a Dag file yet, so nothing asks it to.
+Until that lands, a Python Dag declares the scheduling shape with stub tasks and
+owns the task dependencies between them, and the TypeScript module binds
+handlers to matching task IDs — with
 `new Dag(dagId, { isMixedLanguageDag: true })`, which says the Python file owns
 the layout and leaves the tasks uncalled on this side. See the
 [Non-Python Task SDKs guide](https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/index.html)
