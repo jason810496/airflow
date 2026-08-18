@@ -224,11 +224,25 @@ describe("public API", () => {
       ) => TaskFactory<TArgs>
     >();
     expectTypeOf<Dag["taskIds"]>().toEqualTypeOf<readonly string[]>();
-    // The one Dag-level field that is not part of the serialized Dag. The rest
-    // of both specs will be generated, all-optional (weak) types, and `{}` stays
-    // assignable to those, so filling them in later cannot break a call site.
-    expectTypeOf<DagSpec>().toEqualTypeOf<{ readonly isMixedLanguageDag?: boolean }>();
-    expectTypeOf<TaskSpec>().toEqualTypeOf<Record<string, never>>();
+    // Both specs are all-optional, so `{}` stays assignable and a field the
+    // schema gains later cannot break a call site.
+    const emptyDagSpec: DagSpec = {};
+    const emptyTaskSpec: TaskSpec = {};
+    expect([emptyDagSpec, emptyTaskSpec]).toEqual([{}, {}]);
+    // The one Dag-level field that is not part of the serialized Dag; every
+    // other field of either spec comes from the schema.
+    expectTypeOf<DagSpec["isMixedLanguageDag"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<DagSpec["schedule"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<DagSpec["tags"]>().toEqualTypeOf<readonly string[] | undefined>();
+    expectTypeOf<DagSpec["startDate"]>().toEqualTypeOf<Date | undefined>();
+    expectTypeOf<TaskSpec["retries"]>().toEqualTypeOf<number | undefined>();
+    // A timedelta is seconds, not a Date, and a bool defaulting to true is
+    // still a plain optional: `undefined` already means "unset".
+    expectTypeOf<TaskSpec["retryDelay"]>().toEqualTypeOf<number | undefined>();
+    expectTypeOf<TaskSpec["doXcomPush"]>().toEqualTypeOf<boolean | undefined>();
+    // Identity is positional, so it is not restated in either spec.
+    expectTypeOf<DagSpec>().not.toHaveProperty("dagId");
+    expectTypeOf<TaskSpec>().not.toHaveProperty("taskId");
   });
 
   it("uses idiomatic TypeScript names for public client types", () => {
@@ -320,11 +334,15 @@ describe("public API", () => {
       dag.task("transform2", async () => undefined, { extract });
       // @ts-expect-error a Dag spec is an options object, not a primitive.
       new Dag("spec_dag", 42);
-      // @ts-expect-error a Dag declared in TypeScript takes no schedule yet.
-      new Dag("spec_dag", { schedule: "@daily" });
+      new Dag("scheduled_dag", { schedule: "@daily", tags: ["team-a"] });
       new Dag("python_dag", { isMixedLanguageDag: true });
-      // @ts-expect-error TaskSpec has no fields yet, so retries cannot be declared here.
       dag.task("transform3", async () => undefined, { spec: { retries: 2 } });
+      // @ts-expect-error specs use the camelCased field name, not the schema key.
+      new Dag("snake_case_dag", { dag_display_name: "Example" });
+      // @ts-expect-error a field the schema does not define is a typo.
+      new Dag("typo_dag", { scheduled: "@daily" });
+      // @ts-expect-error a timedelta field is seconds, not a Date.
+      dag.task("transform4", async () => undefined, { spec: { retryDelay: new Date() } });
       // @ts-expect-error the reference a task call returns is data, not callable.
       extract()();
       // @ts-expect-error serveDags takes the registry, not a bare Dag.

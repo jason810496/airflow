@@ -26,6 +26,7 @@ import {
   type DagSpec,
   type TaskInputs,
   type TaskRef,
+  type TaskSpec,
 } from "../../src/sdk/dag.js";
 import { brand } from "../../src/sdk/brand.js";
 import { DagRegistry } from "../../src/sdk/registry.js";
@@ -202,8 +203,8 @@ describe("Dag", () => {
   });
 
   it("retains its spec and each task's handler and spec, copied and frozen", () => {
-    const dagSpec = {};
-    const taskSpec = {};
+    const dagSpec = { schedule: "@daily", tags: ["team-a"], catchup: false };
+    const taskSpec = { retries: 2, queue: "high", retryDelay: 60 };
     const handler = async () => "hello";
     const dag = new Dag("example_dag", dagSpec);
     dag.task("my_task", handler, { spec: taskSpec })();
@@ -227,9 +228,14 @@ describe("Dag", () => {
     );
   });
 
-  it("rejects an unknown key in the Dag spec", () => {
-    expect(() => new Dag("example_dag", { schedule: "@daily" } as unknown as DagSpec)).toThrowError(
-      /Unknown option "schedule" in the spec for Dag "example_dag"/,
+  it.each([
+    ["a misspelling", "scheduled"],
+    // The generated fields are camelCase, so the schema's own spelling is a
+    // typo here rather than a second accepted name.
+    ["the raw schema key", "dag_display_name"],
+  ])("rejects %s in the Dag spec", (_label, key) => {
+    expect(() => new Dag("example_dag", { [key]: "x" } as unknown as DagSpec)).toThrowError(
+      new RegExp(`Unknown option "${key}" in the spec for Dag "example_dag"`),
     );
   });
 
@@ -240,18 +246,40 @@ describe("Dag", () => {
   });
 
   it.each([
-    ["a populated object", { retries: 2 }],
     ["null", null],
     ["an array", []],
     ["a non-plain object", new Date()],
-  ])("rejects a task spec that is not an empty object: %s", (_label, spec) => {
+  ])("rejects a task spec that is not an options object: %s", (_label, spec) => {
     const dag = new Dag("example_dag");
     expect(() =>
-      dag.task("transform", async () => undefined, {
-        spec: spec as unknown as Record<string, never>,
-      }),
-    ).toThrowError(/spec for Dag "example_dag" task "transform" must be an empty object/);
+      dag.task("transform", async () => undefined, { spec: spec as unknown as TaskSpec }),
+    ).toThrowError(/spec for Dag "example_dag" task "transform" must be an object/);
     expect(dag.taskIds).toEqual([]);
+  });
+
+  it.each([
+    ["a misspelling", "retires"],
+    ["the raw schema key", "retry_delay"],
+  ])("rejects %s in the task spec", (_label, key) => {
+    const dag = new Dag("example_dag");
+    expect(() =>
+      dag.task("transform", async () => undefined, { spec: { [key]: 1 } as unknown as TaskSpec }),
+    ).toThrowError(
+      new RegExp(`Unknown option "${key}" in the spec for Dag "example_dag" task "transform"`),
+    );
+    expect(dag.taskIds).toEqual([]);
+  });
+
+  it("rejects a symbol-keyed spec, which no schema field can be", () => {
+    const dag = new Dag("example_dag");
+    expect(
+      () => new Dag("symbol_dag", { [Symbol("schedule")]: "@daily" } as unknown as DagSpec),
+    ).toThrowError(/Unknown option "Symbol\(schedule\)" in the spec for Dag "symbol_dag"/);
+    expect(() =>
+      dag.task("transform", async () => undefined, {
+        spec: { [Symbol("retries")]: 2 } as unknown as TaskSpec,
+      }),
+    ).toThrowError(/Unknown option "Symbol\(retries\)" in the spec for Dag "example_dag"/);
   });
 
   it("exposes its task IDs in attachment order", () => {

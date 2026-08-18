@@ -21,6 +21,12 @@
 // the factory it returns. Calling a factory declares the task's place in the
 // Dag, the way calling a TaskFlow function does in Python.
 
+import {
+  DAG_SCHEMA_FIELDS,
+  TASK_SCHEMA_FIELDS,
+  type GeneratedDagFields,
+  type GeneratedTaskFields,
+} from "../generated/dag-schema-fields.js";
 import { brand, DUPLICATE_COPY_HINT, hasBrand } from "./brand.js";
 import type { JsonValue } from "./client-types.js";
 import type { TaskHandler, TaskHandlerArgs } from "./task.js";
@@ -31,17 +37,26 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+const DAG_SPEC_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(DAG_SCHEMA_FIELDS),
+  "isMixedLanguageDag",
+]);
+const TASK_SPEC_KEYS: ReadonlySet<string> = new Set(Object.keys(TASK_SCHEMA_FIELDS));
+
 /**
  * Dag-level options.
  *
- * Every field here but {@link DagSpec.isMixedLanguageDag} describes the Dag
- * Airflow schedules, and native Dag declaration will add them — schedule,
- * catchup, tags, ... — generated from the serialized-Dag JSON schema as
- * `src/generated/supervisor.ts` is. They are all optional, so `{}` stays valid
- * and adding one cannot break a call site. Unknown keys are rejected, so a
- * misspelled field is an error rather than a Dag that quietly ignores it.
+ * Every field but {@link DagSpec.isMixedLanguageDag} describes the Dag Airflow
+ * schedules and is generated from the serialized-Dag JSON schema, as
+ * `src/generated/supervisor.ts` is from the supervisor's. They are all
+ * optional, so `{}` stays valid and adding one cannot break a call site.
+ * Unknown keys are rejected, so a misspelled field is an error rather than a
+ * Dag that quietly ignores it.
+ *
+ * Setting a generated field records it; nothing reads it until the serializer
+ * that turns a native Dag into serialized-Dag JSON lands.
  */
-export interface DagSpec {
+export interface DagSpec extends GeneratedDagFields {
   /**
    * Whether this Dag only binds TypeScript handlers to a Dag declared in Python.
    *
@@ -61,10 +76,10 @@ export interface DagSpec {
 /**
  * Task-level options.
  *
- * No fields yet, so only `{}` is accepted. Future task fields (retries, queue,
- * ...) will land here, generated as {@link DagSpec}'s are.
+ * Generated from the schema's "operator" definition, and optional and
+ * record-only on the same terms as {@link DagSpec}'s generated fields.
  */
-export type TaskSpec = Record<string, never>;
+export type TaskSpec = GeneratedTaskFields;
 
 /**
  * A reference to the result of one task, returned by calling that task.
@@ -243,7 +258,7 @@ export class Dag {
     // Copied and frozen, as task specs are: nothing reads a spec until the
     // bundle manifest is built, long after the user's module has run, so a
     // later mutation of their object would silently change what is packed.
-    // Shallow — a nested value in a future generated spec stays mutable.
+    // Shallow — a nested value such as `tags` or a `Date` stays mutable.
     this.spec = Object.freeze({ ...spec });
   }
 
@@ -311,13 +326,22 @@ export class Dag {
   }
 
   #validateTaskSpec(taskId: string, spec: TaskSpec): void {
-    if (this.spec.isMixedLanguageDag && isPlainRecord(spec) && Reflect.ownKeys(spec).length > 0) {
+    const value: unknown = spec;
+    if (!isPlainRecord(value)) {
+      throw new Error(`spec for Dag "${this.dagId}" task "${taskId}" must be an object`);
+    }
+    const keys = Reflect.ownKeys(value);
+    if (this.spec.isMixedLanguageDag && keys.length > 0) {
       throw new Error(
         `Task "${taskId}" of Dag "${this.dagId}" cannot take a spec: the Dag is declared in Python, which is where its task options come from`,
       );
     }
-    if (!isPlainRecord(spec) || Reflect.ownKeys(spec).length > 0) {
-      throw new Error(`spec for Dag "${this.dagId}" task "${taskId}" must be an empty object`);
+    for (const key of keys) {
+      if (typeof key !== "string" || !TASK_SPEC_KEYS.has(key)) {
+        throw new Error(
+          `Unknown option "${String(key)}" in the spec for Dag "${this.dagId}" task "${taskId}"`,
+        );
+      }
     }
   }
 
@@ -411,7 +435,7 @@ function validateDagSpec(dagId: string, spec: DagSpec): void {
     throw new Error(`spec for Dag "${dagId}" must be an object`);
   }
   for (const key of Reflect.ownKeys(value)) {
-    if (key !== "isMixedLanguageDag") {
+    if (typeof key !== "string" || !DAG_SPEC_KEYS.has(key)) {
       throw new Error(`Unknown option "${String(key)}" in the spec for Dag "${dagId}"`);
     }
   }
