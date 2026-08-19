@@ -255,19 +255,9 @@ docs directly instead, `npm ci && npm run build` inside `ts-sdk/docs/` writes to
 CI builds the reference on every change under `ts-sdk/src/` or `ts-sdk/docs/`,
 so a broken docs build fails the PR rather than the release.
 
-### Publishing the API docs
+## Releasing
 
-Publishing is a separate, deliberate step — a providers-only publish wave will
-not refresh the SDK docs as a side effect. Trigger the *Publish Docs to S3*
-workflow for the release ref:
-
-```bash
-gh workflow run "Publish Docs to S3" --repo apache/airflow --ref main \
-  -f ref=<RELEASE_REF> \
-  -f include-docs=ts-sdk \
-  -f destination=live
-```
-
-Use `destination=staging` first to check the output, then `live`. Confirm that
-`https://airflow.apache.org/docs/ts-sdk/stable/` resolves (allow time for cache
-invalidation) and that `/docs/ts-sdk/` redirects to it.
+Release managers should follow the
+[TypeScript SDK release guide](https://github.com/apache/airflow/blob/main/dev/README_RELEASE_TS_SDK.md).
+It covers signed source candidates, PMC voting, npm publication, API-reference
+publication, announcements, and failed-vote recovery.

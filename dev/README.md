@@ -23,6 +23,7 @@
 - [Apache Airflow source releases](#apache-airflow-source-releases)
   - [Apache Airflow Package](#apache-airflow-package)
   - [Provider distributions](#provider-distributions)
+  - [TypeScript SDK distribution](#typescript-sdk-distribution)
 - [Preinstalled providers](#preinstalled-providers)
 - [Prerequisites for the release manager preparing the release](#prerequisites-for-the-release-manager-preparing-the-release)
   - [Upload Public keys to id.apache.org and GitHub](#upload-public-keys-to-idapacheorg-and-github)
@@ -107,6 +108,15 @@ of Backport Providers was done  on March 17, 2021.
 
 Detailed instruction of releasing provider distributions can be found in the
 [README_RELEASE_PROVIDERS.md](README_RELEASE_PROVIDERS.md)
+
+## TypeScript SDK distribution
+
+The TypeScript SDK is released independently from Airflow core. Its signed source archive is distributed
+through the official Apache download channel, and `apache-airflow-ts-sdk` is published to npm as a convenience
+artifact after the source release passes a PMC vote.
+
+The complete release-manager process is documented in
+[README_RELEASE_TS_SDK.md](README_RELEASE_TS_SDK.md).
 
 # Preinstalled providers
 
