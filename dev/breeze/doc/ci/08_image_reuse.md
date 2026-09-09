@@ -79,7 +79,10 @@ builds of the PR branch.
 
 Downloads verify the GitHub-provided archive digest and producer provenance. Failed downloads
 are retried a bounded number of times; a failed verification fails the job instead of silently
-substituting another environment. Re-running failed jobs can read the preparation selection from
+substituting another environment. Main selections pin the successful publisher attempt, so a later
+running or failed publisher retry cannot invalidate a retained image. Publisher retries may replace
+their run-local package and constraints intermediates, while shared images remain immutable.
+Re-running failed jobs can read the preparation selection from
 an earlier attempt of the same workflow run. Existing workflows outside this reuse path retain
 their existing stash behavior.
 
