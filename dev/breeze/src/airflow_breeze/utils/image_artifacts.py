@@ -181,12 +181,14 @@ class GithubArtifacts:
                 return sorted(result, key=lambda item: item["created_at"], reverse=True)
         raise ValueError("Artifact listing exceeds the lookup limit")
 
-    def validate(self, artifact: dict[str, Any], name: str) -> dict[str, Any]:
+    def validate(
+        self, artifact: dict[str, Any], name: str, *, check_freshness: bool = True
+    ) -> dict[str, Any]:
         if self.repository != TRUSTED_REPOSITORY or artifact["name"] != name or artifact["expired"]:
             raise ValueError("Artifact is not a trusted main image")
         created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
         age = datetime.now(timezone.utc) - created
-        if not timedelta(0) <= age <= MAX_AGE:
+        if check_freshness and not timedelta(0) <= age <= MAX_AGE:
             raise ValueError("Artifact is outside the freshness window")
         run = self.get(f"actions/runs/{artifact['workflow_run']['id']}")
         if not (
@@ -311,7 +313,7 @@ def download(
         artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
     else:
         artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
-        verified = api.validate(artifact, artifact_name(selection))
+        verified = api.validate(artifact, artifact_name(selection), check_freshness=False)
     if any(selection[key] != value for key, value in verified.items()):
         raise ValueError("Selection does not match immutable artifact provenance")
     with api.archive(artifact) as archive:

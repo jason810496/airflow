@@ -215,6 +215,25 @@ class TestDownload:
         with pytest.raises(ValueError, match="digest mismatch"), api.archive({"id": 1, "digest": "wrong"}):
             pytest.fail("must not open corrupt archive")
 
+    def test_selected_image_remains_downloadable_after_freshness_window(
+        self, inputs, artifact, run, tmp_path
+    ):
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value=run)
+        artifact["created_at"] = (REFERENCE_TIME - timedelta(hours=47)).isoformat()
+        selection = {**inputs, **api.validate(artifact, artifact["name"])}
+        artifact["created_at"] = (REFERENCE_TIME - timedelta(hours=49)).isoformat()
+        with pytest.raises(ValueError, match="freshness"):
+            api.validate(artifact, artifact["name"])
+        api.get = Mock(spec=GithubArtifacts().get, side_effect=[artifact, run])
+        archive = MagicMock(spec=zipfile.ZipFile)
+        archive.infolist.return_value = []
+        api.archive = Mock(spec=api.archive, return_value=archive)
+        archive.__enter__.return_value = archive
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
+            download(selection, tmp_path)
+        archive.extractall.assert_called_once_with(tmp_path)
+
     @pytest.mark.parametrize("member", ["../escape", "/tmp/escape"])
     def test_reject_archive_escape(self, inputs, artifact, run, tmp_path, member):
         api = GithubArtifacts()
