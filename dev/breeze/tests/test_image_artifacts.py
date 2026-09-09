@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
@@ -33,10 +34,22 @@ from airflow_breeze.utils.image_artifacts import (
     download,
     fingerprint,
     is_build_input,
+    main,
     resolve,
     restore_selection,
+    select_local,
 )
 from airflow_breeze.utils.selective_checks import SelectiveChecks
+
+REFERENCE_TIME = datetime(2026, 9, 9, 12, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def fixed_clock():
+    """Keep freshness tests deterministic without adding a Breeze runtime dependency."""
+    with patch("airflow_breeze.utils.image_artifacts.datetime", spec=datetime, wraps=datetime) as clock:
+        clock.now.return_value = REFERENCE_TIME
+        yield
 
 
 @pytest.fixture
@@ -50,7 +63,7 @@ def artifact(inputs):
         "id": 123,
         "name": artifact_name(inputs),
         "expired": False,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": REFERENCE_TIME.isoformat(),
         "workflow_run": {"id": 456, "head_sha": "b" * 40},
         "digest": "sha256:" + "c" * 64,
     }
@@ -76,8 +89,8 @@ class TestFingerprint:
         ("path", "ci", "prod"),
         [
             ("airflow-core/src/airflow/api_fastapi/app.py", False, True),
-            ("airflow-core/ui/src/App.tsx", False, True),
-            ("airflow-core/ui/package.json", True, True),
+            ("airflow-core/src/airflow/ui/src/App.tsx", False, True),
+            ("airflow-core/src/airflow/ui/package.json", True, True),
             ("providers/amazon/pyproject.toml", True, True),
             ("providers/amazon/provider.yaml", True, True),
             ("providers/amazon/src/airflow/providers/amazon/get_provider_info.py", True, True),
@@ -93,10 +106,24 @@ class TestFingerprint:
         assert is_build_input(path, "ci") is ci
         assert is_build_input(path, "prod") is prod
 
+    @patch("subprocess.check_output", autospec=True, return_value=b"")
+    def test_constraints_ignore_generated_comments(self, _files, tmp_path):
+        first = fingerprint(
+            tmp_path, "prod", "3.12", "linux/amd64", constraints=b"# generated yesterday\na==1\n"
+        )
+        second = fingerprint(
+            tmp_path, "prod", "3.12", "linux/amd64", constraints=b"# generated today\na==1\n"
+        )
+        changed = fingerprint(
+            tmp_path, "prod", "3.12", "linux/amd64", constraints=b"# generated today\na==2\n"
+        )
+        assert first == second
+        assert first != changed
+
     def test_actual_checkout_and_dimensions(self, tmp_path):
         lock = tmp_path / "uv.lock"
         lock.write_text("old")
-        with patch("subprocess.check_output", return_value=b"uv.lock\0"):
+        with patch("subprocess.check_output", autospec=True, return_value=b"uv.lock\0"):
             original = fingerprint(tmp_path, "ci", "3.12", "linux/amd64")
             lock.write_text("new")
             assert fingerprint(tmp_path, "ci", "3.12", "linux/amd64") != original
@@ -112,7 +139,7 @@ class TestFingerprint:
 class TestTrustedProducer:
     def test_success(self, artifact, run):
         api = GithubArtifacts()
-        api.get = Mock(return_value=run)
+        api.get = Mock(spec=GithubArtifacts().get, return_value=run)
         assert api.validate(artifact, artifact["name"])["artifact-id"] == 123
         api.get.assert_called_once_with("actions/runs/456")
 
@@ -132,35 +159,35 @@ class TestTrustedProducer:
     def test_reject_provenance(self, artifact, run, key, value):
         run[key] = value
         api = GithubArtifacts()
-        api.get = Mock(return_value=run)
+        api.get = Mock(spec=GithubArtifacts().get, return_value=run)
         with pytest.raises(ValueError, match="producer"):
             api.validate(artifact, artifact["name"])
 
     @pytest.mark.parametrize("age", [timedelta(hours=49), timedelta(hours=-1)])
     def test_reject_age(self, artifact, age):
-        artifact["created_at"] = (datetime.now(timezone.utc) - age).isoformat()
+        artifact["created_at"] = (REFERENCE_TIME - age).isoformat()
         with pytest.raises(ValueError, match="freshness"):
             GithubArtifacts().validate(artifact, artifact["name"])
 
     def test_reject_unverifiable_digest(self, artifact, run):
         artifact["digest"] = None
         api = GithubArtifacts()
-        api.get = Mock(return_value=run)
+        api.get = Mock(spec=GithubArtifacts().get, return_value=run)
         with pytest.raises(ValueError, match="digest"):
             api.validate(artifact, artifact["name"])
 
     def test_resolve_failure_is_miss(self, inputs):
-        api = Mock()
+        api = Mock(spec=GithubArtifacts)
         api.find.side_effect = requests.Timeout()
         assert resolve(inputs, api)["hit"] is False
 
     def test_disabled_does_not_lookup(self, inputs):
-        api = Mock()
+        api = Mock(spec=GithubArtifacts)
         assert resolve(inputs, api, disabled=True)["hit"] is False
         api.find.assert_not_called()
 
     def test_resolve_skips_bad_producer(self, inputs, artifact):
-        api = Mock()
+        api = Mock(spec=GithubArtifacts)
         api.find.return_value = [artifact, artifact]
         api.validate.side_effect = [ValueError("bad producer"), {"hit": True}]
         assert resolve(inputs, api)["hit"] is True
@@ -169,20 +196,20 @@ class TestTrustedProducer:
 class TestDownload:
     def test_digest_mismatch(self):
         api = GithubArtifacts()
-        response = Mock()
+        response = MagicMock(spec=requests.Response)
         response.iter_content.return_value = [b"corrupt"]
-        api.session.get = Mock()
-        api.session.get.return_value.__enter__ = Mock(return_value=response)
-        api.session.get.return_value.__exit__ = Mock(return_value=False)
+        api.session.get = Mock(spec=api.session.get, return_value=response)
+        response.__enter__.return_value = response
+        response.__exit__.return_value = False
         with pytest.raises(ValueError, match="digest mismatch"), api.archive({"id": 1, "digest": "wrong"}):
             pytest.fail("must not open corrupt archive")
 
     @pytest.mark.parametrize("member", ["../escape", "/tmp/escape"])
     def test_reject_archive_escape(self, inputs, artifact, run, tmp_path, member):
         api = GithubArtifacts()
-        api.get = Mock(return_value=run)
+        api.get = Mock(spec=GithubArtifacts().get, return_value=run)
         selection = {**inputs, **api.validate(artifact, artifact["name"])}
-        api.get = Mock(side_effect=[artifact, run])
+        api.get = Mock(spec=GithubArtifacts().get, side_effect=[artifact, run])
 
         @contextmanager
         def archive(_artifact):
@@ -194,7 +221,7 @@ class TestDownload:
                 yield zipped
 
         api.archive = archive
-        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", return_value=api):
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
             with pytest.raises(ValueError, match="archive member"):
                 download(selection, tmp_path)
 
@@ -217,7 +244,7 @@ class TestReuseEligibility:
 
 class TestRestoreSelection:
     def test_missing_selection_uses_existing_build(self, tmp_path):
-        api = Mock()
+        api = Mock(spec=GithubArtifacts)
         api.find.return_value = []
         args = argparse.Namespace(
             repository="fork/airflow",
@@ -226,14 +253,15 @@ class TestRestoreSelection:
             platform="linux/amd64",
             run_id=100,
             run_attempt=2,
+            require_selection=False,
             output_directory=tmp_path,
         )
-        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", return_value=api):
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
             assert restore_selection(args)["hit"] is False
-        api.find.assert_called_once_with("selected-ci-3.12-amd64-2", 100)
+        api.find.assert_called_once_with("selected-ci-3.12-amd64-", 100, prefix=True)
 
     def test_lookup_error_must_not_silently_restore_old_image(self, tmp_path):
-        api = Mock()
+        api = Mock(spec=GithubArtifacts)
         api.find.side_effect = requests.Timeout("unavailable")
         args = argparse.Namespace(
             repository="fork/airflow",
@@ -242,8 +270,133 @@ class TestRestoreSelection:
             platform="linux/amd64",
             run_id=100,
             run_attempt=2,
+            require_selection=False,
             output_directory=tmp_path,
         )
-        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", return_value=api):
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
             with pytest.raises(requests.Timeout, match="unavailable"):
                 restore_selection(args)
+
+
+class TestLocalSelection:
+    def test_select_current_run(self, artifact, run):
+        artifact["name"] = "built-ci-3.12-amd64-1"
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, side_effect=[artifact, run])
+        selection = select_local(api, 123, 456, "ci", "3.12", "linux/amd64")
+        assert selection["scope"] == "current-run"
+        assert selection["artifact-id"] == 123
+
+    @pytest.mark.parametrize("wrong", ["run", "repository", "sha", "name", "expired", "digest"])
+    def test_reject_wrong_provenance(self, artifact, run, wrong):
+        artifact["name"] = "built-ci-3.12-amd64-1"
+        if wrong == "run":
+            artifact["workflow_run"]["id"] = 999
+        elif wrong == "repository":
+            run["repository"]["full_name"] = "another/repository"
+        elif wrong == "sha":
+            artifact["workflow_run"]["head_sha"] = "wrong"
+        elif wrong == "name":
+            artifact["name"] = "main-image-ci-other"
+        elif wrong == "expired":
+            artifact["expired"] = True
+        else:
+            artifact["digest"] = None
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, side_effect=[artifact, run])
+        with pytest.raises(ValueError, match="current workflow run"):
+            select_local(api, 123, 456, "ci", "3.12", "linux/amd64")
+
+    @pytest.mark.parametrize(
+        ("repository", "run_id"), [("another/repo", 456), ("apache/airflow", 999), (None, None)]
+    )
+    def test_manifest_cannot_authorize_another_run(self, artifact, run, tmp_path, repository, run_id):
+        artifact["name"] = "built-ci-3.12-amd64-1"
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, side_effect=[artifact, run])
+        selection = select_local(api, 123, 456, "ci", "3.12", "linux/amd64")
+        with pytest.raises(ValueError, match="consumer workflow run"):
+            download(selection, tmp_path, repository, run_id)
+
+
+class TestRequiredSelection:
+    def test_missing_is_error(self, tmp_path):
+        args = argparse.Namespace(
+            repository="apache/airflow",
+            kind="ci",
+            python="3.12",
+            platform="linux/amd64",
+            run_id=456,
+            run_attempt=2,
+            require_selection=True,
+            output_directory=tmp_path,
+        )
+        api = Mock(spec=GithubArtifacts)
+        api.find.return_value = []
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
+            with pytest.raises(ValueError, match="Required image selection"):
+                restore_selection(args)
+
+    def test_previous_attempt_selected_before_newer_future_attempt(self, tmp_path, inputs):
+        args = argparse.Namespace(
+            repository="apache/airflow",
+            kind="ci",
+            python="3.12",
+            platform="linux/amd64",
+            run_id=456,
+            run_attempt=2,
+            require_selection=True,
+            output_directory=tmp_path,
+        )
+        api = Mock(spec=GithubArtifacts)
+        previous = {"id": 1, "name": "selected-ci-3.12-amd64-1"}
+        api.find.return_value = [
+            {"id": 3, "name": "selected-ci-3.12-amd64-3"},
+            previous,
+        ]
+        selection = {**inputs, "hit": True}
+
+        @contextmanager
+        def archive(artifact):
+            assert artifact == previous
+            payload = io.BytesIO()
+            with zipfile.ZipFile(payload, "w") as zipped:
+                zipped.writestr("selection.json", json.dumps(selection))
+            payload.seek(0)
+            with zipfile.ZipFile(payload) as zipped:
+                yield zipped
+
+        api.archive = archive
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
+            with patch("airflow_breeze.utils.image_artifacts.download", autospec=True) as restore:
+                assert restore_selection(args) == selection
+        restore.assert_called_once_with(selection, tmp_path, "apache/airflow", 456)
+
+
+class TestCLI:
+    @pytest.mark.parametrize(
+        "command", ["fingerprint", "resolve", "download", "restore-selection", "select-local"]
+    )
+    def test_required_arguments_are_reported(self, command, tmp_path, capsys):
+        with patch("sys.argv", ["image_artifacts", command, "--output", str(tmp_path / "out.json")]):
+            with pytest.raises(SystemExit) as error:
+                main()
+        assert error.value.code == 2
+        assert f"{command} requires" in capsys.readouterr().err
+
+
+class TestArtifactListing:
+    def test_incomplete_listing_cannot_mean_miss(self):
+        api = GithubArtifacts()
+        item = {"name": "unrelated", "expired": False, "created_at": "2026-09-09"}
+        api.get = Mock(spec=api.get, return_value={"artifacts": [item] * 100})
+        with pytest.raises(ValueError, match="lookup limit"):
+            api.find("selected-ci-", 456, prefix=True)
+
+    def test_exact_name_search_uses_server_filter(self):
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value={"artifacts": []})
+        assert api.find("main-image-ci-fingerprint") == []
+        api.get.assert_called_once_with(
+            "actions/artifacts", per_page=100, page=1, name="main-image-ci-fingerprint"
+        )

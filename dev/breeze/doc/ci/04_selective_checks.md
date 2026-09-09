@@ -718,3 +718,10 @@ Shared main artifacts have seven-day retention and a maximum selection age of 48
 publication refreshes mutable upstream inputs; input changes may publish earlier. Expiration handles
 eviction so in-flight consumers can still retrieve older generations. Cache-disabled and canary
 runs retain full-build coverage.
+
+Normal CI consumers require an image selection manifest. A miss builds and uploads a run-local image,
+then records its immutable artifact ID; it does not restore a branch-named image from another run.
+Run-local selections are accepted only when the caller's repository and workflow run match the
+GitHub API's artifact provenance. They never qualify as trusted main images. A retried consumer may
+use the latest selection from an earlier attempt of that same workflow run. Missing required
+manifests or incomplete artifact listings fail explicitly instead of silently loading another image.

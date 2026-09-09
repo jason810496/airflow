@@ -61,7 +61,7 @@ def is_build_input(path: str, kind: str) -> bool:
         and "/_generated/" not in path
     ):
         return False
-    if path.startswith("airflow-core/ui/src/"):
+    if path.startswith("airflow-core/src/airflow/ui/src/"):
         return False
     return True
 
@@ -85,7 +85,9 @@ def fingerprint(
         "platform": platform,
         "build-args": sorted(build_args),
         "base-image-digest": base_image_digest,
-        "constraints-digest": hashlib.sha256(constraints).hexdigest(),
+        "constraints-digest": hashlib.sha256(
+            b"\n".join(line for line in constraints.splitlines() if not line.lstrip().startswith(b"#"))
+        ).hexdigest(),
     }
     digest = hashlib.sha256(json.dumps(dimensions, sort_keys=True).encode())
     paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
@@ -131,16 +133,22 @@ class GithubArtifacts:
         response.raise_for_status()
         return response.json()
 
-    def find(self, name: str, run_id: int | None = None) -> list[dict[str, Any]]:
+    def find(self, name: str, run_id: int | None = None, prefix: bool = False) -> list[dict[str, Any]]:
         path = f"actions/runs/{run_id}/artifacts" if run_id else "actions/artifacts"
         result: list[dict[str, Any]] = []
-        # Bound requests; a cache miss is preferable to unbounded CI startup latency.
-        for page in range(1, 6):
-            artifacts = self.get(path, name=name, per_page=100, page=page)["artifacts"]
-            result.extend(item for item in artifacts if item["name"] == name and not item["expired"])
+        for page in range(1, 101):
+            params: dict[str, Any] = {"per_page": 100, "page": page}
+            if not run_id:
+                params["name"] = name
+            artifacts = self.get(path, **params)["artifacts"]
+            result.extend(
+                item
+                for item in artifacts
+                if (item["name"].startswith(name) if prefix else item["name"] == name) and not item["expired"]
+            )
             if len(artifacts) < 100:
-                break
-        return sorted(result, key=lambda item: item["created_at"], reverse=True)
+                return sorted(result, key=lambda item: item["created_at"], reverse=True)
+        raise ValueError("Artifact listing exceeds the lookup limit")
 
     def validate(self, artifact: dict[str, Any], name: str) -> dict[str, Any]:
         if self.repository != TRUSTED_REPOSITORY or artifact["name"] != name or artifact["expired"]:
@@ -218,11 +226,61 @@ def resolve(inputs: dict[str, Any], api: GithubArtifacts, disabled: bool = False
     return {"hit": False, "reason": "no compatible fresh main artifact"}
 
 
-def download(selection: dict[str, Any], directory: Path) -> None:
+def select_local(
+    api: GithubArtifacts, artifact_id: int, run_id: int, kind: str, python: str, platform: str
+) -> dict[str, Any]:
+    """Pin a fallback build to this workflow run, without granting main publisher trust."""
+    artifact = api.get(f"actions/artifacts/{artifact_id}")
+    run = api.get(f"actions/runs/{run_id}")
+    prefix = f"built-{kind}-{python}-{platform.split('/')[-1]}-"
+    if not (
+        artifact["workflow_run"]["id"] == run_id
+        and artifact["workflow_run"]["head_sha"] == run["head_sha"]
+        and run["repository"]["full_name"] == api.repository
+        and artifact["name"].startswith(prefix)
+        and artifact["name"].removeprefix(prefix).isdigit()
+        and not artifact["expired"]
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest") or "")
+    ):
+        raise ValueError("Built image does not belong to the current workflow run")
+    return {
+        "hit": True,
+        "scope": "current-run",
+        "artifact-id": artifact_id,
+        "artifact-name": artifact["name"],
+        "run-id": run_id,
+        "repository": api.repository,
+        "source-sha": run["head_sha"],
+        "digest": artifact["digest"],
+        "kind": kind,
+        "python": python,
+        "platform": platform,
+    }
+
+
+def download(
+    selection: dict[str, Any],
+    directory: Path,
+    repository: str | None = None,
+    run_id: int | None = None,
+) -> None:
     """Revalidate immutable provenance and digest immediately before loading an image."""
     api = GithubArtifacts(selection["repository"])
-    artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
-    verified = api.validate(artifact, artifact_name(selection))
+    if selection.get("scope") == "current-run":
+        if run_id is None or repository != selection["repository"] or run_id != selection["run-id"]:
+            raise ValueError("Local selection does not match the consumer workflow run")
+        verified = select_local(
+            api,
+            int(selection["artifact-id"]),
+            run_id,
+            selection["kind"],
+            selection["python"],
+            selection["platform"],
+        )
+        artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
+    else:
+        artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
+        verified = api.validate(artifact, artifact_name(selection))
     if any(selection[key] != value for key, value in verified.items()):
         raise ValueError("Selection does not match immutable artifact provenance")
     with api.archive(artifact) as archive:
@@ -235,9 +293,18 @@ def download(selection: dict[str, Any], directory: Path) -> None:
 
 def restore_selection(args: argparse.Namespace) -> dict[str, Any]:
     api = GithubArtifacts(args.repository)
-    name = f"selected-{args.kind}-{args.python}-{args.platform.split('/')[-1]}-{args.run_attempt}"
-    artifacts = api.find(name, args.run_id)
+    name = f"selected-{args.kind}-{args.python}-{args.platform.split('/')[-1]}-"
+    artifacts = api.find(name, args.run_id, prefix=True)
+    artifacts = [
+        item
+        for item in artifacts
+        if item["name"].removeprefix(name).isdigit()
+        and 1 <= int(item["name"].removeprefix(name)) <= args.run_attempt
+    ]
+    artifacts.sort(key=lambda item: int(item["name"].removeprefix(name)), reverse=True)
     if not artifacts:
+        if args.require_selection:
+            raise ValueError("Required image selection is missing for this workflow run")
         return {"hit": False, "reason": "no selection for this run"}
     with api.archive(artifacts[0]) as archive:
         members = archive.namelist()
@@ -250,13 +317,15 @@ def restore_selection(args: argparse.Namespace) -> dict[str, Any]:
         args.platform,
     ):
         raise ValueError("Selection dimensions do not match consumer")
-    download(selection, args.output_directory)
+    download(selection, args.output_directory, args.repository, args.run_id)
     return selection
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("fingerprint", "resolve", "download", "restore-selection"))
+    parser.add_argument(
+        "command", choices=("fingerprint", "resolve", "download", "restore-selection", "select-local")
+    )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--kind", choices=KINDS)
     parser.add_argument("--python")
@@ -266,6 +335,8 @@ def main() -> None:
     parser.add_argument("--fingerprint-file", type=Path)
     parser.add_argument("--selection-file", type=Path)
     parser.add_argument("--output-directory", type=Path)
+    parser.add_argument("--artifact-id", type=int)
+    parser.add_argument("--require-selection", action="store_true")
     parser.add_argument("--run-id", type=int)
     parser.add_argument("--run-attempt", type=int)
     parser.add_argument("--disabled", action="store_true")
@@ -273,11 +344,30 @@ def main() -> None:
     parser.add_argument("--base-image-digest", default="")
     parser.add_argument("--constraints-file", type=Path)
     args = parser.parse_args()
-    if args.command == "restore-selection":
+    required = {
+        "fingerprint": ("kind", "python", "platform"),
+        "resolve": () if args.fingerprint_file else ("kind", "python", "platform"),
+        "download": ("selection_file", "output_directory"),
+        "select-local": ("artifact_id", "kind", "python", "platform", "run_id"),
+        "restore-selection": ("kind", "python", "platform", "run_id", "run_attempt", "output_directory"),
+    }[args.command]
+    missing = ["--" + name.replace("_", "-") for name in required if getattr(args, name) is None]
+    if missing:
+        parser.error(f"{args.command} requires {', '.join(missing)}")
+    if args.command == "select-local":
+        result = select_local(
+            GithubArtifacts(args.repository),
+            args.artifact_id,
+            args.run_id,
+            args.kind,
+            args.python,
+            args.platform,
+        )
+    elif args.command == "restore-selection":
         result = restore_selection(args)
     elif args.command == "download":
         result = json.loads(args.selection_file.read_text())
-        download(result, args.output_directory)
+        download(result, args.output_directory, args.repository, args.run_id)
     else:
         inputs = (
             json.loads(args.fingerprint_file.read_text())
