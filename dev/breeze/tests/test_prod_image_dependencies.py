@@ -121,6 +121,23 @@ class TestMetadataWheels:
         assert not (destination / "requirements.txt").exists()
         assert not (destination / ".dependency-cache").exists()
 
+    def test_constraint_timestamps_do_not_invalidate_dependencies(self, context: Path):
+        constraints_dir = context / "constraints-3.10"
+        constraints_dir.mkdir()
+        constraints = constraints_dir / "constraints-source-providers-3.10.txt"
+        requirements = 'example-dependency==1.0; python_version >= "3.10"\n'
+        constraints.write_text("# Generated on first run\n" + requirements)
+        destination = prepare_dependency_context(context, "3.10")
+        normalized = destination / "constraints-3.10" / constraints.name
+        before = normalized.read_bytes()
+        constraints.write_text("  # Generated on second run\n" + requirements)
+        prepare_dependency_context(context, "3.10")
+        assert normalized.read_bytes() == before == requirements.encode()
+        assert constraints.read_text() == "  # Generated on second run\n" + requirements
+        constraints.write_text("# Same comment\nexample-dependency==2.0\n")
+        prepare_dependency_context(context, "3.10")
+        assert normalized.read_bytes() != before
+
     @pytest.mark.parametrize("extension", ["tar.gz", "zip"])
     def test_source_distributions_use_regular_install(self, context: Path, extension: str):
         (context / f"example-1.0.{extension}").touch()

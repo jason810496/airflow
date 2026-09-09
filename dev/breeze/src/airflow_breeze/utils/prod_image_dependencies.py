@@ -80,6 +80,14 @@ def prepare_dependency_context(context: Path, python_version: str) -> Path | Non
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(context, destination, ignore=shutil.ignore_patterns(".dependency-cache", "*.whl"))
+    # CI regenerates a timestamp comment even when the resolved requirements are unchanged.
+    for constraints in destination.glob("constraints-*/constraints-*.txt"):
+        constraints.write_text(
+            "\n".join(
+                line for line in constraints.read_text().splitlines() if not line.lstrip().startswith("#")
+            )
+            + "\n"
+        )
     local_names = []
     for wheel in wheels:
         if wheel in local_wheels:
