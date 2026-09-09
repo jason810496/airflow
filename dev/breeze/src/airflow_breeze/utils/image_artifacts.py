@@ -45,6 +45,37 @@ KINDS = ("ci", "prod", "prod-dependencies")
 
 def is_build_input(path: str, kind: str) -> bool:
     """Keep unknown inputs; omit only mounted editable implementations for CI environments."""
+    parts = Path(path).parts
+    package = parts[0] if parts else ""
+    documentation_tree = path.startswith(
+        (
+            "docs/",
+            "docker-stack-docs/",
+            "providers-summary-docs/",
+            "contributing-docs/",
+            "dev/breeze/doc/",
+        )
+    ) or (
+        package in {"airflow-core", "task-sdk", "airflow-ctl", "providers", "shared"}
+        and "src" not in parts
+        and any(part in {"docs", "newsfragments"} for part in parts[1:-1])
+    )
+    if documentation_tree or path in {
+        "README.md",
+        "CODE_OF_CONDUCT.md",
+        "COMMITTERS.rst",
+        "COMMUNITY_ESCALATION.md",
+        "CONTRIBUTING.rst",
+        "GOVERNANCE.md",
+        "ISSUE_TRIAGE_PROCESS.rst",
+        "PROVIDERS.rst",
+        "BREEZE.rst",
+        "INSTALL",
+        "INSTALLING.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+    }:
+        return False
     if path.startswith(("chart/", "kubernetes-tests/", "docker-tests/")) or (
         "/tests/" in path and path.startswith(("airflow-core/", "task-sdk/", "airflow-ctl/", "providers/"))
     ):
