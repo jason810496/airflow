@@ -124,7 +124,7 @@ def test_warn_if_shim_outdated_older_installed(tmp_path, monkeypatch, capsys):
     sources = _fake_sources_with_version(tmp_path, 2)
     assert warn_if_shim_outdated(sources) is True
     output = capsys.readouterr().out
-    assert "needs to be upgraded" in output
+    assert "needs to be upgraded" in " ".join(output.split())
     assert "setup_breeze" in output
 
 
@@ -136,7 +136,7 @@ def test_warn_if_shim_outdated_pre_versioning_shim(tmp_path, monkeypatch, capsys
     sources = _fake_sources_with_version(tmp_path, 1)
     assert warn_if_shim_outdated(sources) is True
     output = capsys.readouterr().out
-    assert "needs to be upgraded" in output
+    assert "needs to be upgraded" in " ".join(output.split())
     assert "pre-versioning" in output
 
 
@@ -182,7 +182,7 @@ def test_launcher_check_prefers_shim_version(tmp_path, monkeypatch, capsys):
         assert warn_if_breeze_launcher_outdated(sources) is True
         detect.assert_not_called()
     output = capsys.readouterr().out
-    assert "needs to be upgraded" in output
+    assert "needs to be upgraded" in " ".join(output.split())
 
 
 @pytest.mark.parametrize(
