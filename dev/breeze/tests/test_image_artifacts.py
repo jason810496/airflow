@@ -74,6 +74,7 @@ def artifact(inputs):
 def run():
     return {
         "id": 456,
+        "run_attempt": 1,
         "repository": {"full_name": "apache/airflow"},
         "head_repository": {"full_name": "apache/airflow"},
         "head_branch": "main",
@@ -456,3 +457,42 @@ class TestPublicationExists:
         api.get = Mock(spec=api.get, return_value=run)
         api.find = Mock(spec=api.find, return_value=[artifact])
         assert not publication_exists(api, artifact["name"], 456)
+
+
+class TestPublisherAttempt:
+    @pytest.mark.parametrize(("status", "conclusion"), [("in_progress", None), ("completed", "failure")])
+    def test_selected_success_survives_a_publisher_retry(
+        self, inputs, artifact, run, tmp_path, status, conclusion
+    ):
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value=run)
+        selection = {**inputs, **api.validate(artifact, artifact["name"])}
+        retried_run = {**run, "run_attempt": 2, "status": status, "conclusion": conclusion}
+        responses = {
+            "actions/artifacts/123": artifact,
+            "actions/runs/456": retried_run,
+            "actions/runs/456/attempts/1": run,
+        }
+        api.get = Mock(spec=GithubArtifacts().get, side_effect=responses.__getitem__)
+        archive = MagicMock(spec=zipfile.ZipFile)
+        archive.infolist.return_value = []
+        archive.__enter__.return_value = archive
+        api.archive = Mock(spec=api.archive, return_value=archive)
+        with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
+            download(selection, tmp_path)
+        api.get.assert_any_call("actions/runs/456/attempts/1")
+        archive.extractall.assert_called_once_with(tmp_path)
+
+    @pytest.mark.parametrize(
+        ("attempt", "actual_attempt", "conclusion"),
+        [(2, 1, "success"), (2, 2, "failure"), (0, 1, "success"), (True, 1, "success")],
+    )
+    def test_forged_or_unsuccessful_attempt_is_rejected(
+        self, artifact, run, attempt, actual_attempt, conclusion
+    ):
+        api = GithubArtifacts()
+        api.get = Mock(
+            spec=api.get, return_value={**run, "run_attempt": actual_attempt, "conclusion": conclusion}
+        )
+        with pytest.raises(ValueError, match="publisher"):
+            api.validate(artifact, artifact["name"], check_freshness=False, run_attempt=attempt)

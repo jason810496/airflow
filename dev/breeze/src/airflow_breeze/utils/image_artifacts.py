@@ -182,7 +182,12 @@ class GithubArtifacts:
         raise ValueError("Artifact listing exceeds the lookup limit")
 
     def validate(
-        self, artifact: dict[str, Any], name: str, *, check_freshness: bool = True
+        self,
+        artifact: dict[str, Any],
+        name: str,
+        *,
+        check_freshness: bool = True,
+        run_attempt: int | None = None,
     ) -> dict[str, Any]:
         if self.repository != TRUSTED_REPOSITORY or artifact["name"] != name or artifact["expired"]:
             raise ValueError("Artifact is not a trusted main image")
@@ -190,9 +195,15 @@ class GithubArtifacts:
         age = datetime.now(timezone.utc) - created
         if check_freshness and not timedelta(0) <= age <= MAX_AGE:
             raise ValueError("Artifact is outside the freshness window")
-        run = self.get(f"actions/runs/{artifact['workflow_run']['id']}")
+        run_path = f"actions/runs/{artifact['workflow_run']['id']}"
+        if run_attempt is not None:
+            if type(run_attempt) is not int or run_attempt < 1:
+                raise ValueError("Invalid publisher run attempt")
+            run_path += f"/attempts/{run_attempt}"
+        run = self.get(run_path)
         if not (
-            run["repository"]["full_name"] == TRUSTED_REPOSITORY
+            run["id"] == artifact["workflow_run"]["id"]
+            and run["repository"]["full_name"] == TRUSTED_REPOSITORY
             and run["head_repository"]["full_name"] == TRUSTED_REPOSITORY
             and run["head_branch"] == "main"
             and run["event"] in {"push", "schedule", "workflow_dispatch"}
@@ -200,6 +211,9 @@ class GithubArtifacts:
             and run["status"] == "completed"
             and run["conclusion"] == "success"
             and run["head_sha"] == artifact["workflow_run"]["head_sha"]
+            and type(run["run_attempt"]) is int
+            and run["run_attempt"] >= 1
+            and (run_attempt is None or run["run_attempt"] == run_attempt)
         ):
             raise ValueError("Artifact producer is not a successful main publisher")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest") or ""):
@@ -209,6 +223,7 @@ class GithubArtifacts:
             "artifact-id": artifact["id"],
             "artifact-name": name,
             "run-id": run["id"],
+            "producer-run-attempt": run["run_attempt"],
             "repository": self.repository,
             "source-sha": run["head_sha"],
             "digest": artifact["digest"],
@@ -333,7 +348,12 @@ def download(
         artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
     else:
         artifact = api.get(f"actions/artifacts/{int(selection['artifact-id'])}")
-        verified = api.validate(artifact, artifact_name(selection), check_freshness=False)
+        verified = api.validate(
+            artifact,
+            artifact_name(selection),
+            check_freshness=False,
+            run_attempt=selection["producer-run-attempt"],
+        )
     if any(selection[key] != value for key, value in verified.items()):
         raise ValueError("Selection does not match immutable artifact provenance")
     with api.archive(artifact) as archive:
