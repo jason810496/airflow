@@ -35,6 +35,7 @@ from airflow_breeze.utils.image_artifacts import (
     fingerprint,
     is_build_input,
     main,
+    publication_exists,
     resolve,
     restore_selection,
     select_local,
@@ -430,3 +431,28 @@ class TestArtifactListing:
         api.get.assert_called_once_with(
             "actions/artifacts", per_page=100, page=1, name="main-image-ci-fingerprint"
         )
+
+
+class TestPublicationExists:
+    @pytest.mark.parametrize("present", [True, False])
+    def test_current_run_artifact_can_survive_publisher_retry(self, artifact, run, present):
+        run["status"] = "in_progress"
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value=run)
+        api.find = Mock(spec=api.find, return_value=[artifact] if present else [])
+        assert publication_exists(api, artifact["name"], 456) is present
+        api.find.assert_called_once_with(artifact["name"], 456)
+
+    def test_other_workflow_cannot_skip_publication(self, artifact, run):
+        run["path"] = ".github/workflows/ci-amd.yml"
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value=run)
+        with pytest.raises(ValueError, match="main publisher"):
+            publication_exists(api, artifact["name"], 456)
+
+    def test_other_run_artifact_does_not_skip_publication(self, artifact, run):
+        artifact["workflow_run"]["id"] = 999
+        api = GithubArtifacts()
+        api.get = Mock(spec=api.get, return_value=run)
+        api.find = Mock(spec=api.find, return_value=[artifact])
+        assert not publication_exists(api, artifact["name"], 456)

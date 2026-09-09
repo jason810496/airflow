@@ -259,6 +259,26 @@ def resolve(inputs: dict[str, Any], api: GithubArtifacts, disabled: bool = False
     return {"hit": False, "reason": "no compatible fresh main artifact"}
 
 
+def publication_exists(api: GithubArtifacts, name: str, run_id: int) -> bool:
+    """Keep an already uploaded immutable publisher artifact when rerunning the same run."""
+    run = api.get(f"actions/runs/{run_id}")
+    if not (
+        api.repository == TRUSTED_REPOSITORY
+        and run["repository"]["full_name"] == TRUSTED_REPOSITORY
+        and run["head_repository"]["full_name"] == TRUSTED_REPOSITORY
+        and run["head_branch"] == "main"
+        and run["event"] in {"push", "schedule", "workflow_dispatch"}
+        and run["path"] == PUBLISHER_PATH
+    ):
+        raise ValueError("Publication check requires the main publisher workflow")
+    return any(
+        artifact["workflow_run"]["id"] == run_id
+        and artifact["workflow_run"]["head_sha"] == run["head_sha"]
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest") or "") is not None
+        for artifact in api.find(name, run_id)
+    )
+
+
 def select_local(
     api: GithubArtifacts, artifact_id: int, run_id: int, kind: str, python: str, platform: str
 ) -> dict[str, Any]:
@@ -357,7 +377,15 @@ def restore_selection(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("fingerprint", "resolve", "download", "restore-selection", "select-local")
+        "command",
+        choices=(
+            "fingerprint",
+            "resolve",
+            "download",
+            "restore-selection",
+            "select-local",
+            "publication-exists",
+        ),
     )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--kind", choices=KINDS)
@@ -368,6 +396,7 @@ def main() -> None:
     parser.add_argument("--fingerprint-file", type=Path)
     parser.add_argument("--selection-file", type=Path)
     parser.add_argument("--output-directory", type=Path)
+    parser.add_argument("--artifact-name")
     parser.add_argument("--artifact-id", type=int)
     parser.add_argument("--require-selection", action="store_true")
     parser.add_argument("--run-id", type=int)
@@ -382,12 +411,18 @@ def main() -> None:
         "resolve": () if args.fingerprint_file else ("kind", "python", "platform"),
         "download": ("selection_file", "output_directory"),
         "select-local": ("artifact_id", "kind", "python", "platform", "run_id"),
+        "publication-exists": ("artifact_name", "run_id"),
         "restore-selection": ("kind", "python", "platform", "run_id", "run_attempt", "output_directory"),
     }[args.command]
     missing = ["--" + name.replace("_", "-") for name in required if getattr(args, name) is None]
     if missing:
         parser.error(f"{args.command} requires {', '.join(missing)}")
-    if args.command == "select-local":
+    result: dict[str, Any]
+    if args.command == "publication-exists":
+        result = {
+            "exists": publication_exists(GithubArtifacts(args.repository), args.artifact_name, args.run_id)
+        }
+    elif args.command == "select-local":
         result = select_local(
             GithubArtifacts(args.repository),
             args.artifact_id,
