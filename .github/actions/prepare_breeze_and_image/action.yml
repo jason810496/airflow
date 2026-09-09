@@ -75,11 +75,15 @@ runs:
         GH_TOKEN: ${{ github.token }}
       run: |
         selection="${RUNNER_TEMP}/selected-image.json"
-        uv run --project dev/breeze python -m airflow_breeze.utils.image_artifacts restore-selection \
+        if ! uv run --project dev/breeze python -m airflow_breeze.utils.image_artifacts restore-selection \
           --kind "${IMAGE_KIND}" --python "${IMAGE_PYTHON}" --platform "${IMAGE_PLATFORM}" \
           --repository "${GITHUB_REPOSITORY}" --run-id "${GITHUB_RUN_ID}" \
           --run-attempt "${GITHUB_RUN_ATTEMPT}" --output "${selection}" --output-directory /mnt \
-          --require-selection
+          --require-selection; then
+          echo "::error::The selected image could not be downloaded or verified after bounded retries."
+          echo "::error::Re-run all jobs so the image producer can select or build an available image."
+          exit 1
+        fi
         hit="$(jq -r '.hit' "${selection}")"
         echo "hit=${hit}" >> "${GITHUB_OUTPUT}"
         if [[ "${hit}" == "true" && "${IMAGE_KIND}" == "ci" && \

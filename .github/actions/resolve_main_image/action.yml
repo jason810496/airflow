@@ -41,6 +41,9 @@ inputs:
     description: Force a normal build
     default: "false"
 outputs:
+  publication-exists:
+    description: Whether this publisher run already uploaded the exact image identity
+    value: ${{ steps.resolve.outputs.publication-exists }}
   built-image-name:
     description: Name for this run's fallback image artifact
     value: ${{ steps.resolve.outputs.built-image-name }}
@@ -122,4 +125,12 @@ runs:
           --fingerprint-file "${fingerprint}" --repository apache/airflow \
           --output "${selection}" "${flags[@]}"
         echo "hit=$(jq -r '.hit' "${selection}")" >> "${GITHUB_OUTPUT}"
-        echo "artifact-name=$(jq -r '.["artifact-name"]' "${fingerprint}")" >> "${GITHUB_OUTPUT}"
+        artifact_name="$(jq -r '.["artifact-name"]' "${fingerprint}")"
+        echo "artifact-name=${artifact_name}" >> "${GITHUB_OUTPUT}"
+        if [[ "${IMAGE_PUBLISH}" == "true" ]]; then
+          publication="${RUNNER_TEMP}/image-artifacts/${IMAGE_KIND}/publication.json"
+          uv run --project dev/breeze python -m airflow_breeze.utils.image_artifacts publication-exists \
+            --artifact-name "${artifact_name}" --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}" --output "${publication}"
+          echo "publication-exists=$(jq -r '.exists' "${publication}")" >> "${GITHUB_OUTPUT}"
+        fi

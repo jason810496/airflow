@@ -94,3 +94,57 @@ class TestResolveMainImageAction:
         assert local_upload["with"]["name"] == "${{ steps.main-image.outputs.built-image-name }}"
         selection_step = next(step for step in steps if "select-local" in step.get("run", ""))
         assert steps.index(selection_step) > steps.index(local_upload)
+
+    @pytest.mark.parametrize("exists", ["true", "false"])
+    def test_publisher_retains_existing_immutable_artifact(self, tmp_path: Path, exists: str) -> None:
+        digest = "sha256:" + "a" * 64
+        docker = tmp_path / "docker"
+        docker.write_text(f"#!/bin/bash\necho {digest}\n")
+        docker.chmod(0o755)
+        uv = tmp_path / "uv"
+        uv.write_text(
+            """#!/bin/bash
+command="$*"
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--output" ]]; then
+    shift
+    output="$1"
+  fi
+  shift
+done
+case "$command" in
+  *publication-exists*) echo "{\\"exists\\": ${EXISTING_ARTIFACT}}" > "$output" ;;
+  *" fingerprint "*) echo '{"artifact-name": "main-image-ci-3.12-amd64-fingerprint"}' > "$output" ;;
+  *" resolve "*) echo '{"hit": false}' > "$output" ;;
+esac
+"""
+        )
+        uv.chmod(0o755)
+        output = tmp_path / "output"
+        action = yaml.safe_load(RESOLVE_ACTION.read_text())
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", action["runs"]["steps"][0]["run"]],
+            env={
+                "PATH": f"{tmp_path}:/usr/bin:/bin",
+                "RUNNER_TEMP": str(tmp_path),
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_RUN_ATTEMPT": "2",
+                "GITHUB_RUN_ID": "123",
+                "GITHUB_REPOSITORY": "apache/airflow",
+                "IMAGE_KIND": "ci",
+                "IMAGE_PYTHON": "3.12",
+                "IMAGE_PLATFORM": "linux/amd64",
+                "IMAGE_REUSE_DISABLED": "true",
+                "IMAGE_PUBLISH": "true",
+                "IMAGE_CONSTRAINTS_FILE": "",
+                "EXISTING_ARTIFACT": exists,
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert values["publication-exists"] == exists
+        assert values["base-image"] == f"debian@{digest}"
+        assert values["hit"] == "false"
