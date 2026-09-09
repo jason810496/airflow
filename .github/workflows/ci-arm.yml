@@ -266,7 +266,8 @@ jobs:
       packages: write
     with:
       use-selected-image: true
-      reuse-main-image: ${{ needs.build-info.outputs.image-reuse-eligible == 'true' }}
+      reuse-main-image: >-
+        ${{ github.repository == 'apache/airflow' && needs.build-info.outputs.image-reuse-eligible == 'true' }}
       runners: ${{ needs.build-info.outputs.runner-type }}
       platform: ${{ needs.build-info.outputs.platform }}
       push-image: "false"
@@ -893,7 +894,8 @@ jobs:
       packages: write
     with:
       use-selected-image: true
-      reuse-main-image: ${{ needs.build-info.outputs.image-reuse-eligible == 'true' }}
+      reuse-main-image: >-
+        ${{ github.repository == 'apache/airflow' && needs.build-info.outputs.image-reuse-eligible == 'true' }}
       runners: ${{ needs.build-info.outputs.runner-type }}
       platform: ${{ needs.build-info.outputs.platform }}
       build-type: "Regular"

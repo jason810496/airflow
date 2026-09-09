@@ -148,3 +148,14 @@ esac
         assert values["publication-exists"] == exists
         assert values["base-image"] == f"debian@{digest}"
         assert values["hit"] == "false"
+
+    @pytest.mark.parametrize("architecture", ["amd", "arm"])
+    @pytest.mark.parametrize("kind", ["ci", "prod"])
+    def test_shared_images_require_upstream_repository_context(self, architecture: str, kind: str) -> None:
+        workflow = yaml.safe_load((ROOT / f".github/workflows/ci-{architecture}.yml").read_text())
+        inputs = workflow["jobs"][f"build-{kind}-images"]["with"]
+        assert inputs["reuse-main-image"] == (
+            "${{ github.repository == 'apache/airflow' && "
+            "needs.build-info.outputs.image-reuse-eligible == 'true' }}"
+        )
+        assert inputs["use-selected-image"] is True
