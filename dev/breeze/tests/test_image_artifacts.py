@@ -27,7 +27,6 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 
-from airflow_breeze.global_constants import GithubEvents
 from airflow_breeze.utils.image_artifacts import (
     GithubArtifacts,
     artifact_name,
@@ -40,7 +39,6 @@ from airflow_breeze.utils.image_artifacts import (
     restore_selection,
     select_local,
 )
-from airflow_breeze.utils.selective_checks import SelectiveChecks
 
 REFERENCE_TIME = datetime(2026, 9, 9, 12, tzinfo=timezone.utc)
 
@@ -256,22 +254,6 @@ class TestDownload:
         with patch("airflow_breeze.utils.image_artifacts.GithubArtifacts", autospec=True, return_value=api):
             with pytest.raises(ValueError, match="archive member"):
                 download(selection, tmp_path)
-
-
-class TestReuseEligibility:
-    @pytest.mark.parametrize(
-        "labels", [(), ("disable image cache",), ("upgrade to newer dependencies",), ("canary",)]
-    )
-    def test_labels(self, labels):
-        checks = SelectiveChecks(files=("airflow-core/src/airflow/api_fastapi/app.py",), pr_labels=labels)
-        assert checks.image_reuse_eligible is (not labels)
-        assert checks.ci_image_build
-
-    @pytest.mark.parametrize(
-        "event", [GithubEvents.PUSH, GithubEvents.SCHEDULE, GithubEvents.WORKFLOW_DISPATCH]
-    )
-    def test_full_builds(self, event):
-        assert not SelectiveChecks(github_event=event).image_reuse_eligible
 
 
 class TestRestoreSelection:

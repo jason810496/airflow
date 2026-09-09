@@ -36,7 +36,6 @@ from typing import Any
 import requests
 
 SCHEMA_VERSION = 1
-RETENTION_DAYS = 7
 MAX_AGE = timedelta(hours=48)
 TRUSTED_REPOSITORY = "apache/airflow"
 PUBLISHER_PATH = ".github/workflows/publish-main-images.yml"
