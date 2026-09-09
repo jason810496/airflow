@@ -159,3 +159,45 @@ esac
             "needs.build-info.outputs.image-reuse-eligible == 'true' }}"
         )
         assert inputs["use-selected-image"] is True
+
+    @pytest.mark.parametrize(
+        ("workflow_name", "producer_job", "artifact_name"),
+        [
+            (
+                "generate-constraints",
+                "generate-constraints-matrix",
+                "constraints-${{ matrix.python-version }}",
+            ),
+            ("prod-image-build", "build-prod-packages", "prod-packages"),
+        ],
+    )
+    def test_publisher_intermediates_can_be_replaced_on_partial_reruns(
+        self, workflow_name: str, producer_job: str, artifact_name: str
+    ) -> None:
+        workflow = yaml.safe_load((ROOT / f".github/workflows/{workflow_name}.yml").read_text())
+        trigger = workflow.get("on", workflow.get(True))
+        assert trigger["workflow_call"]["inputs"]["artifact-prefix"]["default"] == ""
+        uploads = [
+            step
+            for step in workflow["jobs"][producer_job]["steps"]
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        ]
+        upload = next(step for step in uploads if step["with"]["name"].endswith(artifact_name))
+        assert upload["with"]["overwrite"] == "${{ inputs.artifact-prefix != '' }}"
+        prod = yaml.safe_load((ROOT / ".github/workflows/prod-image-build.yml").read_text())
+        downloads = [
+            step
+            for step in prod["jobs"]["build-prod-images"]["steps"]
+            if step.get("uses", "").startswith("actions/download-artifact@")
+        ]
+        assert any(step["with"]["name"] == upload["with"]["name"] for step in downloads)
+
+    @pytest.mark.parametrize("kind", ["ci", "prod"])
+    def test_publisher_image_artifacts_remain_immutable(self, kind: str) -> None:
+        workflow = yaml.safe_load((ROOT / f".github/workflows/{kind}-image-build.yml").read_text())
+        uploads = [
+            step
+            for step in workflow["jobs"][f"build-{kind}-images"]["steps"]
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        ]
+        assert all("overwrite" not in step["with"] for step in uploads)
