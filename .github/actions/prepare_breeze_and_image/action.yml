@@ -62,6 +62,30 @@ runs:
       run: |
         echo "Checking free space!"
         df -H
+    - name: "Restore selected main image"
+      id: selected-image
+      if: >-
+        inputs.image-stash-ref == '' &&
+        (contains(github.workflow_ref, '/ci-amd.yml@') || contains(github.workflow_ref, '/ci-arm.yml@'))
+      shell: bash
+      env:
+        IMAGE_KIND: ${{ inputs.image-type }}
+        IMAGE_PYTHON: ${{ inputs.python }}
+        IMAGE_PLATFORM: ${{ inputs.platform }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        selection="${RUNNER_TEMP}/selected-image.json"
+        uv run --project dev/breeze python -m airflow_breeze.utils.image_artifacts restore-selection \
+          --kind "${IMAGE_KIND}" --python "${IMAGE_PYTHON}" --platform "${IMAGE_PLATFORM}" \
+          --repository "${GITHUB_REPOSITORY}" --run-id "${GITHUB_RUN_ID}" \
+          --run-attempt "${GITHUB_RUN_ATTEMPT}" --output "${selection}" --output-directory /mnt \
+          --require-selection
+        hit="$(jq -r '.hit' "${selection}")"
+        echo "hit=${hit}" >> "${GITHUB_OUTPUT}"
+        if [[ "${hit}" == "true" && "${IMAGE_KIND}" == "ci" && \
+          "$(jq -r '.scope' "${selection}")" != "current-run" ]]; then
+          echo "MOUNT_SOURCES=selected" >> "${GITHUB_ENV}"
+        fi
     - name: >
         Restore ${{ inputs.image-type }} docker image ${{ inputs.platform }}:${{ inputs.python }}
         ${{ inputs.image-stash-ref != '' && format('built for ref {0}', inputs.image-stash-ref) || '' }}
@@ -73,6 +97,7 @@ runs:
         path: "/mnt/"
         only-current-branch: 'true'
         fail-on-download: 'true'
+      if: steps.selected-image.outputs.hit != 'true'
     - name: "Load ${{ inputs.image-type }} image ${{ inputs.platform }}:${{ inputs.python }}"
       env:
         PLATFORM: ${{ inputs.platform }}
