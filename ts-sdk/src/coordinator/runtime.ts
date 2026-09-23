@@ -336,8 +336,12 @@ async function handleTask(
     // follows the handler across every `await` it makes, so `getContext()` and
     // `getClient()` work at any depth without the handler being handed either.
     const result = await runInTaskScope({ ctx, client }, () => handler(bound.args as never));
-    // Only once the handler has finished: one that threw may simply not have
-    // reached the reads yet, so its unread list would say nothing useful.
+    if (result !== undefined) {
+      await client.setXCom({ key: "return_value", value: result as JsonValue });
+    }
+    // After the return value is published, not before: a handler that returns
+    // the arguments onward is read while that value is serialized, and a task
+    // that fails publishing is not one to report unread arguments for.
     const unread = bound.unread();
     if (unread.length > 0) {
       logs.warning("Task arguments not read by this task's handler", {
@@ -345,9 +349,6 @@ async function handleTask(
         unread,
         bound_args: bound.names,
       });
-    }
-    if (result !== undefined) {
-      await client.setXCom({ key: "return_value", value: result as JsonValue });
     }
     // SucceedTask MUST include task_outlets and outlet_events as
     // empty lists, since the Execution API's TISuccessStatePayload

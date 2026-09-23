@@ -182,7 +182,11 @@ check.
 - **An argument the handler never read is logged too**, once the task succeeds. There is no declared
   parameter list to compare the call against, so what the handler read is the only evidence of what it
   expected. Captured stub defaults are left out, and a handler that threw is not reported on: it may
-  simply not have reached the reads yet.
+  simply not have reached the reads yet. Reading is counted through the proxy, so it covers
+  destructuring, enumeration and `in` alike, and the check runs after the return value is published so
+  a handler passing its arguments onward is not reported. What it cannot see is a read that never
+  happens on this run, such as one inside an untaken branch, which is the cost of inferring the
+  handler's expectations from behavior rather than from a signature.
 - `in` folds like a read. `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names,
   since the SDK has no TypeScript-side names to enumerate. Two Python names that fold to the same
   token fail the task at dispatch, naming both.

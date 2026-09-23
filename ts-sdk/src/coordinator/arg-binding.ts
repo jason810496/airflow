@@ -289,7 +289,11 @@ function makeArgsProxy(
     has(_target, property) {
       // `in` folds like a read, so `"regionCode" in args` answers for the
       // Python `region_code` the handler would actually receive.
-      return typeof property === "string" && resolve(property) !== undefined;
+      if (typeof property !== "string") return false;
+      const name = resolve(property);
+      if (name === undefined) return false;
+      read.add(name);
+      return true;
     },
     ownKeys() {
       // Python's names: the SDK has no TypeScript-side names to enumerate, so
@@ -299,6 +303,10 @@ function makeArgsProxy(
     },
     getOwnPropertyDescriptor(_target, property) {
       if (typeof property !== "string" || !values.has(property)) return undefined;
+      // Every enumeration checks enumerability here before it reads, so this is
+      // what makes `Object.keys`, `Object.entries` and `for...in` count as
+      // reads rather than being reported as arguments the handler ignored.
+      read.add(property);
       // Enumerable and configurable, or `ownKeys` would throw an invariant
       // error for a key the target itself does not have.
       return {

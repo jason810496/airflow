@@ -195,7 +195,12 @@ An argument the call leaves at its default arrives with the default's value.
 A name nothing folds to is **logged, not thrown**, naming what the handler asked for and what the call
 delivered. Two Python names that fold to the same token fail the task.
 
+An argument the handler never reads is **logged too**, once the task succeeds, so a handler quietly
+reading the wrong name shows up in the task log. Arguments left at their stub default are not
+reported.
+
 `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names, and `in` folds like a read.
+Both count as reading the arguments they touch.
 
 ### Upstream outputs
 

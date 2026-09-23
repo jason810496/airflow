@@ -615,6 +615,30 @@ describe("coordinator runtime integration", () => {
     ).toBe(true);
   });
 
+  it("does not warn when the handler passes its arguments onward", async () => {
+    // The reads happen while the return value is encoded, so the check has to
+    // come after the XCom is published rather than when the handler resolves.
+    bundle.register(
+      new TaskHandler("py_dag", "forwarding", async (args: object) => ({ forwarded: args })),
+    );
+
+    const result = await driveSupervisor(
+      makeStartupDetails("forwarding", "py_dag", "r1", {
+        arg_bindings: [
+          { name: "region_code", kind: "literal", value: "uk" },
+          { name: "threshold", kind: "literal", value: 0.75 },
+        ],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(
+      result.logRecords.some(
+        (r) => r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler",
+      ),
+    ).toBe(false);
+  });
+
   it("does not warn about unread arguments when the handler throws", async () => {
     // The handler may simply not have reached the reads yet, so its unread
     // list would say nothing about the call.

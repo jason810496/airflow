@@ -35,6 +35,10 @@ function xcom(name: string, taskId: string, extra: Record<string, unknown> = {})
 
 const NO_RENAMES: ReadonlyMap<string, string> = new Map();
 
+function* enumerate(args: object): Generator<string> {
+  for (const key in args) yield key;
+}
+
 function makeLogs() {
   const warning = vi.fn();
   const logs = { warning } as unknown as LogChannel;
@@ -260,6 +264,37 @@ describe("resolveArgs", () => {
     const { ...rest } = args as object;
 
     expect(Object.keys(rest)).toEqual(["region_code", "extra"]);
+    expect(unread()).toEqual([]);
+  });
+
+  it.each([
+    ["Object.keys", (args: object) => Object.keys(args)],
+    ["Object.entries", (args: object) => Object.entries(args)],
+    ["for...in", (args: object) => Object.values(args).concat([...enumerate(args)])],
+    ["JSON.stringify", (args: object) => JSON.stringify(args)],
+  ])("counts %s as reading every argument", async (_label, consume) => {
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
+    consume(args as object);
+
+    expect(unread()).toEqual([]);
+  });
+
+  it("counts an `in` check as a read, matching the folding it already does", async () => {
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
+
+    expect("regionCode" in (args as object)).toBe(true);
+    expect("nope" in (args as object)).toBe(false);
+    expect(unread()).toEqual(["extra"]);
+  });
+
+  it("counts an argument passed onward and serialized later", async () => {
+    // A handler that returns its arguments is read when the return value is
+    // encoded, after it has resolved.
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
+    const forwarded = { payload: args };
+
+    expect(unread()).toEqual(["region_code", "extra"]);
+    JSON.stringify(forwarded);
     expect(unread()).toEqual([]);
   });
 
