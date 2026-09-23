@@ -69,9 +69,18 @@ export interface BoundArgs {
    * `Object.keys(args)` yields, and what a failing task reports.
    */
   readonly names: readonly string[];
+  /**
+   * The arguments the handler never read, once it has finished. Captured stub
+   * defaults are left out: ignoring one is the normal case, not a mismatch.
+   */
+  readonly unread: () => readonly string[];
 }
 
-const EMPTY_ARGS: BoundArgs = { args: Object.freeze({}), names: Object.freeze([]) };
+const EMPTY_ARGS: BoundArgs = {
+  args: Object.freeze({}),
+  names: Object.freeze([]),
+  unread: () => [],
+};
 
 /** What {@link resolveArgs} needs beyond the spec itself. */
 export interface ArgBindingDeps {
@@ -99,9 +108,11 @@ export async function resolveArgs(
   // Checked in full before anything is pulled, leaving no half-resolved call behind.
   const names: string[] = [];
   const byFold = new Map<string, string>();
+  const defaulted = new Set<string>();
   let pullsUpstream = false;
   for (const binding of bindings) {
     const name = binding.name;
+    if (binding.kind === "literal" && binding.from_default === true) defaulted.add(name);
     const fold = foldArgName(name);
     const clash = byFold.get(fold);
     if (clash !== undefined) {
@@ -130,7 +141,12 @@ export async function resolveArgs(
   // Literals need no request, so only a call that pulls races the abort signal.
   const entries = pullsUpstream ? await abortable(resolveAll, deps.signal) : await resolveAll();
 
-  return { args: makeArgsProxy(names, byFold, new Map(entries), deps), names };
+  const read = new Set<string>();
+  return {
+    args: makeArgsProxy(names, byFold, new Map(entries), deps, read),
+    names,
+    unread: () => names.filter((name) => !read.has(name) && !defaulted.has(name)),
+  };
 }
 
 /** Airflow omits `value` for a literal whose value is null. */
@@ -232,6 +248,7 @@ function makeArgsProxy(
   byFold: ReadonlyMap<string, string>,
   values: ReadonlyMap<string, JsonValue>,
   deps: ArgBindingDeps,
+  read: Set<string>,
 ): object {
   const { argNames, logs } = deps;
   const resolve = (property: string): string | undefined => {
@@ -251,7 +268,13 @@ function makeArgsProxy(
       // as `Symbol.toPrimitive` during string coercion, and is not a miss.
       if (typeof property !== "string") return undefined;
       const name = resolve(property);
-      if (name !== undefined) return values.get(name);
+      if (name !== undefined) {
+        // Both destructuring forms land here: `{ a, b }` reads each name, and
+        // `{ ...rest }` reads every own key, so this is the whole record of
+        // what the handler took.
+        read.add(name);
+        return values.get(name);
+      }
       // Logged, never thrown: a destructuring default such as
       // `{ runId = "manual" }` is a legitimate miss, and nothing here can tell
       // one from a typo.

@@ -195,6 +195,11 @@ An entry beats folding, and everything the map does not mention still folds,
 so ``withArgNames`` should be rare in a real Dag.
 A mapped name the call did not pass misses rather than falling back to folding.
 
+A handler need not read every argument the call passed.  One it never reads is logged as a warning
+once the task succeeds, naming both the unread arguments and everything the call bound, so a
+handler quietly reading the wrong name is visible in the task log.  Arguments the call left at
+their stub default are not reported: ignoring one is the normal case.
+
 The map's keys are checked against the handler's own parameter type, so ``{ labl: "run_label" }`` is a
 compile error naming the right key. Its values are Python names, which ``tsc`` cannot see and does not
 check.

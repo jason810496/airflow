@@ -179,6 +179,10 @@ check.
 - **An unmatched name is logged**, with both the requested name and the names actually delivered. It
   cannot throw: a destructuring default (`{ runId = "manual" }`) is a legitimate miss, and the runtime
   cannot tell one from a typo.
+- **An argument the handler never read is logged too**, once the task succeeds. There is no declared
+  parameter list to compare the call against, so what the handler read is the only evidence of what it
+  expected. Captured stub defaults are left out, and a handler that threw is not reported on: it may
+  simply not have reached the reads yet.
 - `in` folds like a read. `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names,
   since the SDK has no TypeScript-side names to enumerate. Two Python names that fold to the same
   token fail the task at dispatch, naming both.

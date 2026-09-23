@@ -586,6 +586,58 @@ describe("coordinator runtime integration", () => {
     ).toBe(true);
   });
 
+  it("warns about an argument the handler never read", async () => {
+    // A struct-style call binds by name, so an argument no handler reads
+    // changes nothing it sees. Worth saying, not worth failing over.
+    bundle.register(
+      new TaskHandler("py_dag", "partial", async ({ regionCode }: { regionCode: string }) => {
+        return regionCode;
+      }),
+    );
+
+    const result = await driveSupervisor(
+      makeStartupDetails("partial", "py_dag", "r1", {
+        arg_bindings: [
+          { name: "region_code", kind: "literal", value: "uk" },
+          { name: "threshold", kind: "literal", value: 0.75 },
+          { name: "dry_run", kind: "literal", value: false, from_default: true },
+        ],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(
+      result.logRecords.some(
+        (r) =>
+          r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler" &&
+          JSON.stringify(r["unread"]) === JSON.stringify(["threshold"]),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not warn about unread arguments when the handler throws", async () => {
+    // The handler may simply not have reached the reads yet, so its unread
+    // list would say nothing about the call.
+    bundle.register(
+      new TaskHandler("py_dag", "threw_early", async () => {
+        throw new Error("cannot proceed");
+      }),
+    );
+
+    const result = await driveSupervisor(
+      makeStartupDetails("threw_early", "py_dag", "r1", {
+        arg_bindings: [{ name: "region_code", kind: "literal", value: "uk" }],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
+    expect(
+      result.logRecords.some(
+        (r) => r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler",
+      ),
+    ).toBe(false);
+  });
+
   it("names what a failing task's call bound", async () => {
     // A handler that destructured an argument under a name nothing folds to
     // gets no error of its own, so the failure report carries the names.

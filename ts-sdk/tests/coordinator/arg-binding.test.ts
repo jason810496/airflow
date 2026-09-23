@@ -227,6 +227,42 @@ describe("resolveArgs", () => {
     expect(names).toEqual(["c", "a", "b"]);
   });
 
+  it("reports an argument the handler never read", async () => {
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
+    const { regionCode } = args as { regionCode: string };
+
+    expect(regionCode).toBe("uk");
+    expect(unread()).toEqual(["extra"]);
+  });
+
+  it("reports nothing once every argument has been read", async () => {
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("dry_run", false)]);
+    const { regionCode, dryRun } = args as { regionCode: string; dryRun: boolean };
+
+    expect([regionCode, dryRun]).toEqual(["uk", false]);
+    expect(unread()).toEqual([]);
+  });
+
+  it("leaves an unread captured default out of the report", async () => {
+    // The call never passed it, so a handler ignoring it is the normal case.
+    const { args, unread } = await bind([
+      literal("region_code", "uk"),
+      literal("dry_run", true, { from_default: true }),
+    ]);
+    const { regionCode } = args as { regionCode: string };
+
+    expect(regionCode).toBe("uk");
+    expect(unread()).toEqual([]);
+  });
+
+  it("counts rest destructuring as reading everything", async () => {
+    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
+    const { ...rest } = args as object;
+
+    expect(Object.keys(rest)).toEqual(["region_code", "extra"]);
+    expect(unread()).toEqual([]);
+  });
+
   it("fails at dispatch when two Python names fold to the same token", async () => {
     // Neither could be reached by name, and picking either silently would hand
     // the handler the wrong value.

@@ -336,6 +336,16 @@ async function handleTask(
     // follows the handler across every `await` it makes, so `getContext()` and
     // `getClient()` work at any depth without the handler being handed either.
     const result = await runInTaskScope({ ctx, client }, () => handler(bound.args as never));
+    // Only once the handler has finished: one that threw may simply not have
+    // reached the reads yet, so its unread list would say nothing useful.
+    const unread = bound.unread();
+    if (unread.length > 0) {
+      logs.warning("Task arguments not read by this task's handler", {
+        task_id: ctx.taskId,
+        unread,
+        bound_args: bound.names,
+      });
+    }
     if (result !== undefined) {
       await client.setXCom({ key: "return_value", value: result as JsonValue });
     }
