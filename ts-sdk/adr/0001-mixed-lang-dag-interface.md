@@ -187,6 +187,11 @@ check.
   a handler passing its arguments onward is not reported. What it cannot see is a read that never
   happens on this run, such as one inside an untaken branch, which is the cost of inferring the
   handler's expectations from behavior rather than from a signature.
+- **Both of those log rather than fail**, which is the cross-language rule in
+  [lang-SDK ADR 0007](../../airflow-core/adr/lang-sdk/0007-taskflow-across-language-boundary.md): a
+  handler binding by name cannot have its arguments shifted by a mismatch in either direction, so
+  neither is worth failing a run over. That ADR is also where the difference between this SDK and one
+  with a declared field list is recorded, so it is not restated here.
 - `in` folds like a read. `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names,
   since the SDK has no TypeScript-side names to enumerate. Two Python names that fold to the same
   token fail the task at dispatch, naming both.
