@@ -35,6 +35,7 @@ export type ArgNameMap<TArgs> = {
 // Read back off the handler at the dispatch site. A global symbol, as the brands are:
 // two resolved copies must agree on the key, or a handler wrapped by one loses its renames.
 const ARG_NAMES = Symbol.for("airflow.ts-sdk.arg-names");
+const WRAPPED = Symbol.for("airflow.ts-sdk.wrapped-handler");
 
 function validate(names: ArgNameMap<unknown>): ReadonlyMap<string, string> {
   const candidate: unknown = names;
@@ -99,7 +100,16 @@ export function withArgNames<TArgs, TReturn>(
   // one handler can be registered for two tasks that rename differently.
   const wrapped: TaskFunction<TArgs, TReturn> = (args) => handler(args);
   Object.defineProperty(wrapped, ARG_NAMES, { value: resolved });
+  // The wrapper's own source says nothing about what the author declared, so
+  // keep the handler reachable for the signature check.
+  Object.defineProperty(wrapped, WRAPPED, { value: handler });
   return wrapped;
+}
+
+/** Internal: the handler inside a `withArgNames` wrapper, or `handler` itself. */
+export function unwrapArgNames(handler: unknown): unknown {
+  const carrier = handler as Record<symbol, unknown> | null;
+  return carrier?.[WRAPPED] ?? handler;
 }
 
 /** Internal: the renames a handler was wrapped with, empty when it has none. */

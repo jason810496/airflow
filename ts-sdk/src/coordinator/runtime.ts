@@ -37,6 +37,7 @@
 //        - StartupDetails      → run task, respond Succeed or Fail, exit
 //
 import { resolveArgs, type BoundArgs } from "./arg-binding.js";
+import { declaredArgs } from "./handler-signature.js";
 import { createCoordinatorClient } from "./client.js";
 import { CommChannel } from "./comm-channel.js";
 import { LogChannel } from "./log-channel.js";
@@ -317,6 +318,8 @@ async function handleTask(
       signal: ctx.signal,
       logs,
       argNames: getArgNames(handler),
+      declared: declaredArgs(handler),
+      taskId: ctx.taskId,
     });
   } catch (err) {
     // Before the handler ran, so nothing it might have written is at stake.
@@ -338,17 +341,6 @@ async function handleTask(
     const result = await runInTaskScope({ ctx, client }, () => handler(bound.args as never));
     if (result !== undefined) {
       await client.setXCom({ key: "return_value", value: result as JsonValue });
-    }
-    // After the return value is published, not before: a handler that returns
-    // the arguments onward is read while that value is serialized, and a task
-    // that fails publishing is not one to report unread arguments for.
-    const unread = bound.unread();
-    if (unread.length > 0) {
-      logs.warning("Task arguments not read by this task's handler", {
-        task_id: ctx.taskId,
-        unread,
-        bound_args: bound.names,
-      });
     }
     // SucceedTask MUST include task_outlets and outlet_events as
     // empty lists, since the Execution API's TISuccessStatePayload

@@ -20,6 +20,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { foldArgName, resolveArgs, type BoundArgs } from "../../src/coordinator/arg-binding.js";
+import type { DeclaredArgs } from "../../src/coordinator/handler-signature.js";
 import type { CoordinatorClient, XComEntry } from "../../src/coordinator/client.js";
 import type { LogChannel } from "../../src/coordinator/log-channel.js";
 import type { ArgBindings } from "../../src/generated/supervisor.js";
@@ -34,10 +35,6 @@ function xcom(name: string, taskId: string, extra: Record<string, unknown> = {})
 }
 
 const NO_RENAMES: ReadonlyMap<string, string> = new Map();
-
-function* enumerate(args: object): Generator<string> {
-  for (const key in args) yield key;
-}
 
 function makeLogs() {
   const warning = vi.fn();
@@ -66,6 +63,7 @@ async function bind(
     upstream?: Record<string, XComEntry>;
     signal?: AbortSignal;
     argNames?: Record<string, string>;
+    declared?: DeclaredArgs | null;
   } = {},
 ): Promise<BindResult> {
   const { logs, warning } = makeLogs();
@@ -76,8 +74,15 @@ async function bind(
     signal,
     logs,
     argNames: new Map(Object.entries(opts.argNames ?? {})),
+    declared: opts.declared ?? null,
+    taskId: "transform",
   });
   return { ...bound, warning, pulls };
+}
+
+/** What a handler destructuring `names` declares, with no rest element. */
+function declares(...names: string[]): DeclaredArgs {
+  return { names, takesRest: false };
 }
 
 describe("foldArgName", () => {
@@ -231,71 +236,99 @@ describe("resolveArgs", () => {
     expect(names).toEqual(["c", "a", "b"]);
   });
 
-  it("reports an argument the handler never read", async () => {
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
-    const { regionCode } = args as { regionCode: string };
+  const PASSED_NOT_DECLARED = "Dag's call passed argument(s) the task handler does not declare";
+  const DECLARED_NOT_PASSED = "Task handler declares argument(s) the Dag's call did not pass";
 
-    expect(regionCode).toBe("uk");
-    expect(unread()).toEqual(["extra"]);
+  it("warns about an argument the handler does not declare", async () => {
+    const { warning } = await bind([literal("region_code", "uk"), literal("extra", 1)], {
+      declared: declares("regionCode"),
+    });
+
+    expect(warning).toHaveBeenCalledWith(PASSED_NOT_DECLARED, {
+      task_id: "transform",
+      passed_not_declared: ["extra"],
+      declared: ["regionCode"],
+    });
+    expect(warning).not.toHaveBeenCalledWith(DECLARED_NOT_PASSED, expect.anything());
   });
 
-  it("reports nothing once every argument has been read", async () => {
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("dry_run", false)]);
-    const { regionCode, dryRun } = args as { regionCode: string; dryRun: boolean };
+  it("warns about a name the handler declares that the call did not pass", async () => {
+    const { warning } = await bind([literal("region_code", "uk")], {
+      declared: declares("regionCode", "threshold"),
+    });
 
-    expect([regionCode, dryRun]).toEqual(["uk", false]);
-    expect(unread()).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(DECLARED_NOT_PASSED, {
+      task_id: "transform",
+      declared_not_passed: ["threshold"],
+      bound: ["region_code"],
+    });
+    expect(warning).not.toHaveBeenCalledWith(PASSED_NOT_DECLARED, expect.anything());
   });
 
-  it("leaves an unread captured default out of the report", async () => {
-    // The call never passed it, so a handler ignoring it is the normal case.
-    const { args, unread } = await bind([
-      literal("region_code", "uk"),
-      literal("dry_run", true, { from_default: true }),
-    ]);
-    const { regionCode } = args as { regionCode: string };
+  it("warns separately in each direction when a call does both at once", async () => {
+    const { warning } = await bind([literal("region_code", "uk"), literal("extra", 1)], {
+      declared: declares("regionCode", "threshold"),
+    });
 
-    expect(regionCode).toBe("uk");
-    expect(unread()).toEqual([]);
+    expect(warning).toHaveBeenCalledWith(DECLARED_NOT_PASSED, {
+      task_id: "transform",
+      declared_not_passed: ["threshold"],
+      bound: ["region_code", "extra"],
+    });
+    expect(warning).toHaveBeenCalledWith(PASSED_NOT_DECLARED, {
+      task_id: "transform",
+      passed_not_declared: ["extra"],
+      declared: ["regionCode", "threshold"],
+    });
   });
 
-  it("counts rest destructuring as reading everything", async () => {
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
-    const { ...rest } = args as object;
-
-    expect(Object.keys(rest)).toEqual(["region_code", "extra"]);
-    expect(unread()).toEqual([]);
+  it("stays silent when the call and the handler agree through folding", async () => {
+    const { warning } = await bind([literal("region_code", "uk"), literal("dry_run", false)], {
+      declared: declares("regionCode", "dryRun"),
+    });
+    expect(warning).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["Object.keys", (args: object) => Object.keys(args)],
-    ["Object.entries", (args: object) => Object.entries(args)],
-    ["for...in", (args: object) => Object.values(args).concat([...enumerate(args)])],
-    ["JSON.stringify", (args: object) => JSON.stringify(args)],
-  ])("counts %s as reading every argument", async (_label, consume) => {
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
-    consume(args as object);
-
-    expect(unread()).toEqual([]);
+  it("does not call a captured default an argument the handler ignored", async () => {
+    const { warning } = await bind(
+      [literal("region_code", "uk"), literal("dry_run", true, { from_default: true })],
+      { declared: declares("regionCode") },
+    );
+    expect(warning).not.toHaveBeenCalled();
   });
 
-  it("counts an `in` check as a read, matching the folding it already does", async () => {
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
-
-    expect("regionCode" in (args as object)).toBe(true);
-    expect("nope" in (args as object)).toBe(false);
-    expect(unread()).toEqual(["extra"]);
+  it("treats a rest element as claiming whatever is left", async () => {
+    const { warning } = await bind([literal("region_code", "uk"), literal("extra", 1)], {
+      declared: { names: ["regionCode"], takesRest: true },
+    });
+    expect(warning).not.toHaveBeenCalled();
   });
 
-  it("counts an argument passed onward and serialized later", async () => {
-    // A handler that returns its arguments is read when the return value is
-    // encoded, after it has resolved.
-    const { args, unread } = await bind([literal("region_code", "uk"), literal("extra", 1)]);
-    const forwarded = { payload: args };
+  it("follows an explicit rename rather than folding onto it", async () => {
+    const { warning } = await bind([literal("run_label", "nightly")], {
+      argNames: { label: "run_label" },
+      declared: declares("label"),
+    });
+    expect(warning).not.toHaveBeenCalled();
+  });
 
-    expect(unread()).toEqual(["region_code", "extra"]);
-    JSON.stringify(forwarded);
-    expect(unread()).toEqual([]);
+  it("reports a rename that names an argument the call never passed", async () => {
+    const { warning } = await bind([literal("run_label", "nightly")], {
+      argNames: { label: "runLabel" },
+      declared: declares("label"),
+    });
+
+    expect(warning).toHaveBeenCalledWith(DECLARED_NOT_PASSED, {
+      task_id: "transform",
+      declared_not_passed: ["label"],
+      bound: ["run_label"],
+    });
+  });
+
+  it("says nothing about a handler that took the whole object", async () => {
+    // It narrowed nothing, so there is no declaration to compare the call to.
+    const { warning } = await bind([literal("region_code", "uk")], { declared: null });
+    expect(warning).not.toHaveBeenCalled();
   });
 
   it("fails at dispatch when two Python names fold to the same token", async () => {

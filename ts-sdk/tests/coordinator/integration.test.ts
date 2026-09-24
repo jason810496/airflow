@@ -586,13 +586,17 @@ describe("coordinator runtime integration", () => {
     ).toBe(true);
   });
 
-  it("warns about an argument the handler never read", async () => {
-    // A struct-style call binds by name, so an argument no handler reads
-    // changes nothing it sees. Worth saying, not worth failing over.
+  it("warns in each direction when the call and the handler disagree", async () => {
+    // Both at once: the call passes a `threshold` the handler does not take,
+    // and the handler declares a `dryRun` the call never passed. Neither is
+    // fatal, and each gets its own message so the two are told apart.
     bundle.register(
-      new TaskHandler("py_dag", "partial", async ({ regionCode }: { regionCode: string }) => {
-        return regionCode;
-      }),
+      new TaskHandler(
+        "py_dag",
+        "partial",
+        async ({ regionCode, dryRun }: { regionCode: string; dryRun?: boolean }) =>
+          `${regionCode}:${String(dryRun)}`,
+      ),
     );
 
     const result = await driveSupervisor(
@@ -600,7 +604,6 @@ describe("coordinator runtime integration", () => {
         arg_bindings: [
           { name: "region_code", kind: "literal", value: "uk" },
           { name: "threshold", kind: "literal", value: 0.75 },
-          { name: "dry_run", kind: "literal", value: false, from_default: true },
         ],
       }),
     );
@@ -609,15 +612,52 @@ describe("coordinator runtime integration", () => {
     expect(
       result.logRecords.some(
         (r) =>
-          r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler" &&
-          JSON.stringify(r["unread"]) === JSON.stringify(["threshold"]),
+          r["event"] ===
+            "[ts-sdk.runtime] Dag's call passed argument(s) the task handler does not declare" &&
+          JSON.stringify(r["passed_not_declared"]) === JSON.stringify(["threshold"]),
+      ),
+    ).toBe(true);
+    expect(
+      result.logRecords.some(
+        (r) =>
+          r["event"] ===
+            "[ts-sdk.runtime] Task handler declares argument(s) the Dag's call did not pass" &&
+          JSON.stringify(r["declared_not_passed"]) === JSON.stringify(["dryRun"]),
       ),
     ).toBe(true);
   });
 
-  it("does not warn when the handler passes its arguments onward", async () => {
-    // The reads happen while the return value is encoded, so the check has to
-    // come after the XCom is published rather than when the handler resolves.
+  it("warns before the handler runs, not after", async () => {
+    // The warning is what a Dag author acts on, so it has to be in the log
+    // ahead of whatever the task itself prints.
+    bundle.register(
+      new TaskHandler("py_dag", "ordered", async ({ regionCode }: { regionCode: string }) => {
+        getContext();
+        return regionCode;
+      }),
+    );
+
+    const result = await driveSupervisor(
+      makeStartupDetails("ordered", "py_dag", "r1", {
+        arg_bindings: [
+          { name: "region_code", kind: "literal", value: "uk" },
+          { name: "threshold", kind: "literal", value: 0.75 },
+        ],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    const events = result.logRecords.map((r) => r["event"]);
+    const warned = events.indexOf(
+      "[ts-sdk.runtime] Dag's call passed argument(s) the task handler does not declare",
+    );
+    const dispatched = events.indexOf("[ts-sdk.runtime] Dispatching to handler");
+    expect(warned).toBeGreaterThanOrEqual(0);
+    expect(warned).toBeLessThan(dispatched);
+  });
+
+  it("says nothing about a handler that takes the whole argument object", async () => {
+    // It narrowed nothing, so no argument is one it does not declare.
     bundle.register(
       new TaskHandler("py_dag", "forwarding", async (args: object) => ({ forwarded: args })),
     );
@@ -633,31 +673,8 @@ describe("coordinator runtime integration", () => {
 
     expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
     expect(
-      result.logRecords.some(
-        (r) => r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler",
-      ),
-    ).toBe(false);
-  });
-
-  it("does not warn about unread arguments when the handler throws", async () => {
-    // The handler may simply not have reached the reads yet, so its unread
-    // list would say nothing about the call.
-    bundle.register(
-      new TaskHandler("py_dag", "threw_early", async () => {
-        throw new Error("cannot proceed");
-      }),
-    );
-
-    const result = await driveSupervisor(
-      makeStartupDetails("threw_early", "py_dag", "r1", {
-        arg_bindings: [{ name: "region_code", kind: "literal", value: "uk" }],
-      }),
-    );
-
-    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
-    expect(
-      result.logRecords.some(
-        (r) => r["event"] === "[ts-sdk.runtime] Task arguments not read by this task's handler",
+      result.logRecords.some((r) =>
+        String(r["event"]).includes("the task handler does not declare"),
       ),
     ).toBe(false);
   });

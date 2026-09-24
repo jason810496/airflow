@@ -195,10 +195,16 @@ An entry beats folding, and everything the map does not mention still folds,
 so ``withArgNames`` should be rare in a real Dag.
 A mapped name the call did not pass misses rather than falling back to folding.
 
-A handler need not read every argument the call passed.  One it never reads is logged as a warning
-once the task succeeds, naming both the unread arguments and everything the call bound, so a
-handler quietly reading the wrong name is visible in the task log.  Arguments the call left at
-their stub default are not reported: ignoring one is the normal case.
+Because arguments bind by name, a handler taking more or fewer of them than the Python side passes
+does not fail the task.  The runtime logs a warning before the task runs and carries on, one
+message per direction, so a call that does both at once says so twice:
+
+* ``Dag's call passed argument(s) the task handler does not declare``
+* ``Task handler declares argument(s) the Dag's call did not pass``
+
+So name binding is what keeps a mixed-language task working while the two sides drift: adding a
+parameter to the stub, or dropping one from the handler, is a warning rather than a broken Dag.
+Arguments the call left at their stub default are not reported.
 
 The map's keys are checked against the handler's own parameter type, so ``{ labl: "run_label" }`` is a
 compile error naming the right key. Its values are Python names, which ``tsc`` cannot see and does not

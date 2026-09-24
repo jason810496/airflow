@@ -195,12 +195,19 @@ An argument the call leaves at its default arrives with the default's value.
 A name nothing folds to is **logged, not thrown**, naming what the handler asked for and what the call
 delivered. Two Python names that fold to the same token fail the task.
 
-An argument the handler never reads is **logged too**, once the task succeeds, so a handler quietly
-reading the wrong name shows up in the task log. Arguments left at their stub default are not
-reported.
+Taking **more or fewer arguments** than the Python side passes does not fail the task either. The
+runtime logs a warning before the task runs and carries on, one message per direction, so a call
+that does both at once says so twice:
+
+- `Dag's call passed argument(s) the task handler does not declare`
+- `Task handler declares argument(s) the Dag's call did not pass`
+
+Name binding is what keeps a mixed-language task working while the two sides drift: adding a
+parameter to the stub, or dropping one from the handler, is a warning rather than a broken Dag.
+Arguments left at their stub default are not reported, and a handler taking the whole object
+(`async (args) => ...`) narrows nothing, so nothing is reported for it.
 
 `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names, and `in` folds like a read.
-Both count as reading the arguments they touch.
 
 ### Upstream outputs
 

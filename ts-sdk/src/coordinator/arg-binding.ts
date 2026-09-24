@@ -29,6 +29,7 @@
 // Python `region_code` to reach a handler's `regionCode`.
 
 import type { CoordinatorClient } from "./client.js";
+import type { DeclaredArgs } from "./handler-signature.js";
 import type { LogChannel } from "./log-channel.js";
 import type {
   ArgBindings,
@@ -69,18 +70,9 @@ export interface BoundArgs {
    * `Object.keys(args)` yields, and what a failing task reports.
    */
   readonly names: readonly string[];
-  /**
-   * The arguments the handler never read, once it has finished. Captured stub
-   * defaults are left out: ignoring one is the normal case, not a mismatch.
-   */
-  readonly unread: () => readonly string[];
 }
 
-const EMPTY_ARGS: BoundArgs = {
-  args: Object.freeze({}),
-  names: Object.freeze([]),
-  unread: () => [],
-};
+const EMPTY_ARGS: BoundArgs = { args: Object.freeze({}), names: Object.freeze([]) };
 
 /** What {@link resolveArgs} needs beyond the spec itself. */
 export interface ArgBindingDeps {
@@ -90,6 +82,13 @@ export interface ArgBindingDeps {
   readonly logs: LogChannel;
   /** Renames the handler declared with `withArgNames`, which beat folding. */
   readonly argNames: ReadonlyMap<string, string>;
+  /**
+   * What the handler destructures, for the mismatch check, or `null` when its
+   * source does not say and there is nothing to compare the call against.
+   */
+  readonly declared?: DeclaredArgs | null;
+  /** Task id, for the mismatch warnings. */
+  readonly taskId?: string;
 }
 
 /**
@@ -141,12 +140,61 @@ export async function resolveArgs(
   // Literals need no request, so only a call that pulls races the abort signal.
   const entries = pullsUpstream ? await abortable(resolveAll, deps.signal) : await resolveAll();
 
-  const read = new Set<string>();
-  return {
-    args: makeArgsProxy(names, byFold, new Map(entries), deps, read),
-    names,
-    unread: () => names.filter((name) => !read.has(name) && !defaulted.has(name)),
-  };
+  reportMismatch(names, byFold, defaulted, deps);
+  return { args: makeArgsProxy(names, byFold, new Map(entries), deps), names };
+}
+
+/**
+ * Log how the Dag's call and the handler's own parameter disagree, before the
+ * handler runs.
+ *
+ * Neither direction fails the task: the handler binds by name, so an argument
+ * it does not take changes nothing it reads, and a name the call did not pass
+ * simply arrives `undefined`. They are separate messages because a single call
+ * can do both at once, and each is only useful with its own side named.
+ */
+function reportMismatch(
+  names: readonly string[],
+  byFold: ReadonlyMap<string, string>,
+  defaulted: ReadonlySet<string>,
+  deps: ArgBindingDeps,
+): void {
+  const { declared, logs, argNames, taskId } = deps;
+  if (declared == null) return;
+
+  const claimed = new Set<string>();
+  const notPassed: string[] = [];
+  for (const property of declared.names) {
+    // The same precedence the proxy reads with: an explicit rename never falls
+    // back to folding, so a wrong entry misses rather than matching anyway.
+    const renamed = argNames.get(property);
+    const wire =
+      renamed !== undefined
+        ? names.includes(renamed)
+          ? renamed
+          : undefined
+        : byFold.get(foldArgName(property));
+    if (wire !== undefined) claimed.add(wire);
+    else notPassed.push(property);
+  }
+  if (notPassed.length > 0) {
+    logs.warning("Task handler declares argument(s) the Dag's call did not pass", {
+      task_id: taskId ?? null,
+      declared_not_passed: notPassed,
+      bound: [...names],
+    });
+  }
+
+  // A handler taking `...rest` claims whatever is left, so nothing is extra.
+  if (declared.takesRest) return;
+  const notDeclared = names.filter((name) => !claimed.has(name) && !defaulted.has(name));
+  if (notDeclared.length > 0) {
+    logs.warning("Dag's call passed argument(s) the task handler does not declare", {
+      task_id: taskId ?? null,
+      passed_not_declared: notDeclared,
+      declared: [...declared.names],
+    });
+  }
 }
 
 /** Airflow omits `value` for a literal whose value is null. */
@@ -248,7 +296,6 @@ function makeArgsProxy(
   byFold: ReadonlyMap<string, string>,
   values: ReadonlyMap<string, JsonValue>,
   deps: ArgBindingDeps,
-  read: Set<string>,
 ): object {
   const { argNames, logs } = deps;
   const resolve = (property: string): string | undefined => {
@@ -268,13 +315,7 @@ function makeArgsProxy(
       // as `Symbol.toPrimitive` during string coercion, and is not a miss.
       if (typeof property !== "string") return undefined;
       const name = resolve(property);
-      if (name !== undefined) {
-        // Both destructuring forms land here: `{ a, b }` reads each name, and
-        // `{ ...rest }` reads every own key, so this is the whole record of
-        // what the handler took.
-        read.add(name);
-        return values.get(name);
-      }
+      if (name !== undefined) return values.get(name);
       // Logged, never thrown: a destructuring default such as
       // `{ runId = "manual" }` is a legitimate miss, and nothing here can tell
       // one from a typo.
@@ -289,11 +330,7 @@ function makeArgsProxy(
     has(_target, property) {
       // `in` folds like a read, so `"regionCode" in args` answers for the
       // Python `region_code` the handler would actually receive.
-      if (typeof property !== "string") return false;
-      const name = resolve(property);
-      if (name === undefined) return false;
-      read.add(name);
-      return true;
+      return typeof property === "string" && resolve(property) !== undefined;
     },
     ownKeys() {
       // Python's names: the SDK has no TypeScript-side names to enumerate, so
@@ -303,10 +340,6 @@ function makeArgsProxy(
     },
     getOwnPropertyDescriptor(_target, property) {
       if (typeof property !== "string" || !values.has(property)) return undefined;
-      // Every enumeration checks enumerability here before it reads, so this is
-      // what makes `Object.keys`, `Object.entries` and `for...in` count as
-      // reads rather than being reported as arguments the handler ignored.
-      read.add(property);
       // Enumerable and configurable, or `ownKeys` would throw an invariant
       // error for a key the target itself does not have.
       return {

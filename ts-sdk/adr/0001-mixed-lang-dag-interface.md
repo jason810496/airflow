@@ -179,19 +179,19 @@ check.
 - **An unmatched name is logged**, with both the requested name and the names actually delivered. It
   cannot throw: a destructuring default (`{ runId = "manual" }`) is a legitimate miss, and the runtime
   cannot tell one from a typo.
-- **An argument the handler never read is logged too**, once the task succeeds. There is no declared
-  parameter list to compare the call against, so what the handler read is the only evidence of what it
-  expected. Captured stub defaults are left out, and a handler that threw is not reported on: it may
-  simply not have reached the reads yet. Reading is counted through the proxy, so it covers
-  destructuring, enumeration and `in` alike, and the check runs after the return value is published so
-  a handler passing its arguments onward is not reported. What it cannot see is a read that never
-  happens on this run, such as one inside an untaken branch, which is the cost of inferring the
-  handler's expectations from behavior rather than from a signature.
-- **Both of those log rather than fail**, which is the cross-language rule in
-  [lang-SDK ADR 0007](../../airflow-core/adr/lang-sdk/0007-taskflow-across-language-boundary.md): a
-  handler binding by name cannot have its arguments shifted by a mismatch in either direction, so
-  neither is worth failing a run over. That ADR is also where the difference between this SDK and one
-  with a declared field list is recorded, so it is not restated here.
+- **A mismatch between the call and the handler is logged before the task runs**, one message per
+  direction so a call that passes an argument the handler does not take *and* omits one it declares
+  says both. Neither fails the task, which is the cross-language rule in
+  [lang-SDK ADR 0007](../../airflow-core/adr/lang-sdk/0007-taskflow-across-language-boundary.md).
+- **What the handler declares is read off its own destructuring pattern.** Parameter types are erased,
+  so the pattern is the only declaration that survives to run time; bundlers keep it, because a
+  property key is part of the object's shape and `({ regionCode })` minifies to `({ regionCode: a })`.
+  A handler taking the whole object narrows nothing and is not reported on, and `...rest` claims
+  whatever is left. `withArgNames` keeps the handler it wrapped reachable, since the wrapper's own
+  source declares nothing.
+  The alternative, watching which arguments the handler touches as it runs, was tried and dropped: it
+  can only report after the task has already acted on the values, and it calls an argument unused when
+  the run happened to take a branch that did not read it.
 - `in` folds like a read. `Object.keys` and rest destructuring (`{ ...rest }`) yield Python's names,
   since the SDK has no TypeScript-side names to enumerate. Two Python names that fold to the same
   token fail the task at dispatch, naming both.
