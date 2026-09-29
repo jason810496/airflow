@@ -105,3 +105,6 @@ class TestRunIncludeMypyVolume:
     )
     def test_include_mypy_volume_is_passed_to_shell_params(self, runner, args, env, expected):
         assert self._invoke(runner, args, env=env).include_mypy_volume is expected
+
+    def test_pycache_volume_is_always_included(self, runner):
+        assert self._invoke(runner, []).include_pycache_volume is True

@@ -1458,6 +1458,7 @@ def run(
         forward_credentials=forward_credentials,
         github_repository=github_repository,
         include_mypy_volume=include_mypy_volume,
+        include_pycache_volume=True,
         mysql_version=mysql_version,
         platform=platform,
         postgres_version=postgres_version,

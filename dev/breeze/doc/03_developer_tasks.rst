@@ -403,9 +403,10 @@ in ``--from-ref`` and ``--to-ref`` flags.
 
     Python bytecode (``.pyc``) compiled from the mounted sources inside the container is written
     to the ``airflow-pycache-volume`` docker volume (``PYTHONPYCACHEPREFIX``) rather than next to
-    the sources, so it never shows up in your checkout but survives between ``breeze shell`` and
-    ``breeze start-airflow`` runs. This noticeably speeds up every ``airflow`` command and component
-    start-up, especially on macOS where reading sources through the bind mount is slow.
+    the sources, so it never shows up in your checkout but survives between ``breeze shell``,
+    ``breeze start-airflow`` and ``breeze run`` runs. This noticeably speeds up every ``airflow`` command,
+    component start-up and the prek hooks that run in Breeze, especially on macOS where reading sources
+    through the bind mount is slow.
     The cache is safe to share across Python versions: ``.pyc`` file names keep the
     interpreter tag (``foo.cpython-310.pyc`` vs ``foo.cpython-312.pyc``), so bytecode is
     never reused across versions. It is shared across worktrees, though -- sources always
