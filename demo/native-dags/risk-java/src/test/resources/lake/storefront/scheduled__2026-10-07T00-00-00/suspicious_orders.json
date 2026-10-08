@@ -1,0 +1,189 @@
+{
+ "batch_id": "scheduled__2026-10-07T00-00-00",
+ "business_date": "2026-10-07",
+ "rules": {
+  "crossBorder": {
+   "minUsdCents": 40000
+  },
+  "cardVelocity": {
+   "maxUses": 4,
+   "windowMinutes": 30
+  },
+  "newAccount": {
+   "maxAgeDays": 2,
+   "minUsdCents": 25000
+  }
+ },
+ "count": 13,
+ "orders": [
+  {
+   "order_id": "ORD-20261007-00511",
+   "customer_id": "C-907164",
+   "card_fingerprint": "card_dce644a120cf",
+   "billing_country": "GB",
+   "shipping_country": "GB",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T14:16:22.000Z",
+   "amount_usd_cents": 89915,
+   "rules": [
+    "new_account_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00513",
+   "customer_id": "C-871715",
+   "card_fingerprint": "card_85fb0ac3176c",
+   "billing_country": "GB",
+   "shipping_country": "GB",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T14:12:46.000Z",
+   "amount_usd_cents": 55877,
+   "rules": [
+    "new_account_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00508",
+   "customer_id": "C-209980",
+   "card_fingerprint": "card_886b1c3a3a42",
+   "billing_country": "US",
+   "shipping_country": "VN",
+   "account_age_days": 395,
+   "placed_at": "2026-10-07T01:17:14.000Z",
+   "amount_usd_cents": 55798,
+   "rules": [
+    "cross_border_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00509",
+   "customer_id": "C-345264",
+   "card_fingerprint": "card_68f28b4b19e0",
+   "billing_country": "US",
+   "shipping_country": "ID",
+   "account_age_days": 255,
+   "placed_at": "2026-10-07T10:35:55.000Z",
+   "amount_usd_cents": 55798,
+   "rules": [
+    "cross_border_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00510",
+   "customer_id": "C-649694",
+   "card_fingerprint": "card_9e113ec6ebe4",
+   "billing_country": "US",
+   "shipping_country": "PH",
+   "account_age_days": 411,
+   "placed_at": "2026-10-07T12:38:13.000Z",
+   "amount_usd_cents": 49798,
+   "rules": [
+    "cross_border_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00512",
+   "customer_id": "C-295969",
+   "card_fingerprint": "card_620b8fc2c738",
+   "billing_country": "GB",
+   "shipping_country": "GB",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T04:38:53.000Z",
+   "amount_usd_cents": 49781,
+   "rules": [
+    "new_account_high_value"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00501",
+   "customer_id": "C-880727",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T06:41:33.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00503",
+   "customer_id": "C-243360",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 0,
+   "placed_at": "2026-10-07T06:42:35.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00502",
+   "customer_id": "C-728979",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T06:42:42.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00504",
+   "customer_id": "C-381654",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T06:44:06.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00507",
+   "customer_id": "C-353987",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T06:45:21.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00506",
+   "customer_id": "C-970657",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 1,
+   "placed_at": "2026-10-07T06:45:53.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  },
+  {
+   "order_id": "ORD-20261007-00505",
+   "customer_id": "C-556149",
+   "card_fingerprint": "card_6ae96f0fc11f",
+   "billing_country": "US",
+   "shipping_country": "US",
+   "account_age_days": 0,
+   "placed_at": "2026-10-07T06:46:25.000Z",
+   "amount_usd_cents": 2499,
+   "rules": [
+    "card_velocity"
+   ]
+  }
+ ]
+}

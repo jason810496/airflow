@@ -1,0 +1,13 @@
+{
+ "batch_id": "scheduled__2026-10-07T00-00-00",
+ "business_date": "2026-10-07",
+ "fx_rates": {
+  "USD": 1,
+  "EUR": 1.08,
+  "GBP": 1.27,
+  "JPY": 0.0067
+ },
+ "gross_usd_cents": 6897934,
+ "order_count": 513,
+ "suspicious_count": 13
+}
