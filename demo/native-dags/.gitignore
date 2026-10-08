@@ -1,0 +1,3 @@
+# The repo root ignores lib/, which these team libraries need.
+!lib/
+.pnpm-store/
