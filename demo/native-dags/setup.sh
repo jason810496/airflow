@@ -19,7 +19,8 @@
 # Builds the native Dag bundles of the Acme Retail demo and writes the Breeze configuration that
 # runs them. Safe to run again.
 #
-# Run it on the host, from anywhere in the worktree (needs Node.js 22+ and pnpm):
+# Run it on the host, from anywhere in the worktree (storefront needs Node.js 22+ and pnpm, risk needs
+# Java, finance needs Go):
 #
 #   demo/native-dags/setup.sh [storefront] [risk] [finance]
 #
@@ -42,6 +43,7 @@ FILES_DIR="${REPO_ROOT}/files"
 BUNDLES_DIR="${FILES_DIR}/bundles"
 BREEZE_CONFIG_DIR="${FILES_DIR}/airflow-breeze-config"
 DEMO_DIR="${FILES_DIR}/demo"
+SDK_REPO="${ACME_SDK_REPO:-${SCRIPT_DIR}/.m2-repo}"
 
 BLOCK_BEGIN="# BEGIN native-dags-demo (managed by demo/native-dags/setup.sh, edits inside are overwritten)"
 BLOCK_END="# END native-dags-demo"
@@ -53,11 +55,22 @@ die() {
     exit 1
 }
 
-require_tools() {
+require_node() {
     command -v node >/dev/null || die "node is required (version 22 or later)"
     node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' \
         || die "node $(node --version) is too old, the TypeScript SDK needs 22 or later"
     command -v pnpm >/dev/null || die "pnpm is required (try: corepack enable pnpm)"
+}
+
+require_tools() {
+    local team
+    for team in "$@"; do
+        case "${team}" in
+            storefront) require_node ;;
+            risk) command -v java >/dev/null || die "java is required (version 11 or later)" ;;
+            finance) command -v go >/dev/null || die "go is required (version 1.25 or later)" ;;
+        esac
+    done
 }
 
 build_ts_sdk() {
@@ -86,14 +99,49 @@ build_storefront() {
     )
 }
 
+# The risk project resolves the Java SDK from a repository inside the demo (ACME_SDK_REPO), never from
+# ~/.m2, so the demo always builds against this worktree's SDK. Extra arguments for Gradle, such as
+# --offline, go in GRADLE_ARGS.
+build_java_sdk() {
+    local sdk="${REPO_ROOT}/java-sdk"
+    local version
+    version="$(sed -n 's/^projectVersion=//p' "${sdk}/gradle.properties")"
+    local marker="${SDK_REPO}/org/apache/airflow/airflow-sdk/${version}/airflow-sdk-${version}.jar"
+    if [[ ! -f "${marker}" || -n "$(find "${sdk}/sdk/src" "${sdk}/sdk/schema" "${sdk}/processor/src" "${sdk}/plugin/src" "${sdk}/jpl/src" -type f -newer "${marker}" -print -quit)" ]]; then
+        echo "Publishing the Java SDK to ${SDK_REPO}"
+        mkdir -p "${SDK_REPO}"
+        # shellcheck disable=SC2086
+        (cd "${sdk}" && ./gradlew ${GRADLE_ARGS:-} -PskipSigning=true -Dmaven.repo.local="${SDK_REPO}" publishToMavenLocal)
+    else
+        echo "The Java SDK is up to date"
+    fi
+}
+
 build_risk() {
-    mkdir -p "${BUNDLES_DIR}/risk"
-    echo "risk (Java): not built yet"
+    echo "Building risk (Java)"
+    build_java_sdk
+    local project="${SCRIPT_DIR}/risk-java"
+    local out="${BUNDLES_DIR}/risk"
+    mkdir -p "${out}"
+    # shellcheck disable=SC2086
+    "${REPO_ROOT}/java-sdk/gradlew" -p "${project}" ${GRADLE_ARGS:-} -PacmeSdkRepo="${SDK_REPO}" test bundle
+    rm -f "${out}"/*.jar
+    cp "${project}"/build/bundle/*.jar "${out}/"
 }
 
 build_finance() {
-    mkdir -p "${BUNDLES_DIR}/finance"
-    echo "finance (Go): not built yet"
+    echo "Building finance (Go)"
+    local project="${SCRIPT_DIR}/finance-go"
+    local out="${BUNDLES_DIR}/finance"
+    mkdir -p "${out}"
+    (
+        cd "${project}"
+        go vet ./...
+        go test ./...
+        # Breeze runs Linux, with the CPU architecture of this host. The bundle must stay extensionless.
+        go tool airflow-go-pack --goos linux --goarch "${FINANCE_GOARCH:-$(go env GOARCH)}" \
+            --output "${out}/finance" . -- -trimpath
+    )
 }
 
 # Replaces the managed block of $1 with stdin, keeping whatever else the file holds.
@@ -185,13 +233,17 @@ JSON
     "value": "false",
     "description": "Set to true to make the next storefront export contain fraud patterns."
   },
-  "storefront.low_stock": {
-    "value": "false",
-    "description": "Set to true for low stock, or stockout to also empty a promoted SKU."
+  "storefront.inventory_scenario": {
+    "value": "normal",
+    "description": "normal, low (a few SKUs about to run out) or stockout (also empties a promoted SKU)."
   },
   "risk.model_weights": {
-    "value": "{\"cross_border_high_value\": 0.45, \"card_velocity\": 0.35, \"new_account_high_value\": 0.2, \"block_threshold\": 0.6}",
-    "description": "Rule weights and block threshold for risk_fraud_screening."
+    "value": "{\"bias\": -3.2, \"weights\": {\"disposable_email\": 2.2, \"shared_card\": 1.6, \"new_account\": 1.2, \"card_velocity\": 3.0, \"customer_velocity\": 0.8, \"billing_shipping_mismatch\": 1.0, \"currency_country_mismatch\": 0.8, \"high_risk_destination\": 1.6, \"high_value\": 1.5, \"checkout_flagged\": 0.6}}",
+    "description": "Logistic model of risk_fraud_screening: a bias and one weight per feature. Scores below 0.4 approve, from 0.8 block."
+  },
+  "risk.chargeback_threshold_usd_cents": {
+    "value": "500000",
+    "description": "risk_fraud_screening alerts the payments team when blocked plus reviewed orders add up to more than this many US cents."
   },
   "finance.fx_rates": {
     "value": "{\"USD\": 1, \"EUR\": 1.085, \"GBP\": 1.265, \"JPY\": 0.00668}",
@@ -200,6 +252,10 @@ JSON
   "finance.force_month_end": {
     "value": "false",
     "description": "Set to true to run the month-end steps of finance_revenue_close."
+  },
+  "finance.inject_mismatch": {
+    "value": "false",
+    "description": "Set to true to make the payment processor misreport the settlement, so finance_revenue_close opens a reconciliation incident."
   }
 }
 JSON
@@ -253,14 +309,14 @@ main() {
         case "${team}" in
             storefront | risk | finance) ;;
             -h | --help)
-                sed -n '19,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+                sed -n '19,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
                 exit 0
                 ;;
             *) die "unknown team '${team}', expected one of: ${ALL_TEAMS[*]}" ;;
         esac
     done
 
-    require_tools
+    require_tools "${teams[@]}"
     mkdir -p "${BUNDLES_DIR}"
     for team in "${teams[@]}"; do
         "build_${team}"
