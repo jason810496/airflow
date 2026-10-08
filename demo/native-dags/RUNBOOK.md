@@ -6,11 +6,11 @@ Airflow runs all of them, and the teams hand work to each other only through `Tr
 
 ```
 [TS]   storefront_daily_orders (@daily)
-         |- if suspicious orders --trigger--> [Java] risk_fraud_screening --(trigger, not in Java yet)--+
-         '- else ---------------------------------trigger-----------------------------------------------+
-                                                                                                        v
-                                                                                 [Go] finance_revenue_close
-                                                                                   '--trigger--> [TS] storefront_customer_invoices
+         |- if suspicious orders --trigger--> [Java] risk_fraud_screening --trigger--+
+         '- else ---------------------------------trigger---------------------------+
+                                                                                     v
+                                                                  [Go] finance_revenue_close
+                                                                    '--trigger--> [TS] storefront_customer_invoices
 ```
 
 ## Before the talk
@@ -62,11 +62,17 @@ Set `storefront.inject_fraud=true` and `storefront.inventory_scenario=stockout`,
   - `snapshot_model_weights` before `score_orders`: an order-only edge.
   - `chargeback_exposure_high` (if/else) takes `notify_payments_team`: the blocked and reviewed amount is over
     `risk.chargeback_threshold_usd_cents`.
-  - Logs of `apply_decisions`: approve, review and block per order, with reasons.
-- Code view of `FraudScreeningDag.java`: the switch routing and the trigger to finance are written but
-  commented out, because the Java SDK does not have them yet. Trigger `finance_revenue_close` by hand to
-  continue: `load_risk_decisions` reads the Java team's `decisions.json`, holds reviewed orders and reverses
-  blocked ones.
+  - Logs of `apply_decisions`: approve, review and block per order, with reasons. It writes `decisions.json`.
+  - `route_by_worst_band` (switch/case): a branch with three cases. `block_and_refund` runs because an
+    order is blocked, `auto_approve` and `queue_manual_review` are skipped. Its files are in
+    `/files/demo/outbox/risk/<batch>/`.
+  - `publish_decisions`: a join with `none_failed_min_one_success` over the cases and the alert check, so it
+    runs although most of them were skipped.
+  - `trigger_finance_close`: risk starts `finance_revenue_close` itself, without waiting for it. Follow the
+    trigger link: `load_risk_decisions` reads the Java team's `decisions.json`, holds reviewed orders and
+    reverses blocked ones.
+- Code view of `FraudScreeningDag.java`: the branch, the condition and the trigger are plain annotated methods.
+  The trigger task runs in the Java runtime, which is why it names the `java` queue like every other task.
 
 ## 4. Finance branches (2 min, optional)
 
@@ -95,5 +101,5 @@ Set `storefront.inject_fraud=true` and `storefront.inventory_scenario=stockout`,
 - A Dag is missing: Browse > Import errors, then the Dag processor log. Re-run `setup.sh <team>`; the bundles
   refresh every 30 seconds.
 - A triggered Dag reads an older batch: the hand-off is the latest value of `handoff.<team>.<dataset>`, so
-  wait for the producing run to finish before triggering the next team by hand.
+  wait for the producing run to finish before triggering a team by hand.
 - Lake and outbox files are under `/files/demo/lake/<team>/<batch_id>/` and `/files/demo/outbox/`.

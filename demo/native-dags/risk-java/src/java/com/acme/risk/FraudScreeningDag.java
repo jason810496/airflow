@@ -20,10 +20,14 @@
 // risk_fraud_screening: the risk team's screening of a storefront batch.
 //
 // Triggered by the storefront when its checkout rules flag orders. It scores every order of the batch,
-// applies the decision of each band, alerts payments when the money at risk is high, and hands the
-// decisions to finance through the handoff.risk.latest_decisions Variable.
+// writes the decisions, routes the batch by its worst band (a branch with one task per outcome), alerts
+// payments when the money at risk is high, publishes the decisions through the
+// handoff.risk.latest_decisions Variable and triggers the finance close without waiting for it.
 package com.acme.risk;
 
+import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.AUTO_APPROVE;
+import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.BLOCK_AND_REFUND;
+import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.QUEUE_MANUAL_REVIEW;
 import static java.lang.System.Logger.Level.INFO;
 import static java.lang.System.Logger.Level.WARNING;
 
@@ -38,6 +42,7 @@ import com.acme.risk.lib.Money;
 import com.acme.risk.lib.Outbox;
 import com.acme.risk.lib.Payments;
 import com.acme.risk.lib.Report;
+import com.acme.risk.lib.Routes;
 import com.acme.risk.lib.ScoreFile;
 import com.acme.risk.lib.Scorer;
 import com.acme.risk.lib.Velocity;
@@ -47,6 +52,8 @@ import java.util.Map;
 import org.apache.airflow.sdk.Builder;
 import org.apache.airflow.sdk.Client;
 import org.apache.airflow.sdk.Context;
+import org.apache.airflow.sdk.TaskId;
+import org.apache.airflow.sdk.TriggerDagRun;
 
 @Builder.Dag(
     id = "risk_fraud_screening",
@@ -65,10 +72,16 @@ import org.apache.airflow.sdk.Context;
             + "* `features`: device reputation, velocity and geo mismatch, each a feature per order.\n"
             + "* `score_orders`: logistic score with the weights of the Variable `risk.model_weights`.\n"
             + "  Below 0.4 approve, from 0.4 review, from 0.8 block.\n"
-            + "* `apply_decisions`: approves, queues reviews and refunds blocked orders.\n"
+            + "* `apply_decisions`: writes `decisions.json`, the contract the finance team reads.\n"
+            + "* `route_by_worst_band`: a branch that runs one case and skips the others: `auto_approve`,\n"
+            + "  `queue_manual_review` (worst is a review) or `block_and_refund` (any order blocked). Each\n"
+            + "  writes its files to `/files/demo/outbox/risk/<batch>/`.\n"
             + "* `chargeback_exposure_high`: alerts payments when blocked and reviewed money is over the\n"
-            + "  Variable `risk.chargeback_threshold_usd_cents`.\n"
-            + "* `publish_decisions`: sets the Variable `handoff.risk.latest_decisions`.\n")
+            + "  Variable `risk.chargeback_threshold_usd_cents`, otherwise logs that it is within tolerance.\n"
+            + "* `publish_decisions`: sets the Variable `handoff.risk.latest_decisions`. It runs once a case\n"
+            + "  and a side of the alert check ran, whatever was skipped.\n"
+            + "* `trigger_finance_close`: starts `finance_revenue_close` with that Variable as its contract\n"
+            + "  and does not wait for it. It runs in the Java runtime, so it names queue `java`.\n")
 public class FraudScreeningDag {
   private static final System.Logger log = System.getLogger(FraudScreeningDag.class.getName());
 
@@ -77,6 +90,7 @@ public class FraudScreeningDag {
 
   static final String WEIGHTS_VARIABLE = "risk.model_weights";
   static final String THRESHOLD_VARIABLE = "risk.chargeback_threshold_usd_cents";
+  static final String FINANCE_DAG_ID = "finance_revenue_close";
   static final String GATEWAY_CONNECTION = "payments_gateway";
   static final String DEFAULT_GATEWAY_HOST = "payments.internal.acme";
   static final long DEFAULT_THRESHOLD_USD_CENTS = 500_000;
@@ -149,39 +163,45 @@ public class FraudScreeningDag {
     return scores.toString();
   }
 
-  // Applies the band of each order. See the switch below for how this routes once Java has switch/case.
+  // Writes decisions.json, the contract finance reads. What each band triggers is left to the routing below.
   @Builder.Task(id = "apply_decisions", retries = 1, queue = QUEUE)
-  public String applyDecisions(String scoresPath, Client client) {
+  public String applyDecisions(String scoresPath) {
     var scores = ScoreFile.read(scoresPath);
-    var gateway = Payments.gatewayHost(client, GATEWAY_CONNECTION, DEFAULT_GATEWAY_HOST);
     var decisions = Decisions.write(scores.batchDir, scores.orders);
-
-    var review = Decisions.in(scores.orders, Band.REVIEW);
-    var blocked = Decisions.in(scores.orders, Band.BLOCK);
-    Outbox.queueManualReview(scores.batchDir, review);
-    Outbox.requestRefunds(scores.batchDir, blocked, gateway);
-
-    log.log(
-        INFO,
-        "Approved {0}, queued {1} for manual review, blocked and refunded {2} through {3}",
-        Decisions.in(scores.orders, Band.APPROVE).size(),
-        review.size(),
-        blocked.size(),
-        gateway);
+    log.log(INFO, "Wrote the decisions of {0} orders to {1}", scores.orders.size(), decisions);
     Report.bands("Decisions", scores.orders);
     return decisions.toString();
   }
 
-  // Java has no switch/case yet. The intended routing: one task per band instead of apply_decisions.
-  //
-  // @Builder.Switch(id = "route_by_band")
-  // public String routeByBand(String scoresPath) { ... returns "approve", "review" or "block" ... }
-  //
-  // In Wiring.depends():
-  //   routeByBand(scores)
-  //       .caseOf("approve", approveOrders(scores))
-  //       .caseOf("review", queueManualReview(scores))
-  //       .caseOf("block", blockAndRefund(scores));
+  // Runs one case and skips the other two. The worst band wins, so a blocked order is never cleared.
+  @Builder.Branch(id = "route_by_worst_band", queue = QUEUE)
+  public TaskId routeByWorstBand(String decisionsPath) {
+    var worst = Decisions.worstBand(Decisions.load(decisionsPath));
+    log.log(INFO, "Worst band of the batch is {0}", worst.id);
+    return caseFor(worst);
+  }
+
+  static TaskId caseFor(Band worst) {
+    if (worst == Band.BLOCK) {
+      return BLOCK_AND_REFUND;
+    }
+    return worst == Band.REVIEW ? QUEUE_MANUAL_REVIEW : AUTO_APPROVE;
+  }
+
+  @Builder.Task(id = "auto_approve", queue = QUEUE)
+  public void autoApprove(String scoresPath) {
+    Routes.clear(scoresPath);
+  }
+
+  @Builder.Task(id = "queue_manual_review", queue = QUEUE)
+  public void queueManualReview(String scoresPath) {
+    Routes.queueReview(scoresPath);
+  }
+
+  @Builder.Task(id = "block_and_refund", queue = QUEUE)
+  public void blockAndRefund(String scoresPath, Client client) {
+    Routes.blockAndRefund(scoresPath, Payments.gatewayHost(client, GATEWAY_CONNECTION, DEFAULT_GATEWAY_HOST));
+  }
 
   @Builder.If(id = "chargeback_exposure_high", queue = QUEUE)
   public boolean chargebackExposureHigh(String decisionsPath, Client client) {
@@ -210,7 +230,8 @@ public class FraudScreeningDag {
     log.log(INFO, "Chargeback exposure {0} is within tolerance, no alert needed", Money.formatUsd(exposure));
   }
 
-  // Runs when either side of the condition ran, so it accepts one skipped upstream.
+  // Runs once one case and one side of the condition ran. The branch and the condition each skip
+  // their other tasks, so the default all_success would never let this run.
   @Builder.Task(id = "publish_decisions", triggerRule = "none_failed_min_one_success", retries = 1, queue = QUEUE)
   public String publishDecisions(String decisionsPath, Client client) {
     var riskDir = Decisions.writeSummary(decisionsPath);
@@ -222,16 +243,14 @@ public class FraudScreeningDag {
     return riskDir.toString();
   }
 
-  // Java has no TriggerDagRun yet. The intended hand-off to finance:
-  //
-  // @Builder.TriggerDagRun(
-  //     id = "trigger_finance_close",
-  //     dagId = "finance_revenue_close",
-  //     conf = "{\"requested_by\": \"risk\", \"contract\": \"handoff.risk.latest_decisions\"}",
-  //     queue = QUEUE)
-  // public void triggerFinanceClose() {}
-  //
-  // In Wiring.depends(): published.before(triggerFinanceClose());
+  // Declared when the Dag is built, so the method takes no arguments. The Java runtime runs it,
+  // which is why it needs the java queue.
+  @Builder.Task(id = "trigger_finance_close", queue = QUEUE)
+  public TriggerDagRun triggerFinanceClose() {
+    return new TriggerDagRun(FINANCE_DAG_ID)
+        .config("conf", Handoff.financeConf())
+        .config("wait_for_completion", false);
+  }
 
   // Implements the generated wiring view, so javac type-checks the graph.
   @Builder.Deps
@@ -248,12 +267,18 @@ public class FraudScreeningDag {
       snapshot.before(scores);
 
       var decisions = applyDecisions(scores);
+      var approved = autoApprove(scores);
+      var queued = queueManualReview(scores);
+      var refunded = blockAndRefund(scores);
+      routeByWorstBand(decisions).option(approved).option(queued).option(refunded);
+
       var alerted = notifyPaymentsTeam(decisions);
       var tolerated = logWithinTolerance(decisions);
       chargebackExposureHigh(decisions).then(alerted).orElse(tolerated);
 
       var published = publishDecisions(decisions);
-      published.after(alerted, tolerated);
+      published.after(approved, queued, refunded, alerted, tolerated);
+      published.before(triggerFinanceClose());
     }
   }
 }

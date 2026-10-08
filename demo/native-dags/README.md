@@ -6,7 +6,7 @@ and the teams hand work to each other only through `TriggerDagRun` plus a data c
 | Team | Language | Dags |
 | --- | --- | --- |
 | Storefront | TypeScript | `storefront_daily_orders` (`@daily`), `storefront_customer_invoices` (triggered) |
-| Risk | Java | `risk_fraud_screening` (triggered) |
+| Risk | Java | `risk_fraud_screening` (triggered, triggers `finance_revenue_close` when it is done) |
 | Finance | Go | `finance_revenue_close` (triggered) |
 
 ## Layout

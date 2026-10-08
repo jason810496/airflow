@@ -25,6 +25,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /** Hand-offs to other teams, written under the outbox of the batch. */
 public final class Outbox {
@@ -40,6 +41,25 @@ public final class Outbox {
     queue.put("count", items.size());
     queue.put("orders", items);
     Lake.writeJson(Lake.outboxDir(batchDir).resolve("manual_review_queue.json"), queue);
+  }
+
+  public static void markCleared(Path batchDir, List<ScoredOrder> approved) {
+    var cleared = new LinkedHashMap<String, Object>();
+    cleared.put("batch_id", Lake.batchId(batchDir));
+    cleared.put("status", "cleared");
+    cleared.put("approved_count", approved.size());
+    cleared.put("approved_usd_cents", approved.stream().mapToLong(o -> o.amountUsdCents).sum());
+    Lake.writeJson(Lake.outboxDir(batchDir).resolve("batch_cleared.json"), cleared);
+  }
+
+  public static void listBlocked(Path batchDir, List<ScoredOrder> blocked) {
+    var orders = new ArrayList<Map<String, Object>>();
+    blocked.forEach(o -> orders.add(o.toMap()));
+    var list = new LinkedHashMap<String, Object>();
+    list.put("count", orders.size());
+    list.put("customer_ids", blocked.stream().map(o -> o.customerId).distinct().sorted().collect(Collectors.toList()));
+    list.put("orders", orders);
+    Lake.writeJson(Lake.outboxDir(batchDir).resolve("block_list.json"), list);
   }
 
   public static void requestRefunds(Path batchDir, List<ScoredOrder> blocked, String gatewayHost) {

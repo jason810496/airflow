@@ -25,7 +25,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.airflow.sdk.Client;
 import org.apache.airflow.sdk.Context;
 
@@ -62,5 +64,13 @@ public final class Handoff {
         orders.size(),
         flagged.size());
     return batchDir;
+  }
+
+  /** The conf of the run this team hands to finance, naming the Variable that points at the decisions. */
+  public static Map<String, Object> financeConf() {
+    var conf = new LinkedHashMap<String, Object>();
+    conf.put("requested_by", Lake.TEAM);
+    conf.put("contract", Lake.LATEST_DECISIONS_VARIABLE);
+    return conf;
   }
 }

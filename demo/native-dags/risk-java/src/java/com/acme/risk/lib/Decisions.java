@@ -54,6 +54,18 @@ public final class Decisions {
     return orders.stream().filter(o -> o.band == band).collect(Collectors.toList());
   }
 
+  /** The most severe action of the batch: block over review over approve. */
+  public static Band worstBand(Map<String, Object> decisionsDocument) {
+    var worst = Band.APPROVE;
+    for (var decision : (List<?>) decisionsDocument.get("decisions")) {
+      var band = Band.of((String) ((Map<?, ?>) decision).get("action"));
+      if (band.compareTo(worst) > 0) {
+        worst = band;
+      }
+    }
+    return worst;
+  }
+
   public static Path write(Path storefrontBatchDir, List<ScoredOrder> orders) {
     return Lake.writeJson(Lake.riskDir(storefrontBatchDir).resolve(FILE), document(storefrontBatchDir, orders));
   }
