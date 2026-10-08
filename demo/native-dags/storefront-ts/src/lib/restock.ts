@@ -88,3 +88,26 @@ export function buildPurchaseOrder(
     .map((line) => ({ ...line, est_cost_usd_cents: Math.round(line.est_cost_usd_cents) }))
     .sort((a, b) => a.days_of_cover - b.days_of_cover);
 }
+
+export function orderCostCents(lines: readonly PurchaseLine[]): number {
+  return lines.reduce((total, line) => total + line.est_cost_usd_cents, 0);
+}
+
+export function campaignPauseDoc(batchId: string, outOfStock: readonly InventoryItem[]) {
+  return {
+    batch_id: batchId,
+    paused: outOfStock.map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      reason: "promoted SKU is out of stock",
+      resume_when: `on hand covers ${EXPEDITE_BELOW_DAYS} days of sales`,
+    })),
+  };
+}
+
+export function describeChoice(items: readonly InventoryItem[], strategy: RestockStrategy): string {
+  return (
+    `${items.length} SKUs: ${stockedOutPromoted(items).length} promoted out of stock, ` +
+    `${critical(items).length} under ${EXPEDITE_BELOW_DAYS} days of cover, choosing ${strategy}`
+  );
+}

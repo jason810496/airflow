@@ -19,10 +19,11 @@
 
 // Turns a day's orders and refunds into the numbers finance and risk read.
 
-import { evaluateRules, type RuleId } from "./checkout-rules.js";
+import { evaluateRules, CHECKOUT_RULES, type RuleId } from "./checkout-rules.js";
 import { PRODUCTS_BY_SKU } from "./catalog.js";
-import { toUsdCents, sum, type FxRates } from "./money.js";
-import type { Currency, Order, Refund } from "./types.js";
+import type { Batch } from "./lake.js";
+import { toDollars, toUsdCents, sum, type FxRates } from "./money.js";
+import type { Currency, Order, Refund, SalesSummary } from "./types.js";
 
 export interface SuspiciousOrder {
   order_id: string;
@@ -117,5 +118,44 @@ export function settleBatch(input: {
     byCurrency,
     byCategory,
     suspicious,
+  };
+}
+
+export function suspiciousOrdersDoc(batch: Batch, result: Settlement) {
+  return {
+    batch_id: batch.batchId,
+    business_date: batch.businessDate,
+    rules: CHECKOUT_RULES,
+    count: result.suspicious.length,
+    orders: result.suspicious,
+  };
+}
+
+export function salesSummaryDoc(batch: Batch, rates: FxRates, result: Settlement) {
+  return {
+    batch_id: batch.batchId,
+    business_date: batch.businessDate,
+    fx_rates: rates,
+    gross_usd_cents: result.grossUsdCents,
+    refunds_usd_cents: result.refundsUsdCents,
+    net_usd_cents: result.netUsdCents,
+    order_count: result.orderCount,
+    refund_count: result.refundCount,
+    unmatched_refund_count: result.unmatchedRefundCount,
+    suspicious_count: result.suspicious.length,
+    by_currency: result.byCurrency,
+    by_category_usd_cents: result.byCategory,
+  };
+}
+
+/** The XCom `validate_orders` returns. */
+export function toSalesSummary(result: Settlement, batchDir: string): SalesSummary {
+  return {
+    grossUsd: toDollars(result.grossUsdCents),
+    refundsUsd: toDollars(result.refundsUsdCents),
+    netUsd: toDollars(result.netUsdCents),
+    orderCount: result.orderCount,
+    suspiciousCount: result.suspicious.length,
+    batchDir,
   };
 }

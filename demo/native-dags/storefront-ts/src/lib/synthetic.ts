@@ -201,9 +201,9 @@ function pickItems(rng: Rng, currency: Currency, maxUsdCents?: number): LineItem
   return [{ sku: fallback.sku, qty: 1, unit_price_minor: priceIn(fallback, currency) }];
 }
 
-/** Enough units of `product` to be worth more than `usdCents`. */
-function qtyAbove(product: Product, usdCents: number): number {
-  return Math.max(1, Math.ceil(usdCents / product.priceUsdCents));
+/** The unit count that brings `product` closest to `usdCents`, at least one. */
+function qtyNear(product: Product, usdCents: number): number {
+  return Math.max(1, Math.round(usdCents / product.priceUsdCents));
 }
 
 function timestampOf(dayStart: number, secondOfDay: number): string {
@@ -330,55 +330,62 @@ function baselineNoise(params: BatchParams, sequence: number): Order[] {
   return [order];
 }
 
-/** Card testing, cross-border high-value and new-account high-value orders. */
+/**
+ * One organised attack, all from brand-new accounts with disposable emails: a card-testing burst on a
+ * stolen card that turns into cash-out orders, bulk laptops shipped to a high-risk corridor, and
+ * high-value electronics bought from new UK accounts. Each order is worth enough to matter.
+ */
 function fraudOrders(params: BatchParams, firstSequence: number): Order[] {
   const rng = createRng(`${params.batchId}:fraud`);
   const dayStart = dayStartOf(params.businessDate);
   const taken = new Set<string>();
   const orders: Order[] = [];
+  const product = (sku: string): Product => PRODUCTS_BY_SKU.get(sku) as Product;
+  const fraudster = (country: Country): Customer => {
+    const customer = newCustomer(rng, taken, rng.int(0, 1), true);
+    customer.country = country;
+    return customer;
+  };
   const push = (order: Order): void => {
     order.order_id = orderId(params.businessDate, firstSequence + orders.length);
     orders.push(order);
   };
+  const usd: Country = { code: "US", currency: "USD" };
+  const gb: Country = { code: "GB", currency: "GBP" };
+  const lineOf = (item: Product, qty: number, currency: Currency): LineItem[] => [
+    { sku: item.sku, qty, unit_price_minor: priceIn(item, currency) },
+  ];
 
-  const burstStart = rng.int(2 * 3600, 20 * 3600);
   const stolenCard = cardFingerprint(`${params.batchId}:stolen`);
-  const giftCard = PRODUCTS_BY_SKU.get("GFT-025") as Product;
-  for (let i = 0, burst = rng.int(7, 10); i < burst; i += 1) {
-    const customer = newCustomer(rng, taken, rng.int(0, 1), true);
-    customer.country = { code: "US", currency: "USD" };
-    const items: LineItem[] = [
-      { sku: giftCard.sku, qty: 1, unit_price_minor: priceIn(giftCard, "USD") },
-    ];
+  const probes = rng.int(3, 4);
+  const cashOuts = rng.int(5, 7);
+  const cashOutProducts = ["LAP-001", "TAB-001", "CAM-001", "EAR-002", "WCH-001"].map(product);
+  let burstAt = dayStart + rng.int(2 * 3600, 20 * 3600) * 1000;
+  for (let i = 0; i < probes + cashOuts; i += 1) {
+    const item = i < probes ? product("GFT-025") : rng.pick(cashOutProducts);
+    const qty = i < probes ? 1 : qtyNear(item, rng.int(60_000, 140_000));
+    burstAt += rng.int(30, 75) * 1000;
     push(
       toOrder(
         rng,
-        customer,
-        items,
+        fraudster(usd),
+        lineOf(item, qty, "USD"),
         "USD",
         "US",
-        timestampOf(dayStart, burstStart + i * rng.int(30, 75)),
+        new Date(burstAt).toISOString(),
         stolenCard,
       ),
     );
   }
 
-  const highValue = ["LAP-001", "TAB-001", "CAM-001", "EAR-002"].map(
-    (sku) => PRODUCTS_BY_SKU.get(sku) as Product,
-  );
+  const laptop = product("LAP-001");
   for (let i = 0, count = rng.int(3, 5); i < count; i += 1) {
-    const customer = newCustomer(rng, taken, rng.int(60, 700));
-    customer.country = { code: "US", currency: "USD" };
-    const product = rng.pick(highValue);
-    const qty = qtyAbove(product, CHECKOUT_RULES.crossBorder.minUsdCents * 1.15);
-    const items: LineItem[] = [
-      { sku: product.sku, qty, unit_price_minor: priceIn(product, "USD") },
-    ];
+    const qty = qtyNear(laptop, rng.int(150_000, 300_000));
     push(
       toOrder(
         rng,
-        customer,
-        items,
+        fraudster(usd),
+        lineOf(laptop, qty, "USD"),
         "USD",
         rng.pick(FRAUD_SHIP_TO),
         timestampOf(dayStart, rng.int(3600, 82800)),
@@ -386,15 +393,20 @@ function fraudOrders(params: BatchParams, firstSequence: number): Order[] {
     );
   }
 
+  const ukProducts = ["LAP-001", "CAM-001", "EAR-002"].map(product);
   for (let i = 0, count = rng.int(2, 3); i < count; i += 1) {
-    const customer = newCustomer(rng, taken, rng.int(0, 1), true);
-    customer.country = { code: "GB", currency: "GBP" };
-    const product = rng.pick(highValue);
-    const qty = qtyAbove(product, CHECKOUT_RULES.newAccount.minUsdCents * 1.3);
-    const items: LineItem[] = [
-      { sku: product.sku, qty, unit_price_minor: priceIn(product, "GBP") },
-    ];
-    push(toOrder(rng, customer, items, "GBP", "GB", timestampOf(dayStart, rng.int(3600, 82800))));
+    const item = rng.pick(ukProducts);
+    const qty = qtyNear(item, rng.int(120_000, 250_000));
+    push(
+      toOrder(
+        rng,
+        fraudster(gb),
+        lineOf(item, qty, "GBP"),
+        "GBP",
+        "GB",
+        timestampOf(dayStart, rng.int(3600, 82800)),
+      ),
+    );
   }
   return orders;
 }
@@ -441,13 +453,12 @@ export function generateRefunds(params: BatchParams & { refundRate: number }): R
   return refunds.sort((a, b) => a.refunded_at.localeCompare(b.refunded_at));
 }
 
-/** `true` is a handful of SKUs about to run out. `stockout` also empties a promoted SKU. */
-export type LowStockMode = "off" | "low" | "stockout";
+/** `low` leaves a handful of SKUs about to run out. `stockout` also empties a promoted SKU. */
+export type InventoryScenario = "normal" | "low" | "stockout";
 
-export function parseLowStock(value: string | null): LowStockMode {
+export function parseInventoryScenario(value: string | null): InventoryScenario {
   const normalized = value?.trim().toLowerCase();
-  if (normalized === "stockout") return "stockout";
-  return normalized === "true" ? "low" : "off";
+  return normalized === "low" || normalized === "stockout" ? normalized : "normal";
 }
 
 export function parseFlag(value: string | null): boolean {
@@ -457,7 +468,7 @@ export function parseFlag(value: string | null): boolean {
 export function generateInventory(params: {
   batchId: string;
   lookbackDays: number;
-  lowStock: LowStockMode;
+  scenario: InventoryScenario;
 }): InventoryItem[] {
   const rng = createRng(`${params.batchId}:inventory`);
   const order = rng.shuffle(PRODUCTS);
@@ -468,7 +479,7 @@ export function generateInventory(params: {
       .slice(0, 4)
       .map((p) => p.sku),
   );
-  const emptied = params.lowStock === "stockout" ? (order[0] as Product).sku : undefined;
+  const emptied = params.scenario === "stockout" ? (order[0] as Product).sku : undefined;
 
   return PRODUCTS.map((product): InventoryItem => {
     const isPromoted = promoted.has(product.sku);
@@ -476,7 +487,7 @@ export function generateInventory(params: {
       (product.popularity * 2.2 * (0.7 + 0.6 * rng.next()) * (isPromoted ? 1.8 : 1)).toFixed(2),
     );
     let coverDays = 4 + rng.next() * 26;
-    if (params.lowStock !== "off" && low.has(product.sku)) coverDays = 0.6 + rng.next() * 2;
+    if (params.scenario !== "normal" && low.has(product.sku)) coverDays = 0.6 + rng.next() * 2;
     let onHand = Math.max(1, Math.floor(velocity * coverDays));
     if (product.sku === emptied) onHand = 0;
     return {

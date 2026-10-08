@@ -26,19 +26,17 @@ import path from "node:path";
 
 import { Dag, getClient } from "apache-airflow-ts-sdk";
 
-import { buildInvoices, renderInvoiceHtml, type Invoice } from "../lib/invoice.js";
+import { renderInvoiceHtml } from "../lib/invoice.js";
+import { LATEST_BATCH_VARIABLE, readJson, writeJson, writeText } from "../lib/lake.js";
+import { formatUsd, sum } from "../lib/money.js";
 import {
-  LATEST_BATCH_VARIABLE,
-  listFiles,
-  outboxRoot,
-  readJson,
-  sha256Of,
-  writeJson,
-  writeText,
-} from "../lib/lake.js";
-import { formatUsd, parseFxRates, sum } from "../lib/money.js";
-import { renderTable } from "../lib/report.js";
-import type { OrdersFile, RefundsFile } from "../lib/types.js";
+  buildBatchInvoices,
+  buildStatements,
+  invoiceDir,
+  readOutbox,
+  statementsDir,
+} from "../lib/outbox.js";
+import { renderSentReport, renderStatementsReport } from "../lib/report.js";
 
 const FINANCE_CLOSE_VARIABLE = "handoff.finance.latest_close";
 
@@ -62,20 +60,17 @@ export const customerInvoices = new Dag("storefront_customer_invoices", {
   docMd: DOC_MD,
 });
 
+const batch = customerInvoices.task("resolve_batch", resolveBatch)();
+
+const render = customerInvoices.taskGroup("render");
+const invoices = render.task("render_invoices", renderInvoices)({ batch });
+const statements = render.task("render_statements", renderStatements)({ batch });
+
+customerInvoices.task("send_invoices", sendInvoices)({ invoices, statements });
+
 interface BatchRef {
   batchDir: string;
   source: "finance" | "storefront";
-}
-
-interface RenderedInvoices {
-  dir: string;
-  invoices: number;
-  heldForReview: number;
-}
-
-interface RenderedStatements {
-  path: string;
-  customers: number;
 }
 
 async function resolveBatch(): Promise<BatchRef> {
@@ -104,31 +99,8 @@ async function resolveBatch(): Promise<BatchRef> {
   return { batchDir, source: "storefront" };
 }
 
-async function loadBatch(batchDir: string) {
-  const [orders, refunds, suspicious] = await Promise.all([
-    readJson<OrdersFile>(path.join(batchDir, "orders.json")),
-    readJson<RefundsFile>(path.join(batchDir, "refunds.json")),
-    readJson<{ orders: { order_id: string }[] }>(path.join(batchDir, "suspicious_orders.json")),
-  ]);
-  return { orders, refunds, flagged: new Set(suspicious.orders.map((order) => order.order_id)) };
-}
-
-function invoiceDir(batchDir: string): string {
-  return path.join(outboxRoot(), "invoices", path.basename(batchDir));
-}
-
-async function renderInvoices({ batch }: { batch: BatchRef }): Promise<RenderedInvoices> {
-  const { orders, refunds, flagged } = await loadBatch(batch.batchDir);
-  const rates = parseFxRates(await getClient().getVariable("storefront.fx_rates"));
-  const { invoices, skippedFullyRefunded } = buildInvoices({
-    batchId: orders.batch_id,
-    businessDate: orders.business_date,
-    orders: orders.orders,
-    refunds: refunds.refunds,
-    flaggedOrderIds: flagged,
-    rates,
-  });
-
+async function renderInvoices({ batch }: { batch: BatchRef }) {
+  const { invoices, skippedFullyRefunded } = await buildBatchInvoices(batch.batchDir, true);
   const dir = invoiceDir(batch.batchDir);
   for (const invoice of invoices) {
     await writeJson(dir, `${invoice.invoice_no}.json`, invoice);
@@ -142,96 +114,28 @@ async function renderInvoices({ batch }: { batch: BatchRef }): Promise<RenderedI
   return { dir, invoices: invoices.length, heldForReview: held };
 }
 
-async function renderStatements({ batch }: { batch: BatchRef }): Promise<RenderedStatements> {
-  const { orders, refunds } = await loadBatch(batch.batchDir);
-  const rates = parseFxRates(await getClient().getVariable("storefront.fx_rates"));
-  const { invoices } = buildInvoices({
-    batchId: orders.batch_id,
-    businessDate: orders.business_date,
-    orders: orders.orders,
-    refunds: refunds.refunds,
-    flaggedOrderIds: new Set(),
-    rates,
-  });
-  const statements = invoices
-    .map((invoice) => ({
-      customer_id: invoice.customer_id,
-      email: invoice.email,
-      orders: new Set(invoice.lines.map((line) => line.order_id)).size,
-      balance_usd_cents: invoice.total_usd_cents,
-    }))
-    .sort((a, b) => b.balance_usd_cents - a.balance_usd_cents);
-
-  const dir = path.join(outboxRoot(), "statements", path.basename(batch.batchDir));
-  const file = await writeJson(dir, "statements.json", {
-    batch_id: orders.batch_id,
-    as_of: orders.business_date,
+async function renderStatements({ batch }: { batch: BatchRef }) {
+  const { batchId, businessDate, invoices } = await buildBatchInvoices(batch.batchDir, false);
+  const statements = buildStatements(invoices);
+  const file = await writeJson(statementsDir(batch.batchDir), "statements.json", {
+    batch_id: batchId,
+    as_of: businessDate,
     statements,
   });
-  console.log(
-    `Statements for ${statements.length} customers\n` +
-      renderTable(
-        ["customer", "orders", "balance"],
-        statements
-          .slice(0, 5)
-          .map((s) => [s.customer_id, String(s.orders), formatUsd(s.balance_usd_cents)]),
-        [1, 2],
-      ),
-  );
+  console.log(renderStatementsReport(statements));
   return { path: file.path, customers: statements.length };
 }
 
-async function sendInvoices({
-  invoices,
-  statements,
-}: {
-  invoices: RenderedInvoices;
-  statements: RenderedStatements;
-}): Promise<{ sent: number; held: number; indexPath: string }> {
-  const names = (await listFiles(invoices.dir)).filter(
-    (name) => name.startsWith("INV-") && name.endsWith(".json"),
-  );
-  const items = [];
-  for (const name of names) {
-    const invoice = await readJson<Invoice>(path.join(invoices.dir, name));
-    items.push({
-      invoice_no: invoice.invoice_no,
-      customer_id: invoice.customer_id,
-      email: invoice.email,
-      status: invoice.review_flagged ? "held" : "sent",
-      message_id: sha256Of(`${invoice.invoice_no}:${invoice.email}`).slice(0, 16),
-    });
-  }
-  const sent = items.filter((item) => item.status === "sent");
-  const byDomain = new Map<string, number>();
-  for (const item of sent) {
-    const domain = item.email.split("@")[1] ?? "unknown";
-    byDomain.set(domain, (byDomain.get(domain) ?? 0) + 1);
-  }
-  const file = await writeJson(invoices.dir, "outbox_index.json", {
-    batch_id: path.basename(invoices.dir),
-    statements_path: statements.path,
-    sent: sent.length,
-    held: items.length - sent.length,
+async function sendInvoices(args: { invoices: { dir: string }; statements: { path: string } }) {
+  const items = await readOutbox(args.invoices.dir);
+  const sent = items.filter((item) => item.status === "sent").length;
+  const file = await writeJson(args.invoices.dir, "outbox_index.json", {
+    batch_id: path.basename(args.invoices.dir),
+    statements_path: args.statements.path,
+    sent,
+    held: items.length - sent,
     items,
   });
-  console.log(
-    `Sent ${sent.length} invoices (simulated), held ${items.length - sent.length}\n` +
-      renderTable(
-        ["domain", "sent"],
-        [...byDomain.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([domain, count]) => [domain, String(count)]),
-        [1],
-      ),
-  );
-  return { sent: sent.length, held: items.length - sent.length, indexPath: file.path };
+  console.log(renderSentReport(items));
+  return { sent, held: items.length - sent, indexPath: file.path };
 }
-
-const batch = customerInvoices.task("resolve_batch", resolveBatch)();
-
-const render = customerInvoices.taskGroup("render");
-const invoices = render.task("render_invoices", renderInvoices)({ batch });
-const statements = render.task("render_statements", renderStatements)({ batch });
-
-customerInvoices.task("send_invoices", sendInvoices)({ invoices, statements });

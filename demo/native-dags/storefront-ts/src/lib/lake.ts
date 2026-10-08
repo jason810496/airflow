@@ -27,6 +27,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { getContext } from "apache-airflow-ts-sdk";
+
 export const TEAM = "storefront";
 export const LATEST_BATCH_VARIABLE = "handoff.storefront.latest_batch";
 
@@ -58,6 +60,11 @@ export function batchFor(runId: string): Batch {
   const businessDate =
     /\d{4}-\d{2}-\d{2}/.exec(runId)?.[0] ?? new Date().toISOString().slice(0, 10);
   return { batchId, businessDate, dir: path.join(lakeRoot(), TEAM, batchId) };
+}
+
+/** The batch of the task that is running now. */
+export function currentBatch(): Batch {
+  return batchFor(getContext().runId);
 }
 
 export interface WrittenFile {
@@ -101,4 +108,23 @@ export async function listFiles(dir: string): Promise<string[]> {
 export async function fileDigest(file: string): Promise<WrittenFile> {
   const content = await readFile(file);
   return { path: file, bytes: content.length, sha256: sha256Of(content) };
+}
+
+/** Writes `_manifest.json`, listing every other file in the batch with its size and sha256. */
+export async function writeManifest(batch: Batch, producedBy: string) {
+  const names = (await listFiles(batch.dir)).filter((name) => name !== "_manifest.json");
+  const files = await Promise.all(
+    names.map(async (name) => {
+      const { bytes, sha256 } = await fileDigest(path.join(batch.dir, name));
+      return { name, bytes, sha256 };
+    }),
+  );
+  await writeJson(batch.dir, "_manifest.json", {
+    team: TEAM,
+    batch_id: batch.batchId,
+    business_date: batch.businessDate,
+    produced_by: producedBy,
+    files,
+  });
+  return files;
 }
