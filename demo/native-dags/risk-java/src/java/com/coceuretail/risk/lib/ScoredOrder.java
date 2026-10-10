@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package com.acme.risk.lib;
+package com.coceuretail.risk.lib;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;

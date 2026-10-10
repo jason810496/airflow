@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Runs the Acme Retail demo on a native Airflow built from this worktree, without Breeze or Docker:
+# Runs the CoC EU Retail demo on a native Airflow built from this worktree, without Breeze or Docker:
 # SQLite, LocalExecutor, Simple auth manager, api-server, scheduler, dag-processor and triggerer.
 #
 #   demo/native-dags/run-local.sh start | stop | status | seed | logs <component>
@@ -69,9 +69,9 @@ load_env() {
         export "${name}=${!name//\/files\//${FILES_ROOT}/}"
     done
 
-    export ACME_LAKE_ROOT="${FILES_ROOT}/demo/lake"
-    export ACME_OUTBOX_ROOT="${FILES_ROOT}/demo/outbox"
-    mkdir -p "${ACME_LAKE_ROOT}" "${ACME_OUTBOX_ROOT}" "${STATE_DIR}/dags" "${LOG_DIR}" "${PID_DIR}"
+    export COCEU_LAKE_ROOT="${FILES_ROOT}/demo/lake"
+    export COCEU_OUTBOX_ROOT="${FILES_ROOT}/demo/outbox"
+    mkdir -p "${COCEU_LAKE_ROOT}" "${COCEU_OUTBOX_ROOT}" "${STATE_DIR}/dags" "${LOG_DIR}" "${PID_DIR}"
 
     export AIRFLOW_HOME="${STATE_DIR}/airflow_home"
     mkdir -p "${AIRFLOW_HOME}"

@@ -1,4 +1,4 @@
-module acme.example/finance
+module coceuretail.example/finance
 
 go 1.25.0
 

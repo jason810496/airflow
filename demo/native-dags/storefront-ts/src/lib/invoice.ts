@@ -144,7 +144,7 @@ export function renderInvoiceHtml(invoice: Invoice): string {
 <style>body{font:14px system-ui;margin:2rem;max-width:48rem}table{border-collapse:collapse;width:100%}
 td,th{border-bottom:1px solid #ddd;padding:.35rem .5rem;text-align:left}.n{text-align:right}</style></head>
 <body>
-<h1>Acme Retail invoice ${escapeHtml(invoice.invoice_no)}</h1>
+<h1>CoC EU Retail invoice ${escapeHtml(invoice.invoice_no)}</h1>
 <p>Customer ${escapeHtml(invoice.customer_id)} (${escapeHtml(invoice.email)})<br>Issued ${escapeHtml(invoice.issued_on)}</p>
 <table><thead><tr><th>Order</th><th>Item</th><th class="n">Qty</th><th class="n">Unit</th><th class="n">Amount</th></tr></thead>
 <tbody>

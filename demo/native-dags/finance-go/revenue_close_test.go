@@ -29,12 +29,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"acme.example/finance/internal/closing"
-	"acme.example/finance/internal/lake"
-	"acme.example/finance/internal/ledger"
-	"acme.example/finance/internal/period"
-	"acme.example/finance/internal/risk"
-	"acme.example/finance/internal/storefront"
+	"coceuretail.example/finance/internal/closing"
+	"coceuretail.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/ledger"
+	"coceuretail.example/finance/internal/period"
+	"coceuretail.example/finance/internal/risk"
+	"coceuretail.example/finance/internal/storefront"
 )
 
 // outcome is what one run of the Dag leaves behind.
@@ -325,11 +325,11 @@ func TestDagShape(t *testing.T) {
 }
 
 // TestRealStorefrontBatch closes a batch that storefront_daily_orders wrote, when the lake of such a
-// batch is named in ACME_TEST_LAKE.
+// batch is named in COCEU_TEST_LAKE.
 func TestRealStorefrontBatch(t *testing.T) {
-	root := os.Getenv("ACME_TEST_LAKE")
+	root := os.Getenv("COCEU_TEST_LAKE")
 	if root == "" {
-		t.Skip("ACME_TEST_LAKE is not set")
+		t.Skip("COCEU_TEST_LAKE is not set")
 	}
 	matches, err := filepath.Glob(filepath.Join(root, "storefront", "*"))
 	require.NoError(t, err)
@@ -337,7 +337,7 @@ func TestRealStorefrontBatch(t *testing.T) {
 
 	for _, inject := range []string{"false", "true"} {
 		e := newEnv(t)
-		t.Setenv("ACME_LAKE_ROOT", root)
+		t.Setenv("COCEU_LAKE_ROOT", root)
 		e.client.variables[lake.StorefrontBatchVariable] = matches[0]
 		e.client.variables["finance.inject_mismatch"] = inject
 		out := runClose(t, e)

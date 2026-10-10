@@ -93,4 +93,4 @@ go tool airflow-go-pack inspect --source ../../../files/bundles/finance/finance
 ```
 
 `demo/native-dags/setup.sh finance` does the same for Linux, which is what Breeze runs. To close a batch that
-`storefront_daily_orders` wrote, run `ACME_TEST_LAKE=<lake root> go test -run TestRealStorefrontBatch -v .`.
+`storefront_daily_orders` wrote, run `COCEU_TEST_LAKE=<lake root> go test -run TestRealStorefrontBatch -v .`.

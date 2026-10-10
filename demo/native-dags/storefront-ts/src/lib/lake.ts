@@ -33,11 +33,11 @@ export const TEAM = "storefront";
 export const LATEST_BATCH_VARIABLE = "handoff.storefront.latest_batch";
 
 export function lakeRoot(): string {
-  return process.env["ACME_LAKE_ROOT"] ?? "/files/demo/lake";
+  return process.env["COCEU_LAKE_ROOT"] ?? "/files/demo/lake";
 }
 
 export function outboxRoot(): string {
-  return process.env["ACME_OUTBOX_ROOT"] ?? "/files/demo/outbox";
+  return process.env["COCEU_OUTBOX_ROOT"] ?? "/files/demo/outbox";
 }
 
 export interface Batch {

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package com.acme.risk.lib;
+package com.coceuretail.risk.lib;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

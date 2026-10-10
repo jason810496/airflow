@@ -29,8 +29,8 @@ import (
 	"sort"
 	"time"
 
-	"acme.example/finance/internal/money"
-	"acme.example/finance/internal/storefront"
+	"coceuretail.example/finance/internal/money"
+	"coceuretail.example/finance/internal/storefront"
 )
 
 // Methods are the payment methods in the order they are reported.

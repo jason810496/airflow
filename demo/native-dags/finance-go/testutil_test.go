@@ -29,9 +29,9 @@ import (
 	"github.com/apache/airflow/go-sdk/airflow"
 	"github.com/apache/airflow/go-sdk/sdk"
 
-	"acme.example/finance/internal/lake"
-	"acme.example/finance/internal/money"
-	"acme.example/finance/internal/storefront"
+	"coceuretail.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/money"
+	"coceuretail.example/finance/internal/storefront"
 )
 
 // fakeClient is the Variables and Connections of a test. The rest of sdk.Client is nil.
@@ -56,8 +56,8 @@ func (c *fakeClient) GetConnection(_ context.Context, id string) (sdk.Connection
 	if id != "payments_gateway" {
 		return sdk.Connection{}, sdk.ConnectionNotFound
 	}
-	login := "acme-finance"
-	return sdk.Connection{ID: id, Type: "http", Host: "payments.internal.acme", Login: &login}, nil
+	login := "coceuretail-finance"
+	return sdk.Connection{ID: id, Type: "http", Host: "payments.internal.coceuretail", Login: &login}, nil
 }
 
 type env struct {
@@ -70,7 +70,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("ACME_LAKE_ROOT", dir)
+	t.Setenv("COCEU_LAKE_ROOT", dir)
 	return &env{
 		t: t, lake: dir, logs: &bytes.Buffer{},
 		client: &fakeClient{variables: map[string]string{

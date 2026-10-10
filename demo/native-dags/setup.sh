@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# Builds the native Dag bundles of the Acme Retail demo and writes the Breeze configuration that
+# Builds the native Dag bundles of the CoC EU Retail demo and writes the Breeze configuration that
 # runs them. Safe to run again.
 #
 # Run it on the host, from anywhere in the worktree (storefront needs Node.js 22+ and pnpm, risk needs
@@ -43,7 +43,7 @@ FILES_DIR="${REPO_ROOT}/files"
 BUNDLES_DIR="${FILES_DIR}/bundles"
 BREEZE_CONFIG_DIR="${FILES_DIR}/airflow-breeze-config"
 DEMO_DIR="${FILES_DIR}/demo"
-SDK_REPO="${ACME_SDK_REPO:-${SCRIPT_DIR}/.m2-repo}"
+SDK_REPO="${COCEU_SDK_REPO:-${SCRIPT_DIR}/.m2-repo}"
 
 BLOCK_BEGIN="# BEGIN native-dags-demo (managed by demo/native-dags/setup.sh, edits inside are overwritten)"
 BLOCK_END="# END native-dags-demo"
@@ -99,7 +99,7 @@ build_storefront() {
     )
 }
 
-# The risk project resolves the Java SDK from a repository inside the demo (ACME_SDK_REPO), never from
+# The risk project resolves the Java SDK from a repository inside the demo (COCEU_SDK_REPO), never from
 # ~/.m2, so the demo always builds against this worktree's SDK. Extra arguments for Gradle, such as
 # --offline, go in GRADLE_ARGS.
 build_java_sdk() {
@@ -123,8 +123,9 @@ build_risk() {
     local project="${SCRIPT_DIR}/risk-java"
     local out="${BUNDLES_DIR}/risk"
     mkdir -p "${out}"
+    rm -f "${project}"/build/bundle/*.jar
     # shellcheck disable=SC2086
-    "${REPO_ROOT}/java-sdk/gradlew" -p "${project}" ${GRADLE_ARGS:-} -PacmeSdkRepo="${SDK_REPO}" test bundle
+    "${REPO_ROOT}/java-sdk/gradlew" -p "${project}" ${GRADLE_ARGS:-} -PcoceuSdkRepo="${SDK_REPO}" test bundle
     rm -f "${out}"/*.jar
     cp "${project}"/build/bundle/*.jar "${out}/"
 }
@@ -208,13 +209,13 @@ write_seed_files() {
 {
   "storefront_api": {
     "conn_type": "http",
-    "host": "storefront.internal.acme",
+    "host": "storefront.internal.coceuretail",
     "schema": "https",
     "description": "Storefront order API. The demo only reads the host, there is no real API."
   },
   "payments_gateway": {
     "conn_type": "http",
-    "host": "payments.internal.acme",
+    "host": "payments.internal.coceuretail",
     "schema": "https",
     "login": "risk-screening",
     "password": "demo-only-not-a-secret",

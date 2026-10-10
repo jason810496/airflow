@@ -1,4 +1,4 @@
-# Acme Retail: native Dags in three languages
+# CoC EU Retail: native Dags in three languages
 
 A demo of Dags written in TypeScript, Java and Go running side by side. Each team owns its own Dag bundle
 and the teams hand work to each other only through `TriggerDagRun` plus a data contract on a shared lake.
@@ -74,7 +74,7 @@ demo/native-dags/run-local.sh status | seed | logs <component> | stop
 ```
 
 It reads `files/airflow-breeze-config/environment_variables.env` and replaces `/files/` with `DEMO_FILES_ROOT`.
-The task runtimes inherit `ACME_LAKE_ROOT` and `ACME_OUTBOX_ROOT`, which point into that root.
+The task runtimes inherit `COCEU_LAKE_ROOT` and `COCEU_OUTBOX_ROOT`, which point into that root.
 
 | Variable | Default |
 | --- | --- |

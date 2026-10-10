@@ -38,7 +38,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"acme.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/lake"
 )
 
 type Action string

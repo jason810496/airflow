@@ -17,15 +17,15 @@
  * under the License.
  */
 
-package com.acme.risk;
+package com.coceuretail.risk;
 
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.AUTO_APPROVE;
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.BLOCK_AND_REFUND;
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.QUEUE_MANUAL_REVIEW;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.AUTO_APPROVE;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.BLOCK_AND_REFUND;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.QUEUE_MANUAL_REVIEW;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.acme.risk.lib.Band;
-import com.acme.risk.lib.Decisions;
+import com.coceuretail.risk.lib.Band;
+import com.coceuretail.risk.lib.Decisions;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;

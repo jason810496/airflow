@@ -30,10 +30,10 @@ import (
 
 	"github.com/apache/airflow/go-sdk/airflow"
 
-	"acme.example/finance/internal/closing"
-	"acme.example/finance/internal/lake"
-	"acme.example/finance/internal/period"
-	"acme.example/finance/internal/risk"
+	"coceuretail.example/finance/internal/closing"
+	"coceuretail.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/period"
+	"coceuretail.example/finance/internal/risk"
 )
 
 const docMD = `

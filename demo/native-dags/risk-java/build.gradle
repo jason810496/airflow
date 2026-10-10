@@ -23,7 +23,7 @@ plugins {
 
 repositories {
     maven {
-        url = uri(providers.gradleProperty("acmeSdkRepo").orElse(file("../.m2-repo").absolutePath).get())
+        url = uri(providers.gradleProperty("coceuSdkRepo").orElse(file("../.m2-repo").absolutePath).get())
     }
     mavenCentral()
 }
@@ -57,5 +57,5 @@ tasks.test {
 }
 
 airflowBundle {
-    mainClass = "com.acme.risk.RiskBundleBuilder"
+    mainClass = "com.coceuretail.risk.RiskBundleBuilder"
 }

@@ -29,7 +29,7 @@ import { toDollars } from "./money.js";
 import { renderPurchaseOrder } from "./report.js";
 import type { ExportSummary, InventoryFile, InventoryItem } from "./types.js";
 
-const DEFAULT_SOURCE_HOST = "storefront.internal.acme";
+const DEFAULT_SOURCE_HOST = "storefront.internal.coceuretail";
 
 async function sourceHost(): Promise<string> {
   const connection = await getClient().getConnection("storefront_api");

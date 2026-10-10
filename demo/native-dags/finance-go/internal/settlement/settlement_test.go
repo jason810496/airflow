@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"acme.example/finance/internal/money"
-	"acme.example/finance/internal/storefront"
+	"coceuretail.example/finance/internal/money"
+	"coceuretail.example/finance/internal/storefront"
 )
 
 func batch() *storefront.Batch {

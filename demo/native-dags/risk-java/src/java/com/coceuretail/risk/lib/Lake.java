@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package com.acme.risk.lib;
+package com.coceuretail.risk.lib;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -40,11 +40,11 @@ public final class Lake {
   private Lake() {}
 
   public static Path lakeRoot() {
-    return Path.of(System.getenv().getOrDefault("ACME_LAKE_ROOT", "/files/demo/lake"));
+    return Path.of(System.getenv().getOrDefault("COCEU_LAKE_ROOT", "/files/demo/lake"));
   }
 
   public static Path outboxRoot() {
-    return Path.of(System.getenv().getOrDefault("ACME_OUTBOX_ROOT", "/files/demo/outbox"));
+    return Path.of(System.getenv().getOrDefault("COCEU_OUTBOX_ROOT", "/files/demo/outbox"));
   }
 
   /** The batch id is the name of the storefront batch directory. */

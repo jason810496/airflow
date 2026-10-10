@@ -45,9 +45,9 @@ const (
 
 const defaultRoot = "/files/demo/lake"
 
-// Root is the lake root, ACME_LAKE_ROOT or /files/demo/lake.
+// Root is the lake root, COCEU_LAKE_ROOT or /files/demo/lake.
 func Root() string {
-	if root := os.Getenv("ACME_LAKE_ROOT"); root != "" {
+	if root := os.Getenv("COCEU_LAKE_ROOT"); root != "" {
 		return root
 	}
 	return defaultRoot

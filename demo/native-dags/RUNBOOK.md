@@ -1,6 +1,6 @@
 # Presenter runbook (about 10 minutes)
 
-Acme Retail has three engineering teams, each with its own language and its own release cadence. Each team
+CoC EU Retail has three engineering teams, each with its own language and its own release cadence. Each team
 writes its pipelines in the language its production code already uses and deploys them as its own Dag bundle.
 Airflow runs all of them, and the teams hand work to each other only through `TriggerDagRun` and a data contract.
 

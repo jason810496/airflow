@@ -20,7 +20,7 @@
 // The SDK comes from a repository inside the demo, never from ~/.m2. setup.sh publishes it there.
 
 pluginManagement {
-    def sdkRepo = providers.gradleProperty("acmeSdkRepo").orElse(file("../.m2-repo").absolutePath).get()
+    def sdkRepo = providers.gradleProperty("coceuSdkRepo").orElse(file("../.m2-repo").absolutePath).get()
     repositories {
         maven { url = uri(sdkRepo) }
         gradlePluginPortal()
@@ -31,4 +31,4 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "0.10.0"
 }
 
-rootProject.name = "acme-risk"
+rootProject.name = "coceuretail-risk"

@@ -21,11 +21,11 @@
 package closing
 
 import (
-	"acme.example/finance/internal/lake"
-	"acme.example/finance/internal/ledger"
-	"acme.example/finance/internal/money"
-	"acme.example/finance/internal/period"
-	"acme.example/finance/internal/settlement"
+	"coceuretail.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/ledger"
+	"coceuretail.example/finance/internal/money"
+	"coceuretail.example/finance/internal/period"
+	"coceuretail.example/finance/internal/settlement"
 )
 
 // Logf writes one line to the task log.

@@ -23,29 +23,29 @@
 // writes the decisions, routes the batch by its worst band (a branch with one task per outcome), alerts
 // payments when the money at risk is high, publishes the decisions through the
 // handoff.risk.latest_decisions Variable and triggers the finance close without waiting for it.
-package com.acme.risk;
+package com.coceuretail.risk;
 
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.AUTO_APPROVE;
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.BLOCK_AND_REFUND;
-import static com.acme.risk.FraudScreeningDagBuilder.TaskIds.QUEUE_MANUAL_REVIEW;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.AUTO_APPROVE;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.BLOCK_AND_REFUND;
+import static com.coceuretail.risk.FraudScreeningDagBuilder.TaskIds.QUEUE_MANUAL_REVIEW;
 import static java.lang.System.Logger.Level.INFO;
 import static java.lang.System.Logger.Level.WARNING;
 
-import com.acme.risk.lib.Band;
-import com.acme.risk.lib.Decisions;
-import com.acme.risk.lib.DeviceReputation;
-import com.acme.risk.lib.GeoMismatch;
-import com.acme.risk.lib.Handoff;
-import com.acme.risk.lib.Lake;
-import com.acme.risk.lib.ModelWeights;
-import com.acme.risk.lib.Money;
-import com.acme.risk.lib.Outbox;
-import com.acme.risk.lib.Payments;
-import com.acme.risk.lib.Report;
-import com.acme.risk.lib.Routes;
-import com.acme.risk.lib.ScoreFile;
-import com.acme.risk.lib.Scorer;
-import com.acme.risk.lib.Velocity;
+import com.coceuretail.risk.lib.Band;
+import com.coceuretail.risk.lib.Decisions;
+import com.coceuretail.risk.lib.DeviceReputation;
+import com.coceuretail.risk.lib.GeoMismatch;
+import com.coceuretail.risk.lib.Handoff;
+import com.coceuretail.risk.lib.Lake;
+import com.coceuretail.risk.lib.ModelWeights;
+import com.coceuretail.risk.lib.Money;
+import com.coceuretail.risk.lib.Outbox;
+import com.coceuretail.risk.lib.Payments;
+import com.coceuretail.risk.lib.Report;
+import com.coceuretail.risk.lib.Routes;
+import com.coceuretail.risk.lib.ScoreFile;
+import com.coceuretail.risk.lib.Scorer;
+import com.coceuretail.risk.lib.Velocity;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -92,7 +92,7 @@ public class FraudScreeningDag {
   static final String THRESHOLD_VARIABLE = "risk.chargeback_threshold_usd_cents";
   static final String FINANCE_DAG_ID = "finance_revenue_close";
   static final String GATEWAY_CONNECTION = "payments_gateway";
-  static final String DEFAULT_GATEWAY_HOST = "payments.internal.acme";
+  static final String DEFAULT_GATEWAY_HOST = "payments.internal.coceuretail";
   static final long DEFAULT_THRESHOLD_USD_CENTS = 500_000;
   static final int CARD_WINDOW_MINUTES = 30;
   static final double REVIEW_FROM = 0.4;

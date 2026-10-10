@@ -17,35 +17,18 @@
  * under the License.
  */
 
-package com.acme.risk.lib;
+package com.coceuretail.risk;
 
-import java.math.BigDecimal;
+import org.apache.airflow.sdk.Bundle;
+import org.apache.airflow.sdk.Server;
 
-/** What happens to an order: approve below the review threshold, block at or above the block threshold. */
-public enum Band {
-  APPROVE("approve"),
-  REVIEW("review"),
-  BLOCK("block");
-
-  public final String id;
-
-  Band(String id) {
-    this.id = id;
+/** Entry point of the risk team's bundle. */
+public class RiskBundleBuilder {
+  public static Bundle build() {
+    return new Bundle().register(FraudScreeningDag.class);
   }
 
-  public static Band of(String id) {
-    for (var band : values()) {
-      if (band.id.equals(id)) {
-        return band;
-      }
-    }
-    throw new IllegalArgumentException("Unknown band: " + id);
-  }
-
-  public static Band of(BigDecimal score, double reviewFrom, double blockFrom) {
-    if (score.compareTo(BigDecimal.valueOf(blockFrom)) >= 0) {
-      return BLOCK;
-    }
-    return score.compareTo(BigDecimal.valueOf(reviewFrom)) >= 0 ? REVIEW : APPROVE;
+  public static void main(String[] args) {
+    Server.create(args).serve(build());
   }
 }

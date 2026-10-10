@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"strings"
 
-	"acme.example/finance/internal/closing"
-	"acme.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/closing"
+	"coceuretail.example/finance/internal/lake"
 	"github.com/apache/airflow/go-sdk/airflow"
 	"github.com/apache/airflow/go-sdk/sdk"
 )

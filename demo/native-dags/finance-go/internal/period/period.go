@@ -25,8 +25,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"acme.example/finance/internal/lake"
-	"acme.example/finance/internal/ledger"
+	"coceuretail.example/finance/internal/lake"
+	"coceuretail.example/finance/internal/ledger"
 )
 
 type Kind string

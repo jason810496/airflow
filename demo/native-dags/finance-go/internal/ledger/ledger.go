@@ -23,11 +23,11 @@ import (
 	"sort"
 	"strings"
 
-	"acme.example/finance/internal/money"
-	"acme.example/finance/internal/report"
-	"acme.example/finance/internal/risk"
-	"acme.example/finance/internal/settlement"
-	"acme.example/finance/internal/storefront"
+	"coceuretail.example/finance/internal/money"
+	"coceuretail.example/finance/internal/report"
+	"coceuretail.example/finance/internal/risk"
+	"coceuretail.example/finance/internal/settlement"
+	"coceuretail.example/finance/internal/storefront"
 )
 
 const (
