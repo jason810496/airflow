@@ -496,3 +496,74 @@ Iterations replaced by a rerun are kept in the database but not shown, except in
   - If `verify_integrity` runs at that moment, it might mark the later placeholder REMOVED.
 - **Possible gap (unverified).** The ORM `TaskInstance.get_previous_ti` (`core/models/taskinstance.py:1925`) has no loop handling. The Execution API route that the worker uses does handle loops.
 - **Possible dead read (unverified).** `xcom_arg.py:352` reads `context["expanded_ti_count"]`, but nothing appears to put that key into the template context, so the code falls back to a `GetTICount` call.
+
+---
+
+## 8. Discussion: what the language SDKs (Go, Java, TypeScript) need
+
+The question here is how much of the two features the Go, Java and TypeScript SDKs must implement, and how much the server can own. The working idea is that **an SDK should be a DSL** that emits the serialized constructs, **plus a thin runtime** that exposes the context. Logic shared by all languages lives in the backend.
+
+### 8.1 Current state
+
+- **No SDK supports either feature.** The `capabilities.yaml` files of `go-sdk`, `java-sdk` and `ts-sdk` mark `task-loops: false` (Dag-definition authoring) and `mapped-tasks: false` (both authoring modes).
+- **Both are optional.** The conformance spec (`contributing-docs/30_new_language_sdk.rst:521,575`) rates both MAY.
+- **Mapped stubs are blocked by the server.** The mapped note reads "Airflow does not bind arguments to mapped stubs yet". `get_arg_bindings` (`core/api_fastapi/execution_api/services/task_instances.py:57`) returns `None` for mapped stubs; per-map-index bindings are deferred to #70570 (ADR-0007, `airflow-core/adr/lang-sdk/0007-taskflow-across-language-boundary.md`).
+
+So the real question is not whether every SDK must support both features. It is how small each SDK's share can be made, so that supporting them is cheap.
+
+### 8.2 Already language-neutral on the server
+
+| Responsibility | Where |
+|---|---|
+| Creating the next iteration and validating the decision | `complete_loop_gate`, `validate_loop_decision` |
+| Scoping an XCom read to the caller's iteration (from the token) | `_build_xcom_read` |
+| Reading loop output from outside the loop; waiting for the newest gate | `select_loop_producer_ids`, `resolve_dependency` |
+| Reruns and trajectories | `select_loop_clear_scope`, `fork_family` |
+| Expanding mapped tasks, map counts per region, trigger rules | `expand_mapped_task` |
+| Loop context sent to the worker | `TIRunContext.loop` from `ti_run` |
+
+### 8.3 Python-only today; proposed to move to the backend
+
+| Python-only today | Proposed home | Why |
+|---|---|---|
+| `mapped_length = len(value)`, which needs the producer to know it has mapped dependants (`_push_xcom_if_needed`) | Server, in `set_xcom` | The server has the serialized Dag and the JSON value, so a stub runtime would not need to know the Dag shape. |
+| Picking a mapped instance's argument: cartesian product, list-of-dicts (`ExpandInput.resolve`) | Server, at `ti_run`, as per-map-index `arg_bindings` | ADR-0007 decision F already says per-map-index resolution needs the task instance. |
+| Loop body checks (one terminal task, no nesting), rerouting outside edges to the gate, expansion over a loop task | Server, as validation and normalization of the serialized Dag in the Dag processor | Every SDK gets the same errors. An SDK may repeat the checks for earlier feedback, but the server decides. |
+| Fixed-count gate (`stop = index >= max`, no user code) | Scheduler, completing the gate the way an `EmptyOperator` is completed | A native Go or Java Dag should not need a Python worker just to count. |
+| Recognizing the gate by its operator class name `"LoopGateOperator"` | Server, via `SerializedLoopTaskGroup.gate_task_id` or a serialized flag | ADR-0007 decision B already rejected recognition by class name. A gate emitted by another SDK cannot honestly claim that class. |
+
+**Design suggestion:** for a mapped instance, have the server resolve an argument to an XCom coordinate (`task_id` plus an offset), not to the value. The SDK then fetches it with `GetXComSequenceItem`. That keeps `ti_run` responses small, and the server only does index arithmetic.
+
+### 8.4 Where "the SDK is only a DSL" does not fully hold
+
+1. **`until` is user code.** The gate runs in the SDK's language. The SDK runs the callable and sends `SucceedTask.loop_decision`, which is already in supervisor schema `2026-10-30`. The server already rechecks the decision; reasons that are too long or contain NUL are rejected by the payload model.
+2. **The decision reason is redacted on the worker.** Only the worker's secrets masker knows what the task masked.
+3. **`map_index_template` is Jinja**, which no other SDK can render. Expose a runtime call instead, for example `ctx.SetMapIndexLabel(...)`; the `SetRenderedMapIndex` message already exists.
+4. **Sequence reads of mapped or loop output** need a small lazy wrapper in each SDK over `GetXComCount`, `GetXComSequenceItem` and `GetXComSequenceSlice`. ADR-0007 decision H currently rejects "a mapped upstream's aggregated output", so that rule would need lifting.
+5. **`.map(f)` is user code.** `zip` and `concat` are pure structure and could be serialized and computed on the server; `map(f)` cannot.
+
+### 8.5 Proposed split
+
+- **SDK, DSL part:** `loop(group, maxIterations, until)` and `expand(...)`, written idiomatically for each language (ADR-0008 decision 1). They emit the serialized loop group, the gate task and the `expand_input`.
+- **SDK, runtime part:**
+  - `loop.index`, `previous` and `result`, built from `LoopContext.terminal_task_id`, `terminal_is_mapped` and the `previous_iteration` flag
+  - `map_index` and `expanded_ti_count`
+  - a lazy sequence
+  - returning a gate decision
+  - setting a map-index label
+- **Backend, done once:**
+  - compute `mapped_length` on the server
+  - per-map-index bindings (#70570)
+  - validate and normalize loops at parse time
+  - evaluate fixed-count gates on the server
+  - identify the gate without its class name
+
+### 8.6 Risks and open points
+
+- **One implementation, not two.** If the server takes over `mapped_length` and argument picking, the Python Task SDK should use the server path too, behind a new Execution API version. The server should accept and ignore `mapped_length` from older clients. Otherwise two implementations can drift.
+- **Loop body stubs may nearly work already (not verified).** In a Python Dag, a stub task inside a loop already receives same-iteration XComs, because the server scopes reads by the caller's token. It may need only the `loop` context exposed. The capability matrix lists `task-loops` only under Dag-definition authoring, so this case is missing from it. It needs a test.
+- **Suggested order:**
+  1. `mapped-tasks` for stub tasks: common in Python Dags, and the server work is already planned.
+  2. The backend changes in 8.3.
+  3. `task-loops` for natively authored Dags.
+- **Issue apache/airflow#75184** (handling the common part in the backend) has not been read for this note yet. Check the proposals above against it.
