@@ -30,6 +30,7 @@
 
 import type { CoordinatorClient } from "./client.js";
 import type { LogChannel } from "./log-channel.js";
+import { LazyXComSequence } from "./xcom-sequence.js";
 import type {
   ArgBindings,
   ArgValueSchema,
@@ -81,6 +82,11 @@ export interface ArgBindingDeps {
   readonly logs: LogChannel;
   /** Renames the handler declared with `withArgNames`, which beat folding. */
   readonly argNames: ReadonlyMap<string, string>;
+  /**
+   * Whether the output of upstream `taskId` is read as an `XComSequence` of all its values rather
+   * than as one value: true for a task of a loop the running task is outside of.
+   */
+  readonly readsAsSequence?: (taskId: string) => boolean;
 }
 
 /**
@@ -118,12 +124,15 @@ export async function resolveArgs(
 
   // Every upstream pull in flight at once, so a task called with four of them
   // waits for one round-trip rather than four.
-  const resolveAll = (): Promise<[string, JsonValue][]> =>
+  const resolveAll = (): Promise<[string, unknown][]> =>
     Promise.all(
-      bindings.map(async (binding): Promise<[string, JsonValue]> => [
+      bindings.map(async (binding): Promise<[string, unknown]> => [
         binding.name,
         binding.kind === "xcom"
-          ? await pullXComArg(binding, deps.client)
+          ? deps.readsAsSequence?.(binding.task_id)
+            ? // Nothing is fetched until the handler reads it, as Python's LazyXComSequence does.
+              new LazyXComSequence(deps.client, { key: RETURN_VALUE_KEY, taskId: binding.task_id })
+            : await pullXComArg(binding, deps.client)
           : literalValue(binding.value),
       ]),
     );
@@ -230,7 +239,7 @@ function abortError(signal: AbortSignal): Error {
 function makeArgsProxy(
   names: readonly string[],
   byFold: ReadonlyMap<string, string>,
-  values: ReadonlyMap<string, JsonValue>,
+  values: ReadonlyMap<string, unknown>,
   deps: ArgBindingDeps,
 ): object {
   const { argNames, logs } = deps;

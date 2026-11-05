@@ -376,6 +376,58 @@ Exactly one case runs, and there is no default: a decider that returns anything 
 returned and what it could have returned. To run several tasks together on one outcome, put them behind a
 single task, or give each its own ``dag.if``.
 
+Task loops
+~~~~~~~~~~
+
+``loop`` makes a task group run again and again, up to a bound, until a handler says stop. Fill the group as
+usual, then close it with ``loop``:
+
+.. code-block:: typescript
+
+    import { getLoop, type LoopDecision, type XComSequence } from "@apache-airflow/ts-sdk";
+
+    type Metrics = { estimate: number; error: number };
+
+    const refine = dag.taskGroup("refine");
+
+    const improve = refine.task(async function improve(): Promise<number> {
+      const loop = await getLoop();
+      const estimate = loop.getPrevious<Metrics>()?.estimate ?? 1.0;
+      return (estimate + 2.0 / estimate) / 2.0;
+    });
+    const evaluate = refine.task(async function evaluate({ estimate }: { estimate: number }) {
+      return { estimate, error: Math.abs(estimate * estimate - 2) };
+    });
+
+    async function accurateEnough({ result }: { result: Metrics }): Promise<LoopDecision> {
+      return { stop: result.error < 1e-6, reason: `error ${result.error.toExponential(1)}` };
+    }
+
+    const evaluated = evaluate({ estimate: improve() });
+    const refinement = refine.loop(accurateEnough, { result: evaluated }, { maxIterations: 10 });
+
+    report({ history: evaluated });   // every iteration's Metrics, as an XComSequence
+    refinement.before(cleanup());     // after the whole loop, not after one iteration
+
+The handler runs as the loop's gate task after every iteration, and reads what the body produced through its
+inputs, wired as a task's are. It returns ``{ stop, reason }`` or a plain boolean; the reason, at most 512 bytes,
+is shown next to the iteration in the UI, with any secret Airflow knows of masked. The gate is an ordinary task
+of the group, named after the handler, and the options object takes task options, such as ``taskId`` and
+``retries``, besides ``maxIterations``. A handler that still says to continue at ``maxIterations`` fails the
+gate. Without a handler, ``poll.loop({ maxIterations: 3 })`` runs the group exactly that many times.
+
+``getLoop()`` gives a task of the body, or the handler, its ``index`` (counting from 1), ``maxIterations`` and
+the terminal task's result of the iteration before, as ``previous`` or the typed ``getPrevious<T>()``; it is
+``null`` at the first iteration. It is awaited because it reads that result from Airflow, and throws in a task
+outside a loop.
+
+The body has to end in exactly one task, its terminal task. Inside the loop, a body task's reference reads one
+iteration's value. A task outside the loop that takes it receives an ``XComSequence`` of every iteration's value
+instead, with ``length()``, ``at(i)``, ``slice()`` and ``for await``, each read when asked for. That task runs
+after the last iteration. To order a task after the loop without taking a value, use the reference ``loop``
+returns: an order-only edge from a body task to a task outside the loop is rejected, since it would follow a
+single iteration. A loop cannot be nested inside another. See :ref:`loops-and-mapped-tasks`.
+
 Triggering another Dag
 ~~~~~~~~~~~~~~~~~~~~~~
 

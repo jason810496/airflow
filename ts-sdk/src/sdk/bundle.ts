@@ -215,11 +215,19 @@ export function validateOwnBundle(value: unknown, accessor: string): asserts val
 /**
  * Internal: what kind of task the runtime is to run, and what it needs to run it.
  *
- * A `handler` runs the author's function. An `operator` is one the SDK runs itself,
- * with no handler: its options come from the factory the task was declared with.
+ * A `handler` runs the author's function; `dag` is absent for a handler of a Python Dag's task. A
+ * `loopGate` decides whether its loop runs again, with the author's `until` handler or, without
+ * one, by counting. An `operator` is one the SDK runs itself, with no handler: its options come
+ * from the factory the task was declared with.
  */
 export type BundleTask =
-  | { readonly kind: "handler"; readonly fn: TaskFunction }
+  | { readonly kind: "handler"; readonly fn: TaskFunction; readonly dag?: Dag }
+  | {
+      readonly kind: "loopGate";
+      readonly fn: TaskFunction;
+      readonly hasUntil: boolean;
+      readonly dag: Dag;
+    }
   | { readonly kind: "operator"; readonly operator: Operator<never, unknown>; readonly dag: Dag };
 
 /** Internal: the task `taskId` of Dag `dagId`, or `undefined` when this bundle does not provide it. */
@@ -238,7 +246,10 @@ export function getBundleTask(
   const record = getDagTaskRecords(dag).get(taskId);
   if (record === undefined) return undefined;
   if (record.operator) return { kind: "operator", operator: record.operator, dag };
-  return { kind: "handler", fn: record.fn };
+  if (record.loopGate) {
+    return { kind: "loopGate", fn: record.fn, hasUntil: record.loopGate.hasUntil, dag };
+  }
+  return { kind: "handler", fn: record.fn, dag };
 }
 
 /** Internal: finalize every Dag this bundle declared in TypeScript, so no task
