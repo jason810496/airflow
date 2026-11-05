@@ -107,7 +107,6 @@ from airflow.models.dynamic_region import SENTINEL_REGION_ID, AmbiguousProducerE
 from airflow.models.hitl import HITLDetail
 from airflow.models.log import Log
 from airflow.models.task_coordinates import (
-    LOOP_GATE_OPERATOR,
     TaskCoordinateResolver,
     build_coordinate_filters,
     get_public_region,
@@ -520,13 +519,13 @@ def ti_update_state(
     loop_gate = None
     if isinstance(ti_patch_payload, (TISuccessStatePayload, TITerminalStatePayload)):
         gate_run = session.execute(
-            select(TI.dag_id, TI.run_id).where(
+            select(TI.dag_id, TI.run_id, TI.task_id, TI.region_id, TI.dag_version_id, TI.operator).where(
                 TI.id == task_instance_id,
                 TI.working_set.is_(True),
-                TI.operator == LOOP_GATE_OPERATOR,
+                TI.region_id != SENTINEL_REGION_ID,
             )
         ).one_or_none()
-        if gate_run is not None:
+        if gate_run is not None and TaskCoordinateResolver(dag_bag, session).is_loop_gate(gate_run):
             session.execute(
                 select(DR).where(DR.dag_id == gate_run.dag_id, DR.run_id == gate_run.run_id).with_for_update()
             ).scalar_one()

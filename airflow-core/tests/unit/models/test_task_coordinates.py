@@ -30,6 +30,7 @@ from airflow.models.dag_version import DagVersion
 from airflow.models.dagbag import DBDagBag
 from airflow.models.dynamic_region import AmbiguousProducerError, DynamicRegion
 from airflow.models.task_coordinates import (
+    LOOP_GATE_OPERATOR,
     TaskCoordinateResolver,
     build_coordinate_filters,
     get_public_map_index,
@@ -293,6 +294,29 @@ def test_public_map_index_and_plain_expansion_of_a_persisted_task_instance(
     with assert_queries_count(expected_queries):
         assert get_public_map_index(ti, session=session) == expected_index
     assert is_plain_expansion(ti, session=session) is expected_plain
+
+
+@pytest.mark.parametrize(
+    ("task_id", "operator", "expected"),
+    [
+        pytest.param("body.__loop_gate", "TypeScriptOperator", True, id="gate-of-another-language"),
+        pytest.param("body.producer", LOOP_GATE_OPERATOR, False, id="body-task-named-like-a-gate"),
+        pytest.param("removed", LOOP_GATE_OPERATOR, True, id="removed-python-gate"),
+        pytest.param("removed", "TypeScriptOperator", False, id="removed-other-task"),
+    ],
+)
+def test_loop_gate_is_read_off_its_pinned_loop(loop_coordinates, session, task_id, operator, expected):
+    dr, producer, *_ = loop_coordinates
+    resolver = TaskCoordinateResolver(DBDagBag(), session)
+
+    assert resolver.is_loop_gate_task(producer.dag_version_id, task_id, operator=operator) is expected
+
+
+def test_task_instance_outside_every_region_is_not_a_loop_gate(loop_coordinates, session):
+    *_, outside = loop_coordinates
+    outside.operator = LOOP_GATE_OPERATOR
+
+    assert TaskCoordinateResolver(DBDagBag(), session).is_loop_gate(outside) is False
 
 
 @pytest.fixture

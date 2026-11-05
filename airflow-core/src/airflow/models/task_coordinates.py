@@ -58,7 +58,13 @@ if TYPE_CHECKING:
 
 
 LOOP_GATE_OPERATOR = "LoopGateOperator"
-"""Operator class name the Task SDK gives the gate task of a loop."""
+"""
+Operator class name the Python Task SDK gives the gate task of a loop.
+
+A gate is found by its loop's ``gate_task_id`` (see :func:`is_loop_gate`), since a gate another
+language SDK emits carries that SDK's own operator name. This name only identifies the gate of a
+task instance whose pinned definition is gone.
+"""
 
 
 @attrs.frozen(kw_only=True)
@@ -135,6 +141,19 @@ def enclosing_loop(task: SerializedOperator) -> SerializedLoopTaskGroup | None:
             return group
         group = group.parent_group
     return None
+
+
+def is_loop_gate(task: SerializedOperator) -> bool:
+    """Tell whether ``task`` is the gate of the loop holding it, as its loop's ``gate_task_id`` names."""
+    loop = enclosing_loop(task)
+    return loop is not None and loop.gate_task_id == task.task_id
+
+
+class GateCandidate(TaskCoordinate, Protocol):
+    """Coordinates of a task instance that may be a loop gate, with the operator it recorded."""
+
+    @property
+    def operator(self) -> str | None: ...
 
 
 def mapped_region_expression(model) -> ColumnElement[bool]:
@@ -375,6 +394,24 @@ class TaskCoordinateResolver:
         if dag is None or dag.dag_id != dag_id:
             raise ValueError(f"Pinned Dag for {dag_id}/{run_id} not found")
         return dag.get_task(task_id)
+
+    def is_loop_gate(self, ti: GateCandidate) -> bool:
+        """
+        Tell whether ``ti`` ran the gate of its loop, read off the definition pinned to it.
+
+        A task instance whose pinned definition is gone is a gate only when it recorded the Python Task
+        SDK's gate operator, the one trace of the loop it has left.
+        """
+        if ti.region_id == SENTINEL_REGION_ID:
+            return False
+        return self.is_loop_gate_task(ti.dag_version_id, ti.task_id, operator=ti.operator)
+
+    def is_loop_gate_task(self, dag_version_id: UUID | None, task_id: str, *, operator: str | None) -> bool:
+        """Tell whether ``task_id`` of Dag version ``dag_version_id`` is a loop gate, as :meth:`is_loop_gate`."""
+        dag = None if dag_version_id is None else self.get_dag(dag_version_id)
+        if dag is None or not dag.has_task(task_id):
+            return operator == LOOP_GATE_OPERATOR
+        return is_loop_gate(dag.get_task(task_id))
 
     def find_task(self, ti: TaskCoordinate) -> SerializedOperator | None:
         """Return the task of ``ti`` from its pinned Dag, or None when that Dag or the task is gone."""
