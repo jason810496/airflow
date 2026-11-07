@@ -19,12 +19,19 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import zlib
 from collections.abc import Iterable
 from contextlib import contextmanager
 from textwrap import dedent
 from typing import Any
 
 import sqlalchemy as sa
+import structlog
+
+from airflow.serialization import versions
+from airflow.utils.hashlib_wrapper import md5
+
+log = structlog.get_logger(__name__)
 
 
 @contextmanager
@@ -171,8 +178,6 @@ def hash_serialized_dag(data: dict[str, Any]) -> str:
     over time. Releases that write a date stamp leave ``__version`` out of the hash; releases up to
     3.4, which write an integer stamp, include it.
     """
-    from airflow.utils.hashlib_wrapper import md5
-
     data_ = _sort_serialized_dag_dict(data)
     data_["dag"].pop("fileloc", None)
     data_["dag"].pop("bundle_name", None)
@@ -215,8 +220,6 @@ def get_serialized_dag_downgrade_target(*, below: int | str | None = None) -> in
     ``requires_migration`` stops the downgrade there: that change's own, older migration converts its
     part and then continues the downgrade, passing its version as *below* so the stop is not hit again.
     """
-    from airflow.serialization import versions
-
     airflow_version = _get_destination_airflow_version()
     min_index = versions.VERSIONS.index(versions.get_version(versions.MIN_DOWNGRADE_VERSION))
     # Below 3.0.0 migration 0047 deletes every serialized Dag, so version 2 is far enough.
@@ -254,13 +257,6 @@ def downgrade_serialized_dags(conn, *, to: int | str) -> None:
     ``dag_hash``), so it can run from any migration. A row whose format this release does not know is
     left as it is and logged.
     """
-    import zlib
-
-    import structlog
-
-    from airflow.serialization import versions
-
-    log = structlog.get_logger(__name__)
     data_type = _get_serialized_dag_data_type(conn)
     set_data = f"CAST(:data AS {data_type})" if data_type else ":data"
     select_ids = sa.text("SELECT id FROM serialized_dag WHERE id > :last_id ORDER BY id LIMIT :batch_size")

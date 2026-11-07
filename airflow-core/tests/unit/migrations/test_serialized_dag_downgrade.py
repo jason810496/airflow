@@ -26,6 +26,7 @@ from unittest import mock
 import alembic.context
 import pytest
 import sqlalchemy as sa
+from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 from airflow import settings
@@ -147,7 +148,8 @@ def script() -> ScriptDirectory:
 
 
 def _resolve(script, destination, *, below=None, current=None):
-    migration_context = mock.Mock(**{"get_current_revision.return_value": current})
+    migration_context = mock.create_autospec(MigrationContext, instance=True)
+    migration_context.get_current_revision.return_value = current
     with (
         mock.patch.object(alembic.context, "script", script, create=True),
         mock.patch.object(alembic.context, "get_revision_argument", return_value=destination, create=True),
