@@ -1,0 +1,59 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""
+Downgrade stored serialized Dags to the format of the destination release.
+
+Revision ID: 8df51982cf33
+Revises: a8b48633fa60
+Create Date: 2026-11-07 00:00:00.000000
+
+"""
+
+from __future__ import annotations
+
+from textwrap import dedent
+
+from alembic import context, op
+
+from airflow.migrations.utils import downgrade_serialized_dags, get_serialized_dag_downgrade_target
+
+revision = "8df51982cf33"
+down_revision = "a8b48633fa60"
+branch_labels = None
+depends_on = None
+airflow_version = "3.5.0"
+
+
+def upgrade():
+    """Nothing to do: serialized Dags are upgraded when they are read."""
+
+
+def downgrade():
+    """Downgrade serialized Dags to the format the destination release reads."""
+    if context.is_offline_mode():
+        print(
+            dedent("""
+            ------------
+            --  Serialized Dags need an online downgrade: run `airflow db downgrade` without
+            --  --show-sql-only to convert them to the format of the destination release.
+            ------------
+            """)
+        )
+        return
+    downgrade_serialized_dags(op.get_bind(), to=get_serialized_dag_downgrade_target())

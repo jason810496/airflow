@@ -51,6 +51,7 @@ from alembic import context, op
 
 from airflow._shared.timezones import timezone
 from airflow.configuration import conf
+from airflow.migrations.utils import downgrade_serialized_dags, get_serialized_dag_downgrade_target
 from airflow.serialization.enums import Encoding
 from airflow.utils.hashlib_wrapper import md5
 from airflow.utils.sqlalchemy import UtcDateTime
@@ -242,6 +243,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove changes that were added to enable adding DeadlineAlerts to the UI."""
     migrate_deadline_alert_data_back_to_serialized_dag()
+    if not context.is_offline_mode():
+        # The 3.5 migration stopped the format downgrade at the version holding this change;
+        # finish it now that the deadline alerts are inline again.
+        downgrade_serialized_dags(op.get_bind(), to=get_serialized_dag_downgrade_target(below="2026-04-06"))
 
     conn = op.get_bind()
     dialect_name = conn.dialect.name

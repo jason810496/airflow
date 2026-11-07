@@ -29,8 +29,9 @@ from __future__ import annotations
 
 from textwrap import dedent
 
-import sqlalchemy as sa
 from alembic import context, op
+
+from airflow.migrations.utils import downgrade_serialized_dags
 
 # revision identifiers, used by Alembic.
 revision = "cc92b33c6709"
@@ -68,132 +69,4 @@ def downgrade():
         )
         return
 
-    import gzip
-    import json
-
-    connection = op.get_bind()
-    dialect = connection.dialect.name
-
-    if dialect == "postgresql":
-        # PostgreSQL - pre-filter v3 DAGs to avoid parsing all rows
-        connection.execute(
-            sa.text("""
-                UPDATE serialized_dag
-                SET data = jsonb_set(
-                    (data::jsonb - 'client_defaults'),
-                    '{__version}',
-                    '2'
-                )::json
-                WHERE id IN (
-                    SELECT id FROM serialized_dag
-                    WHERE data->>'__version' = '3'
-                    AND data_compressed IS NULL
-                )
-            """)
-        )
-    elif dialect == "mysql":
-        connection.execute(
-            sa.text("""
-                UPDATE serialized_dag
-                SET data = JSON_SET(
-                    JSON_REMOVE(data, '$.client_defaults'),
-                    '$.__version',
-                    2
-                )
-                WHERE JSON_EXTRACT(data, '$.__version') = '3'
-                AND data_compressed IS NULL
-            """)
-        )
-    else:
-        json_functions_available = False
-        try:
-            connection.execute(sa.text("SELECT JSON_SET('{}', '$.test', 'value')")).fetchone()
-            json_functions_available = True
-            print("SQLite JSON functions detected, using optimized SQL approach")
-        except Exception:
-            print("SQLite JSON functions not available, using Python fallback for JSON processing")
-
-        if json_functions_available:
-            connection.execute(
-                sa.text("""
-                    UPDATE serialized_dag
-                    SET data = JSON_SET(
-                        JSON_REMOVE(data, '$.client_defaults'),
-                        '$.__version',
-                        2
-                    )
-                    WHERE JSON_EXTRACT(data, '$.__version') = '3'
-                    AND data_compressed IS NULL
-                """)
-            )
-        else:
-            result = connection.execute(
-                sa.text("""
-                    SELECT id, data
-                    FROM serialized_dag
-                    WHERE data_compressed IS NULL
-                """)
-            )
-
-            for row in result:
-                dag_id, data_json = row
-                try:
-                    if data_json is None:
-                        continue
-
-                    dag_data = json.loads(data_json)
-
-                    if dag_data.get("__version") != 3:
-                        continue
-
-                    if "client_defaults" in dag_data:
-                        del dag_data["client_defaults"]
-                    dag_data["__version"] = 2
-
-                    new_json = json.dumps(dag_data)
-                    connection.execute(
-                        sa.text("UPDATE serialized_dag SET data = :data WHERE id = :id"),
-                        {"data": new_json, "id": dag_id},
-                    )
-
-                except Exception as e:
-                    print(f"Failed to downgrade uncompressed DAG {dag_id}: {e}")
-                    continue
-    try:
-        result = connection.execute(
-            sa.text("""
-                SELECT id, data_compressed
-                FROM serialized_dag
-                WHERE data_compressed IS NOT NULL
-            """)
-        )
-
-        for row in result:
-            dag_id, compressed_data = row
-            try:
-                if compressed_data is None:
-                    continue
-
-                decompressed = gzip.decompress(compressed_data)
-                dag_data = json.loads(decompressed)
-
-                if dag_data.get("__version") != 3:
-                    continue
-
-                if "client_defaults" in dag_data:
-                    del dag_data["client_defaults"]
-                dag_data["__version"] = 2
-
-                new_compressed = gzip.compress(json.dumps(dag_data).encode("utf-8"))
-                connection.execute(
-                    sa.text("UPDATE serialized_dag SET data_compressed = :data WHERE id = :id"),
-                    {"data": new_compressed, "id": dag_id},
-                )
-
-            except Exception as e:
-                print(f"Failed to downgrade compressed DAG {dag_id}: {e}")
-                continue
-
-    except Exception as e:
-        print(f"Failed to process compressed DAGs during downgrade: {e}")
-        raise
+    downgrade_serialized_dags(op.get_bind(), to=2)
