@@ -51,8 +51,15 @@ private val defaultsMapper = ObjectMapper()
 private val OMITTED_TASK_KEYS = setOf("email_on_failure", "email_on_retry")
 
 /**
+ * The `__version` stamped into a serialized Dag: the newest version in
+ * airflow-core/src/airflow/serialization/versions/. Core rejects a version it
+ * does not know, so a Dag stamped with this one needs Airflow 3.5 or later.
+ */
+internal const val DAG_SERIALIZATION_VERSION = "2027-02-28"
+
+/**
  * Processes a [DagFileParseRequest] by serialising every Dag registered on
- * [bundle] to DagSerialization v3 and returning the result as a
+ * [bundle] with DagSerialization and returning the result as a
  * DagFileParsingResult body.
  *
  * A Dag that cannot be serialized becomes an import error rather than taking
@@ -70,7 +77,7 @@ internal fun parseDags(
   val failures = mutableListOf<String>()
   bundle.dags.values.forEach { dag ->
     runCatching { serializeDag(dag, fileloc, relativeFileloc) }
-      .onSuccess { serializedDags += mapOf("data" to mapOf("__version" to 3, "dag" to it)) }
+      .onSuccess { serializedDags += mapOf("data" to mapOf("__version" to DAG_SERIALIZATION_VERSION, "dag" to it)) }
       .onFailure { failures += "Dag \"${dag.id}\": ${it.message ?: it.javaClass.name}" }
   }
   return linkedMapOf<String, Any?>(

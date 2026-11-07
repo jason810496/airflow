@@ -149,7 +149,7 @@ Serialized Dags now include a ``client_defaults`` section that contains common d
 .. code-block:: json
 
     {
-      "__version": 3,
+      "__version": "2027-02-28",
       "client_defaults": {
         "tasks": {
           "retry_delay": 300.0,
@@ -227,7 +227,9 @@ Any Task SDK implementation must:
    - Dag serialization: Produce JSON that validates against schema. Example: ``https://airflow.apache.org/schemas/dag-serialization/v2.json``
    - Task execution: Support runtime communication via Execution API schema. Example: ``https://airflow.apache.org/schemas/execution-api/2025-05-20.json``
 2. **Include client_defaults**: Optionally, provide SDK-specific defaults in the ``client_defaults.tasks`` section
-3. **Use proper versioning**: Include ``__version`` field to indicate serialization format
+3. **Use proper versioning**: Include ``__version`` field to indicate serialization format. Up to
+   Airflow 3.4 it is ``3``; from Airflow 3.5 it is the ``YYYY-MM-DD`` id of the newest format version,
+   and Airflow rejects a Dag stamped with a version it does not know.
 
 **Server Guarantees:**
 As long as SDKs conform to both schema contracts, Airflow server components will:

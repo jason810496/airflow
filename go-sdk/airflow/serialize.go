@@ -39,10 +39,10 @@ import (
 // same directory.
 
 // dagSerializationVersion is the __version of a serialized Dag. It is the SERIALIZER_VERSION that
-// Airflow core's DagSerialization checks when it loads a serialized Dag. The supervisor schema has
-// versions named by date, which Airflow negotiates with each runtime, but the Dag JSON that a
-// bundle returns has only this number.
-const dagSerializationVersion = 3
+// Airflow core's DagSerialization checks when it loads a serialized Dag: the newest version in
+// airflow-core/src/airflow/serialization/versions/. Core rejects a version it does not know, so a
+// Dag stamped with this one needs Airflow 3.5 or later.
+const dagSerializationVersion = "2027-02-28"
 
 // A task that runs a Go function gets this task_type and _task_module, where a task of a Python Dag
 // names the class and the module of its operator. Airflow never imports _task_module, so the two

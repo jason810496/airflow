@@ -27,7 +27,8 @@ from tests_common.pytest_plugin import AIRFLOW_ROOT_PATH
 GENERATED_FIELDS_PATH = AIRFLOW_ROOT_PATH / "ts-sdk" / "src" / "generated" / "dag-schema-fields.ts"
 
 SERIALIZATION_VERSION_PATTERN = re.compile(
-    r"^export const SERIALIZATION_VERSION = (?P<version>\d+);$", re.MULTILINE
+    r'^export const SERIALIZATION_VERSION = (?:(?P<version>\d+)|"(?P<date>\d{4}-\d{2}-\d{2})");$',
+    re.MULTILINE,
 )
 
 
@@ -37,16 +38,17 @@ SERIALIZATION_VERSION_PATTERN = re.compile(
 )
 def test_ts_sdk_pins_the_current_serialization_version():
     """
-    The schema constrains ``__version`` only to a positive integer, so the TypeScript SDK
+    The schema constrains ``__version`` only to a positive integer or a date, so the TypeScript SDK
     pins it by hand. Without this check, bumping the serializer would leave the SDK emitting
     Dags stamped with a version core no longer writes.
     """
     match = SERIALIZATION_VERSION_PATTERN.search(GENERATED_FIELDS_PATH.read_text(encoding="utf-8"))
     assert match is not None, f"No SERIALIZATION_VERSION export found in {GENERATED_FIELDS_PATH}"
 
-    assert int(match.group("version")) == DagSerialization.SERIALIZER_VERSION, (
+    pinned = int(match.group("version")) if match.group("version") else match.group("date")
+    assert pinned == DagSerialization.SERIALIZER_VERSION, (
         f"{GENERATED_FIELDS_PATH.relative_to(AIRFLOW_ROOT_PATH)} pins serialization version "
-        f"{match.group('version')}, but DagSerialization.SERIALIZER_VERSION is "
+        f"{pinned!r}, but DagSerialization.SERIALIZER_VERSION is "
         f"{DagSerialization.SERIALIZER_VERSION}. Update SERIALIZATION_VERSION in "
         "ts-sdk/scripts/generate-dag-schema.mjs, re-run `pnpm run generate:dag-schema`, and make "
         "sure the SDK still emits Dags core can read."

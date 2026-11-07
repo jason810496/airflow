@@ -46,6 +46,7 @@ import org.apache.airflow.sdk.Task
 import org.apache.airflow.sdk.TaskGroupRef
 import org.apache.airflow.sdk.TaskRef
 import org.apache.airflow.sdk.TriggerDagRun
+import org.apache.airflow.sdk.execution.DAG_SERIALIZATION_VERSION
 import org.apache.airflow.sdk.execution.serializeDag
 import org.apache.airflow.sdk.internal.Field
 import org.apache.airflow.sdk.internal.FieldType
@@ -178,7 +179,7 @@ fun main(args: Array<String>) {
   cases.forEach { bundle.register(buildDag(it)) }
   val serialized =
     bundle.dags.values.associate { dag ->
-      dag.id to mapOf("__version" to 3, "dag" to serializeDag(dag, "", "."))
+      dag.id to mapOf("__version" to DAG_SERIALIZATION_VERSION, "dag" to serializeDag(dag, "", "."))
     }
   ObjectMapper().writerWithDefaultPrettyPrinter().writeValue(File(args[1]), serialized)
 }

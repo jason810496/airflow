@@ -465,7 +465,7 @@ internal class SerdeTest {
     val dags = result["serialized_dags"] as List<*>
     assertEquals(1, dags.size)
     val data = (dags[0] as Map<*, *>)["data"] as Map<*, *>
-    assertEquals(3, data["__version"])
+    assertEquals("2027-02-28", data["__version"])
     val dag = data["dag"] as Map<*, *>
     assertEquals("d", dag["dag_id"])
     assertEquals("app/dags.jar", dag["relative_fileloc"])

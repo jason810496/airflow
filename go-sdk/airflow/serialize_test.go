@@ -115,7 +115,7 @@ func TestSerializeWritesTheWholeDag(t *testing.T) {
 	Bundle().Register(dag)
 
 	assertJSON(t, `{
-		"__version": 3,
+		"__version": "2027-02-28",
 		"dag": {
 			"dag_id": "etl",
 			"fileloc": "/bundles/app/etl",

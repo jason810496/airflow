@@ -853,7 +853,7 @@ describe("coordinator runtime integration", () => {
         "test_dag",
         "other_dag",
       ]);
-      expect(dags[0]!.data.__version).toBe(3);
+      expect(dags[0]!.data.__version).toBe("2027-02-28");
       expect((dags[0]!.data.dag as Record<string, unknown>).relative_fileloc).toBe("test.mjs");
       expect(body.import_errors).toBeUndefined();
     });

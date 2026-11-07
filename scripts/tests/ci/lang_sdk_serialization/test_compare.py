@@ -41,7 +41,7 @@ REAL_TEST_DAGS = TEST_DAGS
 def build_serialized(fileloc: str, tasks: list[dict]) -> dict:
     return {
         "d": {
-            "__version": 3,
+            "__version": "2027-02-28",
             "dag": {
                 "dag_id": "d",
                 "fileloc": fileloc,
@@ -148,8 +148,8 @@ def test_accepts_the_differences_an_sdk_is_allowed():
             id="task-encoding",
         ),
         pytest.param(
-            lambda sdk: sdk["d"].update(__version=4),
-            ["d: __version is 4, Python writes 3"],
+            lambda sdk: sdk["d"].update(__version=3),
+            ["d: __version is 3, Python writes 2027-02-28"],
             id="version",
         ),
         pytest.param(

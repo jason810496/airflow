@@ -79,11 +79,13 @@ const OUT_PATH = join(ROOT, "src/generated/dag-schema-fields.ts");
  * Version the serializer stamps into a serialized Dag's `__version`.
  *
  * The schema cannot supply it: its root `allOf` only constrains `__version` to
- * a positive integer. A core bump therefore has to be mirrored here by hand,
+ * a positive integer or a `YYYY-MM-DD` date. It is `HEAD.stamp` in
+ * `airflow-core/src/airflow/serialization/versions/`, mirrored here by hand,
  * and `airflow-core/tests/unit/serialization/test_ts_sdk_serialization_version.py`
- * fails until it is.
+ * fails until it is. Core rejects a stamp it does not know, so a Dag stamped
+ * with this version needs a core that writes it (Airflow 3.5 or later).
  */
-export const SERIALIZATION_VERSION = 3;
+export const SERIALIZATION_VERSION = "2027-02-28";
 
 /**
  * Scalar "operator" keys deliberately kept off `TaskSpec`, each with the
@@ -489,9 +491,9 @@ export interface SchemaField {
       taskFields,
     ),
     `/** The \`__version\` the serializer stamps into a serialized Dag. The schema
- *  constrains it only to a positive integer, so it is pinned here and guarded
- *  by a test in airflow-core. */
-export const SERIALIZATION_VERSION = ${SERIALIZATION_VERSION};
+ *  constrains it only to a positive integer or a date, so it is pinned here and
+ *  guarded by a test in airflow-core. */
+export const SERIALIZATION_VERSION = ${JSON.stringify(SERIALIZATION_VERSION)};
 `,
   ].join("\n");
 }

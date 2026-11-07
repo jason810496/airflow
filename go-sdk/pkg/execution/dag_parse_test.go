@@ -47,7 +47,7 @@ func (s *serializedDags) SerializeDags(fileloc, relativeFileloc string) []bundle
 func serializedDag(dagID string) bundle.SerializedDag {
 	return bundle.SerializedDag{
 		DagID: dagID,
-		Data:  map[string]any{"__version": 3, "dag": map[string]any{"dag_id": dagID}},
+		Data:  map[string]any{"__version": "2027-02-28", "dag": map[string]any{"dag_id": dagID}},
 	}
 }
 
@@ -89,8 +89,8 @@ func TestParseDagsAnswersWithTheSerializedDags(t *testing.T) {
 		"type": "DagFileParsingResult",
 		"fileloc": "/bundles/go/etl",
 		"serialized_dags": [
-			{"data": {"__version": 3, "dag": {"dag_id": "etl"}}},
-			{"data": {"__version": 3, "dag": {"dag_id": "reports"}}}
+			{"data": {"__version": "2027-02-28", "dag": {"dag_id": "etl"}}},
+			{"data": {"__version": "2027-02-28", "dag": {"dag_id": "reports"}}}
 		]
 	}`, wireJSON(t, result))
 }
@@ -129,8 +129,8 @@ func TestParseDagsReportsEachDagThatCannotBeSerialized(t *testing.T) {
 		"type": "DagFileParsingResult",
 		"fileloc": "/bundles/go/etl",
 		"serialized_dags": [
-			{"data": {"__version": 3, "dag": {"dag_id": "etl"}}},
-			{"data": {"__version": 3, "dag": {"dag_id": "cleanup"}}}
+			{"data": {"__version": "2027-02-28", "dag": {"dag_id": "etl"}}},
+			{"data": {"__version": "2027-02-28", "dag": {"dag_id": "cleanup"}}}
 		],
 		"import_errors": {
 			"etl": "Dag \"reports\": no schema field\nDag \"audit\": bad field type"
