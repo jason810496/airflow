@@ -103,7 +103,7 @@ The release manager freezes the in-progress file at release, without editing it 
    `__init__.py`.
 2. Add an alembic revision for the new release whose `downgrade()` calls
    `downgrade_serialized_dags(op.get_bind(), to=get_serialized_dag_downgrade_target())`
-   (see `0155_3_5_0_downgrade_serialized_dag_format.py`).
+   (see `0157_3_5_0_downgrade_serialized_dag_format.py`).
 
 **A released version file never changes**: migrations of later releases depend on it.
 The `check-serialized-dag-versions` prek hook fails when any version file other than the

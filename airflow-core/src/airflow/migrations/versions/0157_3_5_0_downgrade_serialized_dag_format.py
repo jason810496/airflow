@@ -20,7 +20,7 @@
 Downgrade stored serialized Dags to the format of the destination release.
 
 Revision ID: 8df51982cf33
-Revises: a8b48633fa60
+Revises: d8c6f3a129b0
 Create Date: 2026-11-07 00:00:00.000000
 
 """
@@ -34,7 +34,7 @@ from alembic import context, op
 from airflow.migrations.utils import downgrade_serialized_dags, get_serialized_dag_downgrade_target
 
 revision = "8df51982cf33"
-down_revision = "a8b48633fa60"
+down_revision = "d8c6f3a129b0"
 branch_labels = None
 depends_on = None
 airflow_version = "3.5.0"
