@@ -37,7 +37,7 @@ from datetime import UTC, datetime, timedelta, timezone as dt_timezone
 from glob import glob
 from pathlib import Path
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import attrs
@@ -201,8 +201,8 @@ executor_config_pod = k8s.V1Pod(
 )
 TYPE = Encoding.TYPE
 VAR = Encoding.VAR
-serialized_simple_dag_ground_truth = {
-    "__version": 3,
+serialized_simple_dag_ground_truth: dict[str, Any] = {
+    "__version": BaseSerialization.SERIALIZER_VERSION,
     "dag": {
         "default_args": {
             "__type": "dict",
@@ -4051,9 +4051,6 @@ def test_handle_v1_serdag():
         },
     ]
 
-    DagSerialization.conversion_v1_to_v2(v1)
-    DagSerialization.conversion_v2_to_v3(v1)
-
     dag = DagSerialization.from_dict(v1)
 
     expected_sdag = copy.deepcopy(serialized_simple_dag_ground_truth)
@@ -4085,6 +4082,19 @@ def test_handle_v1_serdag():
         )
 
     assert getattr(dag, "dag_dependencies") == expected_dag_dependencies
+
+
+def test_handle_v3_serdag():
+    """A blob stamped 3, as any release from 3.1.0 to 3.4 wrote it, reads like the same Dag at head."""
+    v3 = copy.deepcopy(serialized_simple_dag_ground_truth)
+    v3["__version"] = 3
+
+    dag = DagSerialization.from_dict(v3)
+
+    expected = DagSerialization.from_dict(copy.deepcopy(serialized_simple_dag_ground_truth))
+    for f in set(vars(expected)) - {"task_dict", "task_group", "last_loaded"}:
+        assert getattr(dag, f) == getattr(expected, f), f
+    assert dag.task_dict.keys() == expected.task_dict.keys()
 
 
 def test_handle_v2_serdag():

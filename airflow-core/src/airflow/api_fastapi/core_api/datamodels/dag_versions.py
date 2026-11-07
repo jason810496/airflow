@@ -162,8 +162,8 @@ class DagVersionDiffSerializerVersions(BaseModel):
     serialized Dags it describes.
     """
 
-    base: int | None
-    target: int | None
+    base: int | str | None
+    target: int | str | None
 
 
 class DagVersionDiffResponse(BaseModel):

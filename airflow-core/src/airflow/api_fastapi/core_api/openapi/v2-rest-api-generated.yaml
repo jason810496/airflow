@@ -16531,11 +16531,13 @@ components:
         base:
           anyOf:
           - type: integer
+          - type: string
           - type: 'null'
           title: Base
         target:
           anyOf:
           - type: integer
+          - type: string
           - type: 'null'
           title: Target
       type: object

@@ -1548,8 +1548,8 @@ export type DagVersionDiffResponse = {
  * serialized Dags it describes.
  */
 export type DagVersionDiffSerializerVersions = {
-    base: number | null;
-    target: number | null;
+    base: number | string | null;
+    target: number | string | null;
 };
 
 /**

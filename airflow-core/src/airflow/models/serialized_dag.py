@@ -386,6 +386,9 @@ class SerializedDagModel(Base):
         # dag file location.
         data_["dag"].pop("fileloc", None)
         data_["dag"].pop("bundle_name", None)
+        # The format stamp changes at most once per release; leaving it in would give every Dag a
+        # new version on each upgrade even though nothing in the Dag changed.
+        data_.pop("__version", None)
         data_json = json.dumps(data_, sort_keys=True).encode("utf-8")
         return md5(data_json).hexdigest()
 

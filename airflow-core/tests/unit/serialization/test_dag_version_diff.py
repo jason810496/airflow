@@ -39,7 +39,7 @@ from airflow.sdk import DAG, Asset, ExceptionRetryPolicy, Param, TaskGroup, task
 from airflow.sdk.bases.operator import BaseOperator
 from airflow.sdk.definitions._internal.loop import create_loop
 from airflow.sdk.definitions.operator_resources import Resources
-from airflow.serialization import dag_version_diff
+from airflow.serialization import dag_version_diff, versions
 from airflow.serialization.dag_version_diff import (
     _DIFF_V1_DAG_FIELD_CATEGORIES,
     _DIFF_V1_PUBLIC_PARTIAL_TASK_FIELDS,
@@ -345,11 +345,10 @@ def test_json_value_encoding_tracks_serializer() -> None:
 
 
 def test_supported_schema_versions_track_serializer() -> None:
-    # A serializer bump without a matching conversion in _canonicalize_payload_v1 would otherwise
-    # turn every stored Dag in a deployment into unsupported_serialized_dag_schema_version.
-    supported_by_serializer = frozenset(range(1, DagSerialization.SERIALIZER_VERSION + 1))
-
-    assert supported_by_serializer == SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS
+    # A serializer bump the diff cannot read would otherwise turn every stored Dag in a
+    # deployment into unsupported_serialized_dag_schema_version.
+    assert DagSerialization.SERIALIZER_VERSION in SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS
+    assert {1, 2, 3} <= SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS
 
 
 def test_task_field_categories_are_reachable() -> None:
@@ -1798,6 +1797,11 @@ def test_build_diff_classifies_fail_fast_as_schedule() -> None:
             _build_payload(tasks=[]),
             "unsupported_serialized_dag_schema_version:99",
         ),
+        (
+            {"__version": "2099-01-01", "dag": {}},
+            _build_payload(tasks=[]),
+            "unsupported_serialized_dag_schema_version:2099-01-01",
+        ),
         ({"__version": 3, "dag": []}, _build_payload(tasks=[]), "serialized_dag_canonicalization_failed"),
         (
             {
@@ -1841,12 +1845,25 @@ def test_build_diff_returns_unavailable_for_unsafe_inputs(base_data, target_data
         } in caplog
 
 
+def test_build_diff_compares_a_date_stamp_with_an_integer_stamp() -> None:
+    base = _build_payload(tasks=[])
+    # The same Dag as the current serializer stores it.
+    target = versions.upgrade(copy.deepcopy(base))
+
+    result = build_serialized_dag_diff(base_data=base, target_data=target)
+
+    assert result["mode"] == "observed_state"
+    assert result["serialized_dag_schema_versions"] == {"base": 3, "target": "2027-02-28"}
+    assert result["changes"] == []
+
+
 @pytest.mark.parametrize(
     "base_data",
     [
         pytest.param({"dag": {}}, id="absent-version"),
         pytest.param({"__version": True, "dag": {}}, id="boolean-version-is-not-version-1"),
         pytest.param({"__version": "3", "dag": {}}, id="string-version"),
+        pytest.param({"__version": "2027-2-28", "dag": {}}, id="malformed-date-version"),
         pytest.param({"__version": 3.0, "dag": {}}, id="float-version"),
         pytest.param(["not", "a", "mapping"], id="non-mapping-payload"),
     ],
@@ -1954,7 +1971,7 @@ def test_build_diff_propagates_comparison_bugs(mock_get_category, error_type):
     mock_get_category.side_effect = error_type("comparison bug")
     base = _build_payload(tasks=[])
     target = copy.deepcopy(base)
-    target["dag"]["catchup"] = False
+    target["dag"]["catchup"] = True
 
     with pytest.raises(error_type, match="comparison bug"):
         build_serialized_dag_diff(base_data=base, target_data=target)

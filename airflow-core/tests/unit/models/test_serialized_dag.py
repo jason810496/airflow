@@ -405,6 +405,12 @@ class TestSerializedDagModel:
         # assert that the hashes are the same
         assert first_hashes == get_hash_set()
 
+    def test_hash_ignores_format_stamp(self):
+        data = {"__version": 3, "dag": {"dag_id": "d", "fileloc": "/f.py", "tasks": []}}
+
+        assert SDM.hash(data) == SDM.hash({**data, "__version": "2027-02-28"})
+        assert SDM.hash(data) != SDM.hash({**data, "dag": {**data["dag"], "dag_id": "e"}})
+
     def test_get_latest_serdag_versions(self, dag_maker, session):
         # first dag
         with dag_maker("dag1") as dag:

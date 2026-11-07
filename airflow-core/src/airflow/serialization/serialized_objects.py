@@ -25,7 +25,6 @@ import contextlib
 import copy
 import datetime
 import enum
-import itertools
 import logging
 import math
 import sys
@@ -69,6 +68,7 @@ from airflow.sdk.definitions.param import Param, ParamsDict
 from airflow.sdk.definitions.taskgroup import MappedTaskGroup, TaskGroup
 from airflow.sdk.definitions.xcom_arg import serialize_xcom_arg
 from airflow.sdk.execution_time.context import OutletEventAccessor, OutletEventAccessors
+from airflow.serialization import versions
 from airflow.serialization.dag_dependency import DagDependency
 from airflow.serialization.decoders import (
     decode_asset_like,
@@ -389,7 +389,7 @@ class BaseSerialization:
 
     _CONSTRUCTOR_PARAMS: dict[str, Parameter] = {}
 
-    SERIALIZER_VERSION = 3
+    SERIALIZER_VERSION = versions.HEAD.stamp
 
     @classmethod
     def to_json(cls, var: Any) -> str:
@@ -1981,153 +1981,10 @@ class DagSerialization(BaseSerialization):
         cls.validate_schema(json_dict)
         return json_dict
 
-    @staticmethod
-    def conversion_v1_to_v2(ser_obj: dict):
-        dag_dict = ser_obj["dag"]
-        dag_renames = [
-            ("_dag_id", "dag_id"),
-            ("_task_group", "task_group"),
-            ("_access_control", "access_control"),
-        ]
-        task_renames = [("_task_type", "task_type"), ("task_display_name", "_task_display_name")]
-        #
-        tasks_remove = [
-            "_log_config_logger_name",
-            "deps",
-            "sla",
-            # Operator extra links from Airflow 2 won't work anymore, only new ones, so remove these
-            "_operator_extra_links",
-        ]
-
-        ser_obj["__version"] = 2
-
-        def replace_dataset_in_str(s):
-            return s.replace("Dataset", "Asset").replace("dataset", "asset")
-
-        def _replace_dataset_with_asset_in_timetables(obj, parent_key=None):
-            if isinstance(obj, dict):
-                new_obj = {}
-                for k, v in obj.items():
-                    new_key = replace_dataset_in_str(k) if isinstance(k, str) else k
-                    # Don't replace uri values
-                    if new_key == "uri":
-                        new_obj[new_key] = v
-                    else:
-                        new_value = (
-                            replace_dataset_in_str(v)
-                            if isinstance(v, str)
-                            else _replace_dataset_with_asset_in_timetables(v, parent_key=new_key)
-                        )
-                        new_obj[new_key] = new_value
-                # Insert "name" and "group" if this is inside the 'objects' list
-                if parent_key == "objects":
-                    new_obj["name"] = None
-                    new_obj["group"] = None
-                return new_obj
-
-            elif isinstance(obj, list):
-                return [_replace_dataset_with_asset_in_timetables(i, parent_key=parent_key) for i in obj]
-
-            return obj
-
-        def _create_compat_timetable(value):
-            from airflow import settings
-            from airflow.sdk.definitions.dag import _create_timetable
-
-            if tzs := dag_dict.get("timezone"):
-                timezone = parse_timezone(tzs)
-            else:
-                timezone = settings.TIMEZONE
-            timetable = _create_timetable(value, timezone)
-            return encode_timetable(timetable)
-
-        for old, new in dag_renames:
-            if old in dag_dict:
-                dag_dict[new] = dag_dict.pop(old)
-
-        if default_args := dag_dict.get("default_args"):
-            for k in tasks_remove:
-                default_args["__var"].pop(k, None)
-
-        if timetable := dag_dict.get("timetable"):
-            if timetable["__type"] in {
-                "airflow.timetables.simple.DatasetTriggeredTimetable",
-                "airflow.timetables.datasets.DatasetOrTimeSchedule",
-            }:
-                dag_dict["timetable"] = _replace_dataset_with_asset_in_timetables(dag_dict["timetable"])
-        elif (sched := dag_dict.pop("schedule_interval", None)) is None:
-            dag_dict["timetable"] = _create_compat_timetable(None)
-        elif isinstance(sched, str):
-            dag_dict["timetable"] = _create_compat_timetable(sched)
-        elif sched.get("__type") == "timedelta":
-            dag_dict["timetable"] = _create_compat_timetable(datetime.timedelta(seconds=sched["__var"]))
-        elif sched.get("__type") == "relativedelta":
-            dag_dict["timetable"] = _create_compat_timetable(decode_relativedelta(sched["__var"]))
-        else:
-            # We should maybe convert this to None and warn instead
-            raise ValueError(f"Unknown schedule_interval field {sched!r}")
-
-        if "dag_dependencies" in dag_dict:
-            for dep in dag_dict["dag_dependencies"]:
-                dep_type = dep.get("dependency_type")
-                if dep_type in ("dataset", "dataset-alias"):
-                    dep["dependency_type"] = dep_type.replace("dataset", "asset")
-
-                if not dep.get("label"):
-                    dep["label"] = dep["dependency_id"]
-
-                for fld in ("target", "source"):
-                    val = dep.get(fld)
-                    if val == dep_type and val in ("dataset", "dataset-alias"):
-                        dep[fld] = dep[fld].replace("dataset", "asset")
-                    elif val.startswith("dataset:"):
-                        dep[fld] = dep[fld].replace("dataset:", "asset:")
-                    elif val.startswith("dataset-alias:"):
-                        dep[fld] = dep[fld].replace("dataset-alias:", "asset-alias:")
-
-        for task in dag_dict["tasks"]:
-            task_var: dict = task["__var"]
-            if "airflow.ti_deps.deps.ready_to_reschedule.ReadyToRescheduleDep" in task_var.get("deps", []):
-                task_var["_is_sensor"] = True
-            for k in tasks_remove:
-                task_var.pop(k, None)
-            for old, new in task_renames:
-                if old in task_var:
-                    task_var[new] = task_var.pop(old)
-            for item in itertools.chain(*(task_var.get(key, []) for key in ("inlets", "outlets"))):
-                original_item_type = item["__type"]
-                if isinstance(item, dict) and "__type" in item:
-                    item["__type"] = replace_dataset_in_str(original_item_type)
-
-                var_ = item["__var"]
-                if original_item_type == "dataset":
-                    var_["name"] = var_["uri"]
-                var_["group"] = "asset"
-
-            for k, v in list(task_var.items()):
-                op_defaults = DagSerialization.get_schema_defaults("operator")
-                if k in op_defaults and v == op_defaults[k]:
-                    del task_var[k]
-
-        # Set on the root TG
-        dag_dict["task_group"]["group_display_name"] = ""
-
-    @staticmethod
-    def conversion_v2_to_v3(ser_obj: dict):
-        # V2 to V3 changes are minimal - mainly client_defaults optimization and
-        # field presence differences. Only version bump needed.
-        ser_obj["__version"] = 3
-
     @classmethod
     def from_dict(cls, serialized_obj: dict) -> SerializedDAG:
         """Deserializes a python dict in to the DAG and operators it contains."""
-        ver = serialized_obj.get("__version", "<not present>")
-        if ver not in (1, 2, 3):
-            raise ValueError(f"Unsure how to deserialize version {ver!r}")
-        if ver == 1:
-            cls.conversion_v1_to_v2(serialized_obj)
-        if ver == 2:
-            cls.conversion_v2_to_v3(serialized_obj)
+        versions.upgrade(serialized_obj)
 
         # Extract client_defaults for hierarchical defaults resolution
         client_defaults = serialized_obj.get("client_defaults", {})

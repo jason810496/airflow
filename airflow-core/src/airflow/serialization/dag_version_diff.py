@@ -26,11 +26,12 @@ shape: bump it whenever a client-observable part of this contract changes.
 Top-level keys, all always present:
 
 * ``diff_schema_version`` -- ``int``, the value of ``DIFF_SCHEMA_VERSION``.
-* ``serialized_dag_schema_versions`` -- ``{"base": int | None, "target": int | None}``, the
-  ``__version`` each stored payload carried. ``None`` means the key was absent or not an
-  integer; ``bool`` is rejected, so ``__version: true`` reads as ``None`` and never as
-  version 1. A version in ``SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS`` is upgraded to the
-  newest supported version before anything is compared.
+* ``serialized_dag_schema_versions`` -- ``{"base": int | str | None, "target": int | str | None}``,
+  the ``__version`` each stored payload carried, as written: an integer or a ``YYYY-MM-DD``
+  date. ``None`` means the key was absent or neither; ``bool`` is rejected, so
+  ``__version: true`` reads as ``None`` and never as version 1. A version in
+  ``SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS`` is upgraded to the newest supported version
+  before anything is compared.
 * ``mode`` -- ``"observed_state"`` when the two payloads were compared, ``"unavailable"``
   when no comparison happened.
 * ``changes`` -- the change records described below, ordered by the deterministic walk.
@@ -135,6 +136,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping, MutableMapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -144,6 +146,7 @@ from typing import Any, Literal, NamedTuple
 
 import structlog
 
+from airflow.serialization import versions
 from airflow.serialization.definitions.baseoperator import SerializedBaseOperator
 from airflow.serialization.definitions.mappedoperator import SerializedMappedOperator
 from airflow.serialization.serialized_objects import (
@@ -158,7 +161,8 @@ log = structlog.get_logger(__name__)
 DIFF_SCHEMA_VERSION = 1
 DEFAULT_MAX_CHANGES = 500
 MAX_ALLOWED_CHANGES = 5000
-SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS = frozenset((1, 2, 3))
+_DATE_VERSION_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+SUPPORTED_SERIALIZED_DAG_SCHEMA_VERSIONS = versions.get_known_stamps()
 
 DiffCategory = Literal[
     "asset",
@@ -542,11 +546,15 @@ def validate_max_changes(max_changes: int) -> None:
         raise ValueError(f"max_changes must not exceed {MAX_ALLOWED_CHANGES}")
 
 
-def _get_schema_version(data: Mapping[str, Any] | None) -> int | None:
+def _get_schema_version(data: Mapping[str, Any] | None) -> int | str | None:
     if not isinstance(data, Mapping):
         return None
     version = data.get("__version")
-    return version if isinstance(version, int) and not isinstance(version, bool) else None
+    if isinstance(version, int) and not isinstance(version, bool):
+        return version
+    if isinstance(version, str) and _DATE_VERSION_RE.fullmatch(version):
+        return version
+    return None
 
 
 def _mark_unavailable(result: dict[str, Any], reason: str) -> dict[str, Any]:
@@ -555,7 +563,9 @@ def _mark_unavailable(result: dict[str, Any], reason: str) -> dict[str, Any]:
     return result
 
 
-def _build_diff_result(base_schema_version: int | None, target_schema_version: int | None) -> dict[str, Any]:
+def _build_diff_result(
+    base_schema_version: int | str | None, target_schema_version: int | str | None
+) -> dict[str, Any]:
     return {
         "diff_schema_version": DIFF_SCHEMA_VERSION,
         "serialized_dag_schema_versions": {
@@ -575,11 +585,7 @@ def _canonicalize_payload_v1(data: dict[str, Any]) -> dict[str, Any]:
     version = _get_schema_version(payload)
     if version is None:
         raise ValueError("missing or invalid __version")
-    if version == 1:
-        DagSerialization.conversion_v1_to_v2(payload)
-        DagSerialization.conversion_v2_to_v3(payload)
-    elif version == 2:
-        DagSerialization.conversion_v2_to_v3(payload)
+    versions.upgrade(payload)
     if not isinstance(payload.get("dag"), Mapping):
         raise ValueError("missing dag object")
     dag_defaults = {

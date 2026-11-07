@@ -869,8 +869,8 @@ class DagVersionDiffSerializerVersions(BaseModel):
     serialized Dags it describes.
     """
 
-    base: Annotated[int | None, Field(title="Base")]
-    target: Annotated[int | None, Field(title="Target")]
+    base: Annotated[int | str | None, Field(title="Base")]
+    target: Annotated[int | str | None, Field(title="Target")]
 
 
 class DagVersionDiffValuesStatus(str, Enum):

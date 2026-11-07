@@ -474,8 +474,11 @@
       "type": "object",
       "properties": {
         "__version": {
-          "type": "integer",
-          "exclusiveMinimum": 0
+          "$comment": "1, 2, 3 or the YYYY-MM-DD id of a version in airflow/serialization/versions/",
+          "anyOf": [
+            { "type": "integer", "exclusiveMinimum": 0 },
+            { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          ]
         },
         "dag": { "$ref": "#/definitions/dag" },
         "client_defaults": {

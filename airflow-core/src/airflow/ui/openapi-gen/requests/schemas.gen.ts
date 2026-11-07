@@ -5560,6 +5560,9 @@ export const $DagVersionDiffSerializerVersions = {
                     type: 'integer'
                 },
                 {
+                    type: 'string'
+                },
+                {
                     type: 'null'
                 }
             ],
@@ -5569,6 +5572,9 @@ export const $DagVersionDiffSerializerVersions = {
             anyOf: [
                 {
                     type: 'integer'
+                },
+                {
+                    type: 'string'
                 },
                 {
                     type: 'null'
