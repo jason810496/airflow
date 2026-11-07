@@ -922,6 +922,24 @@ def git_env_without_repo_overrides() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k not in GIT_REPO_OVERRIDE_VARIABLES}
 
 
+def get_target_branch() -> str:
+    """Branch to compare against. GITHUB_BASE_REF for PRs, DEFAULT_BRANCH in CI, else main."""
+    return os.environ.get("GITHUB_BASE_REF") or os.environ.get("DEFAULT_BRANCH") or "main"
+
+
+def get_changed_files(filenames: list[str]) -> list[str]:
+    """Get changed files. Uses filenames from prek when provided, else staged files for local runs."""
+    if filenames:
+        return filenames
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [f for f in result.stdout.strip().splitlines() if f]
+
+
 def get_remote_for_main() -> str:
     """
     Return the remote name to use when fetching main.

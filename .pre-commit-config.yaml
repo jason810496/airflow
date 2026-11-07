@@ -2004,6 +2004,15 @@ repos:
         pass_filenames: true
         files: ^(task-sdk/src/airflow/sdk/execution_time/(comms\.py|schema/.*\.py)|airflow-core/src/airflow/dag_processing/processor\.py)$
         require_serial: true
+      - id: check-serialized-dag-versions
+        name: Check serialized Dag format changes have a version change
+        env:
+          PYTHONPYCACHEPREFIX: .build/pycache
+        entry: ./scripts/ci/prek/check_serialized_dag_versions.py
+        language: python
+        pass_filenames: true
+        files: ^airflow-core/src/airflow/serialization/(schema\.json|versions/.*\.py)$
+        require_serial: true
       - id: generate-yaml-importer-schema-snapshot
         name: Regenerate YAML DAG importer schema snapshot
         env:

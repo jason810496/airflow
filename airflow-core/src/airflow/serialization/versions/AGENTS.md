@@ -95,12 +95,13 @@ holds such a change, and that change's migration finishes the downgrade with
 
 ### Releasing
 
-The release manager freezes the in-progress file at release:
+The release manager freezes the in-progress file at release, without editing it (its
+`airflow_version` already names the release):
 
-1. Set `airflow_version` of the in-progress `VERSION` to the release.
-2. Add the next file, named after the next release's Execution API date, with an empty
-   `VERSION`, and append it to `VERSIONS` in `__init__.py`.
-3. Add an alembic revision for the new release whose `downgrade()` calls
+1. Add the next file, named after the next release's Execution API date, with an empty
+   `VERSION` whose `airflow_version` is the next release, and append it to `VERSIONS` in
+   `__init__.py`.
+2. Add an alembic revision for the new release whose `downgrade()` calls
    `downgrade_serialized_dags(op.get_bind(), to=get_serialized_dag_downgrade_target())`
    (see `0155_3_5_0_downgrade_serialized_dag_format.py`).
 
