@@ -182,6 +182,15 @@ have. [`go_native.json`](../airflow-core/tests/unit/dag_processing/lang_sdk_fixt
 holds the Go output for the same Dags, so that the Airflow core tests check that Airflow loads it.
 `TestSerializeConformanceDags` says how to rewrite it.
 
+## Releasing
+
+Go fetches the module `github.com/apache/airflow/go-sdk` straight from git tags named
+`go-sdk/vX.Y.Z`, so the release is the tag. The source package the PMC votes on goes through
+[Apache Trusted Releases](../dev/README_RELEASE_LANG_SDK_ATR.md): tag the release candidate
+`go-sdk/v<VERSION>-rc<N>`, dispatch `go-sdk-atr-compose.yml` on that tag, and start the vote from
+ATR. Once the vote passes and the release is published from ATR, tag the voted commit
+`go-sdk/v<VERSION>`.
+
 ## Architectural decisions
 
 The [`adr/`](./adr) directory records the design decisions behind the SDK:

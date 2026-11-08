@@ -112,6 +112,18 @@ time for cache invalidation) and that `/docs/ts-sdk/` redirects to it.
 
 ## Publishing
 
+### Source release on ATR
+
+Every version published to npm, betas included, is an ASF release and needs a
+PMC vote on its source package. The source package goes through
+[Apache Trusted Releases](../dev/README_RELEASE_LANG_SDK_ATR.md): tag the release
+candidate `ts-sdk/<version>-rc<N>`, dispatch `ts-sdk-atr-compose.yml` on that
+tag, and start the vote from ATR. Once the vote passes and the release is
+published from ATR, tag the voted commit `ts-sdk/<version>` and publish it to npm
+as described below.
+
+### Publishing to npm
+
 The manually dispatched `Release TypeScript SDK` workflow first builds, tests,
 and hashes one package tarball without OIDC permissions. Its protected publish
 job then either uses [npm's staged-publishing flow](https://docs.npmjs.com/staged-publishing/)

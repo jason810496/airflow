@@ -225,6 +225,13 @@ Check *Updated by* (should be your ID), *Uploaded Date*, and *Last Modified*.
 The closed staging repository from the previous step is the convenience-binary
 URL you link in the vote.
 
+Once CI builds are enabled for Airflow on ATR, compose the source package on
+[Apache Trusted Releases](../dev/README_RELEASE_LANG_SDK_ATR.md) instead: dispatch
+`java-sdk-atr-compose.yml` on the RC tag, and start the vote from ATR. ATR then
+replaces the `sourceRelease` and `dist/dev` steps below, links its own candidate
+URL instead of `dist/dev` in the vote, and publishes to `dist/release` in place
+of the `svn mv` after the vote.
+
 The signed source package is the artifact the vote is formally on; the Maven
 artifacts are convenience binaries. The `sourceRelease` task builds it from the
 committed `java-sdk` sources (`LICENSE` and `NOTICE` included) and produces its
@@ -435,7 +442,8 @@ Reply with a `[RESULT][VOTE]` tally, then:
 
    (Or click *Release* on the repository in the Nexus UI.)
 
-2. **Move** the source package from `dist/dev` to `dist/release`:
+2. **Move** the source package from `dist/dev` to `dist/release` (for a release
+   composed on ATR, publish it from ATR instead):
 
    ```bash
    svn mv https://dist.apache.org/repos/dist/dev/airflow/java-sdk/<VERSION>-rc<N> \

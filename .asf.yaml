@@ -173,6 +173,26 @@ github:
               # contributor's fork for a gated pull request or in apache/airflow otherwise; until
               # then GitHub lists it on the pull request as expected and waiting.
               - context: "CI run started"
+    # ATR raises a concern on a release whose tag was unprotected when the compose workflow ran:
+    # it needs `creation` and `update`. Committers (Write role) still push the tags by bypassing.
+    - name: "Language SDK release tags"
+      target: tag
+      enforcement: active
+      conditions:
+        ref_name:
+          include:
+            - "refs/tags/java-sdk/*"
+            - "refs/tags/ts-sdk/*"
+            - "refs/tags/go-sdk/*"
+          exclude: []
+      bypass_actors:
+        - actor_id: 4
+          actor_type: RepositoryRole
+          bypass_mode: always
+      rules:
+        - type: creation
+        - type: update
+        - type: deletion
     - name: "Branch protection"
       type: branch
       branches:
