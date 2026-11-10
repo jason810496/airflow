@@ -362,6 +362,37 @@ def test_loop_runs_through_scheduler_sdk_and_api(dag_maker, session, mode):
     assert outside.state == State.SUCCESS
 
 
+@pytest.mark.parametrize(
+    ("max_iterations", "until", "callback", "expected_state", "expected_passes"),
+    [
+        pytest.param(2, None, None, State.SUCCESS, [1, 2], id="fixed-count-continues"),
+        pytest.param(1, None, None, State.SUCCESS, [1], id="fixed-count-at-its-bound"),
+        pytest.param(2, lambda: True, None, State.SCHEDULED, [1], id="until-runs-on-a-worker"),
+        pytest.param(2, None, list, State.SCHEDULED, [1], id="callback-runs-on-a-worker"),
+    ],
+)
+def test_schedule_tis_completes_a_fixed_count_gate_itself(
+    dag_maker, session, max_iterations, until, callback, expected_state, expected_passes
+):
+    @task_group
+    def body():
+        EmptyOperator(task_id="terminal")
+
+    default_args = {"on_success_callback": callback} if callback else {}
+    with dag_maker(serialized=True, session=session, default_args=default_args):
+        loop = create_loop(body, max_iterations=max_iterations, until=until)
+    dr = dag_maker.create_dagrun()
+    gate = next(ti for ti in dr.get_task_instances(session=session) if ti.task_id == loop.gate_task_id)
+    gate.task = dag_maker.serialized_dag.get_task(loop.gate_task_id)
+
+    assert dr.schedule_tis((gate,), session=session) == 1
+
+    session.expire_all()
+    gates = [ti for ti in dr.get_task_instances(session=session) if ti.task_id == loop.gate_task_id]
+    assert {ti.region_index: ti.state for ti in gates}[1] == expected_state
+    assert sorted(ti.region_index for ti in gates) == expected_passes
+
+
 @pytest.mark.parametrize("has_until", [False, True])
 @pytest.mark.parametrize(
     ("region_index", "stop", "accepted"),

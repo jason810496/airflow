@@ -1426,9 +1426,11 @@ class TestSchedulerJob:
         with pytest.raises(TypeError, match="Unknown workload key type in event buffer"):
             self.job_runner._process_executor_events(executor=executor, session=session)
 
+    # A language SDK's gate is a stub task named after its SDK's operator, found through its pinned loop.
+    @pytest.mark.parametrize("language_sdk_gate", [False, True])
     @pytest.mark.parametrize("retries", [0, 2])
     def test_missing_gate_definition_executor_success_uses_failure_policy(
-        self, dag_maker, session, mocker, retries
+        self, dag_maker, session, mocker, retries, language_sdk_gate
     ):
         @task_group
         def body():
@@ -1447,6 +1449,8 @@ class TestSchedulerJob:
         gate.state = State.RUNNING
         gate.try_number = 1
         gate.queued_by_job_id = scheduler_job.id
+        if language_sdk_gate:
+            gate.operator, gate.is_stub = "TypeScriptOperator", True
         session.commit()
         original_id = gate.id
         callback = mocker.patch.object(executor, "send_callback", autospec=True)

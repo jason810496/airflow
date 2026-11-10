@@ -3632,9 +3632,11 @@ class TestGetTaskInstanceTry(TestTaskInstanceEndpoint):
 
 
 class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
+    # A language SDK's gate is a stub task named after its SDK's operator, found through its loop.
+    @pytest.mark.parametrize("language_sdk_gate", [False, True])
     @pytest.mark.parametrize("one_run", [False, True])
     def test_broad_clear_uses_pinned_loop_after_latest_definition_removes_it(
-        self, test_client, dag_maker, session, one_run
+        self, test_client, dag_maker, session, one_run, language_sdk_gate
     ):
         @task_group
         def body():
@@ -3656,6 +3658,12 @@ class TestPostClearTaskInstances(TestTaskInstanceEndpoint):
                     region_index=2,
                     state=State.SUCCESS,
                 )
+            )
+        if language_sdk_gate:
+            session.execute(
+                update(TaskInstance)
+                .where(TaskInstance.dag_id == dr.dag_id, TaskInstance.task_id == loop.gate_task_id)
+                .values(operator="TypeScriptOperator", is_stub=True)
             )
         session.commit()
         suffix_ids = {ti.id for ti in dr.get_task_instances(session=session) if ti.region_index == 2}

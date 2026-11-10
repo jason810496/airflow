@@ -898,13 +898,15 @@ def clear_task_instances_for_runs(
 
     Runs without a selected gate are retried in place as an ordinary clear.
     """
+    from airflow.models.dagbag import DBDagBag
     from airflow.models.dagrun import lock_dag_runs
-    from airflow.models.task_coordinates import LOOP_GATE_OPERATOR
+    from airflow.models.task_coordinates import TaskCoordinateResolver
 
     if not tis:
         return
     lock_dag_runs(session, {(ti.dag_id, ti.run_id) for ti in tis})
-    gate_runs = {(ti.dag_id, ti.run_id) for ti in tis if ti.operator == LOOP_GATE_OPERATOR}
+    resolver = TaskCoordinateResolver(DBDagBag(), session)
+    gate_runs = {(ti.dag_id, ti.run_id) for ti in tis if resolver.is_loop_gate(ti)}
     clear_task_instances(
         [ti for ti in tis if (ti.dag_id, ti.run_id) not in gate_runs],
         session=session,
@@ -939,7 +941,7 @@ def apply_loop_clear_scope(
     """Apply a planned clear while the caller holds its DagRun lock."""
     from airflow.exceptions import AirflowClearRunningTaskException
     from airflow.models.dagbag import DBDagBag
-    from airflow.models.task_coordinates import LOOP_GATE_OPERATOR, TaskCoordinateResolver, enclosing_loop
+    from airflow.models.task_coordinates import TaskCoordinateResolver, enclosing_loop
 
     selected_ids = scope.retry_ids | scope.archive_ids
     if not selected_ids:
@@ -966,7 +968,7 @@ def apply_loop_clear_scope(
         regions = DynamicRegion.load_for_run(tis[0].dag_id, tis[0].run_id, session=session)
         cuts: dict[UUID, int] = {}
         for ti in tis:
-            if ti.id not in scope.retry_ids or ti.operator != LOOP_GATE_OPERATOR:
+            if ti.id not in scope.retry_ids or not resolver.is_loop_gate(ti):
                 continue
             task = resolver.get_task(dag_id, run_id, ti.task_id, dag_version_id=ti.dag_version_id)
             group = enclosing_loop(task)

@@ -156,6 +156,26 @@ class InvalidLoopDecision(ValueError):
     """A gate cannot complete successfully with the available decision."""
 
 
+def _get_fixed_count_loop(task: Operator | None) -> SerializedLoopTaskGroup | None:
+    """
+    Return the loop ``task`` is the gate of when the scheduler completes that gate itself.
+
+    That is a loop with no ``until``, whose gate runs no user code: a gate carrying a callback, an
+    inlet or an outlet still goes to a worker, by the rule ``TaskInstance.is_task_schedulable`` applies
+    to an ``EmptyOperator``.
+    """
+    # A module-level import of task_coordinates is circular: it imports this module.
+    from airflow.models.task_coordinates import enclosing_loop
+
+    if task is None or (loop := enclosing_loop(task)) is None:
+        return None
+    if loop.has_until or loop.gate_task_id != task.task_id:
+        return None
+    if task.has_on_execute_callback or task.has_on_success_callback or task.inlets or task.outlets:
+        return None
+    return loop
+
+
 def validate_loop_decision(stop: bool | None, region_index: int, group: SerializedLoopTaskGroup) -> None:
     """Raise :class:`InvalidLoopDecision` unless ``stop`` is valid for the gate of pass ``region_index``."""
     at_limit = region_index >= group.max_iterations
@@ -2836,7 +2856,8 @@ class DagRun(Base, LoggingMixin):
         Each element of ``schedulable_tis`` should have its ``task`` attribute already set.
 
         Any EmptyOperator without ``on_execute_callback`` or ``on_success_callback`` or ``inlets`` or
-        ``outlets`` is instead set straight to the success state, without execution.
+        ``outlets`` is instead set straight to the success state, without execution. So is the gate of a
+        loop that runs a fixed count, on the same terms, which also creates the loop's next iteration.
 
         All the TIs should belong to this DagRun, but this code is in the hot-path, this is not checked -- it
         is the caller's responsibility to call this function only with TIs from a single dag run.
@@ -2844,6 +2865,7 @@ class DagRun(Base, LoggingMixin):
         # Get list of TI IDs that do not need to executed, these are
         # tasks using EmptyOperator and without on_execute_callback / on_success_callback
         empty_ti_ids: list[UUID] = []
+        fixed_count_gates: list[tuple[TI, SerializedLoopTaskGroup]] = []
         schedulable_ti_ids: list[UUID] = []
         debug_try_number_check = self.log.isEnabledFor(logging.DEBUG)
         expected_try_number_by_ti_id: dict[UUID, tuple[int, int, str | None]] = {}
@@ -2852,7 +2874,9 @@ class DagRun(Base, LoggingMixin):
                 if TYPE_CHECKING:
                     assert ti.task
                 ti.refresh_from_task(ti.task, dag_run=self)
-            if not ti.is_schedulable:
+            if (loop := _get_fixed_count_loop(ti.task)) is not None:
+                fixed_count_gates.append((ti, loop))
+            elif not ti.is_schedulable:
                 empty_ti_ids.append(ti.id)
             # The defer_task method will check "start_trigger_args" to see whether the operator
             # start execution from triggerer. If so, we'll also check "start_from_trigger"
@@ -2932,6 +2956,17 @@ class DagRun(Base, LoggingMixin):
                                 db_try_number,
                             )
 
+        now = timezone.utcnow()
+        completed_values = {
+            "state": TaskInstanceState.SUCCESS,
+            "start_date": now,
+            "end_date": now,
+            "duration": 0,
+            "try_number": next_try_number,
+            "retry_reason": None,
+            "retry_delay_override": None,
+            "retry_at": None,
+        }
         # Tasks using EmptyOperator should not be executed, mark them as success
         if empty_ti_ids:
             dummy_ti_ids_chunks = chunks(empty_ti_ids, max_tis_per_query or len(empty_ti_ids))
@@ -2939,21 +2974,33 @@ class DagRun(Base, LoggingMixin):
                 result = session.execute(
                     update(TI)
                     .where(TI.id.in_(id_chunk), schedulable_state_clause)
-                    .values(
-                        state=TaskInstanceState.SUCCESS,
-                        start_date=timezone.utcnow(),
-                        end_date=timezone.utcnow(),
-                        duration=0,
-                        try_number=next_try_number,
-                        retry_reason=None,
-                        retry_delay_override=None,
-                        retry_at=None,
-                    )
+                    .values(completed_values)
                     .execution_options(
                         synchronize_session=False,
                     )
                 )
                 count += getattr(result, "rowcount", 0)
+
+        # The scheduler holds this run's row lock, which the Execution API also takes before it
+        # completes a gate, so the next iteration is created here as it is for a gate that ran.
+        for gate, loop in fixed_count_gates:
+            result = session.execute(
+                update(TI)
+                .where(TI.id == gate.id, schedulable_state_clause)
+                .values(completed_values)
+                .execution_options(synchronize_session=False)
+            )
+            if not getattr(result, "rowcount", 0):
+                continue
+            count += 1
+            self.complete_loop_gate(
+                gate,
+                loop,
+                TaskInstanceState.SUCCESS,
+                stop=gate.region_index >= loop.max_iterations,
+                reason=None,
+                session=session,
+            )
 
         return count
 

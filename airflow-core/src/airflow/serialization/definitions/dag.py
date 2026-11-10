@@ -1278,7 +1278,7 @@ class SerializedDAG:
 
         A dry run also lists the task instances of later loop passes that clearing a gate archives.
         """
-        from airflow.models.task_coordinates import LOOP_GATE_OPERATOR
+        from airflow.models.task_coordinates import TaskCoordinateResolver
         from airflow.models.taskinstance import (
             TaskInstance,
             _get_new_task_ids,
@@ -1343,7 +1343,8 @@ class SerializedDAG:
                 return dry_run_tis
             listed_ids = {ti.id for ti in dry_run_tis}
             archive_ids: set[UUID] = set()
-            gate_runs = {(ti.dag_id, ti.run_id) for ti in dry_run_tis if ti.operator == LOOP_GATE_OPERATOR}
+            resolver = TaskCoordinateResolver.for_dag(self, session)
+            gate_runs = {(ti.dag_id, ti.run_id) for ti in dry_run_tis if resolver.is_loop_gate(ti)}
             for gate_run in sorted(gate_runs):
                 archive_ids |= select_loop_clear_scope(
                     [ti for ti in dry_run_tis if (ti.dag_id, ti.run_id) == gate_run],

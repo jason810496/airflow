@@ -171,6 +171,23 @@ def test_clearing_a_loop_gate_locks_its_dag_run_once(completed_loop, session):
     assert len(locks) == 1
 
 
+def test_clearing_a_language_sdk_gate_archives_its_later_passes(completed_loop, session):
+    """A language SDK's gate is found through its loop, not by the operator name it records."""
+    dr, loop, _ = completed_loop
+    tis = dr.get_task_instances(session=session)
+    for ti in tis:
+        if ti.task_id == loop.gate_task_id:
+            ti.operator, ti.is_stub = "TypeScriptOperator", True
+    gate = next(ti for ti in tis if ti.task_id == loop.gate_task_id and ti.region_index == 2)
+    later = [ti.id for ti in tis if ti.region_index > 2]
+    session.flush()
+
+    clear_task_instances_for_runs([gate], session=session)
+
+    assert {ti.region_index for ti in dr.get_task_instances(session=session)} == {1, 2}
+    assert {session.get(TI, ti_id).archived_reason for ti_id in later} == {"superseded"}
+
+
 def test_complete_restart_rejects_outcome_for_ordinary_execution(dag_maker, session):
     with dag_maker("ordinary_restart_outcome"):
         EmptyOperator(task_id="task")
@@ -282,11 +299,18 @@ def test_loop_clear_scope_adds_setups_and_teardowns_of_selected_tasks(dag_maker,
     assert with_pairs.retry_ids == {tis[task_id].id for task_id in ("setup_t", "normal_t", "teardown_t")}
 
 
+# A language SDK's gate is a stub task named after its SDK's operator, found through its loop.
+@pytest.mark.parametrize("language_sdk_gate", [False, True])
 @pytest.mark.parametrize("exclude_task_ids", [frozenset(), frozenset({"body.process"})])
 def test_dry_run_clear_lists_later_loop_passes_that_clearing_a_gate_archives(
-    loop_run, dag_maker, session, exclude_task_ids
+    loop_run, dag_maker, session, exclude_task_ids, language_sdk_gate
 ):
     dr, dag, loop, root, tis, iteration = loop_run
+    if language_sdk_gate:
+        for ti in tis:
+            if ti.task_id == loop.gate_task_id:
+                ti.operator, ti.is_stub = "TypeScriptOperator", True
+        session.flush()
 
     listed = dag_maker.serialized_dag.clear(
         task_ids=[loop.gate_task_id],

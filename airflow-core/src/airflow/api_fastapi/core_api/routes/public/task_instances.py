@@ -135,9 +135,9 @@ from airflow.models.dagrun import lock_dag_runs
 from airflow.models.dynamic_region import SENTINEL_REGION_ID
 from airflow.models.renderedtifields import load_legacy_rendered_fields
 from airflow.models.task_coordinates import (
-    LOOP_GATE_OPERATOR,
     TaskCoordinateResolver,
     enclosing_loop,
+    loop_gate_candidate_clause,
     public_map_index_expression,
 )
 from airflow.models.taskinstance import (
@@ -1094,7 +1094,20 @@ def post_clear_task_instances(
             _get_task_group_task_ids(dag_id, body.task_group_id, dag),
         )
 
-    gate_query = select(TI.id).join(TI.dag_run).where(TI.dag_id == dag_id, TI.operator == LOOP_GATE_OPERATOR)
+    gate_query = (
+        select(
+            TI.dag_id,
+            TI.run_id,
+            TI.task_id,
+            TI.region_id,
+            TI.region_index,
+            TI.dag_version_id,
+            TI.operator,
+            TI.is_stub,
+        )
+        .join(TI.dag_run)
+        .where(TI.dag_id == dag_id, loop_gate_candidate_clause(TI))
+    )
     if dag_run_id is not None and not (past or future):
         gate_query = gate_query.where(TI.run_id == dag_run_id)
     else:
@@ -1102,10 +1115,11 @@ def post_clear_task_instances(
             gate_query = gate_query.where(DagRun.logical_date >= body.start_date)
         if body.end_date is not None:
             gate_query = gate_query.where(DagRun.logical_date <= body.end_date)
+    gate_resolver = TaskCoordinateResolver(dag_bag, session)
     loop_aware = (
         body.task_instance_ids is not None
         or any(enclosing_loop(task) for task in dag.tasks)
-        or session.scalar(gate_query.limit(1)) is not None
+        or any(gate_resolver.is_loop_gate(row) for row in session.execute(gate_query))
     )
     task_markers_to_clear = body.task_ids
     if task_markers_to_clear is not None and not loop_aware:

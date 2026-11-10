@@ -114,7 +114,7 @@ from airflow.models.dynamic_region import SENTINEL_REGION_ID, regional_expressio
 from airflow.models.log import resolve_team_name
 from airflow.models.pool import normalize_pool_name_for_stats
 from airflow.models.serialized_dag import SerializedDagModel
-from airflow.models.task_coordinates import LOOP_GATE_OPERATOR, TaskCoordinateResolver
+from airflow.models.task_coordinates import TaskCoordinateResolver
 from airflow.models.taskinstance import TaskInstance
 from airflow.models.team import Team
 from airflow.models.trigger import TRIGGER_FAIL_REPR, Trigger, TriggerFailureReason, handle_event_submit
@@ -1768,7 +1768,7 @@ class SchedulerJobRunner(BaseJobRunner, LoggingMixin):
 
                     task = dag.get_task(ti.task_id)
                 except Exception:
-                    if state == TaskInstanceState.SUCCESS and ti.operator == LOOP_GATE_OPERATOR:
+                    if state == TaskInstanceState.SUCCESS and coordinates.is_loop_gate(ti):
                         cls.logger().exception("Failing loop gate %s: %s", ti, msg)
                         ti.task = None
                         ti.handle_failure(error=msg, session=session)

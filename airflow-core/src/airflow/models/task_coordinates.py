@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Protocol
 from uuid import UUID
 
 import attrs
-from sqlalchemy import FromClause, case, func, or_, select, tuple_
+from sqlalchemy import FromClause, and_, case, func, or_, select, tuple_
 
 from airflow.api_fastapi.execution_api.datamodels.taskinstance import LoopContext
 from airflow.exceptions import TaskNotFound
@@ -58,7 +58,12 @@ if TYPE_CHECKING:
 
 
 LOOP_GATE_OPERATOR = "LoopGateOperator"
-"""Operator class name the Task SDK gives the gate task of a loop."""
+"""
+Operator class name the Python Task SDK gives the gate task of a loop.
+
+A language SDK's gate carries that SDK's own operator name, so it is found by its loop's
+``gate_task_id`` instead; see :meth:`TaskCoordinateResolver.is_loop_gate`.
+"""
 
 
 @attrs.frozen(kw_only=True)
@@ -135,6 +140,24 @@ def enclosing_loop(task: SerializedOperator) -> SerializedLoopTaskGroup | None:
             return group
         group = group.parent_group
     return None
+
+
+class GateCandidate(TaskCoordinate, Protocol):
+    """Coordinates of a task instance that may have run a loop gate, with what it recorded of its task."""
+
+    @property
+    def operator(self) -> str | None: ...
+
+    @property
+    def is_stub(self) -> bool | None: ...
+
+
+def loop_gate_candidate_clause(model) -> ColumnElement[bool]:
+    """Match the task instances :meth:`TaskCoordinateResolver.is_loop_gate` may count as a loop gate."""
+    return or_(
+        model.operator == LOOP_GATE_OPERATOR,
+        and_(model.is_stub.is_(True), model.region_id != SENTINEL_REGION_ID),
+    )
 
 
 def mapped_region_expression(model) -> ColumnElement[bool]:
@@ -375,6 +398,30 @@ class TaskCoordinateResolver:
         if dag is None or dag.dag_id != dag_id:
             raise ValueError(f"Pinned Dag for {dag_id}/{run_id} not found")
         return dag.get_task(task_id)
+
+    def is_loop_gate(self, ti: GateCandidate) -> bool:
+        """
+        Tell whether ``ti`` ran the gate of a loop.
+
+        A Python gate is told by its operator name. A language SDK's gate names its own SDK's operator,
+        so a stub task in a region is looked up in its pinned loop; no Python task loads a Dag for this.
+        """
+        if ti.operator == LOOP_GATE_OPERATOR:
+            return True
+        if not ti.is_stub or ti.region_id == SENTINEL_REGION_ID:
+            return False
+        return self.is_pinned_loop_gate(ti.dag_version_id, ti.task_id)
+
+    def is_pinned_loop_gate(self, dag_version_id: UUID | None, task_id: str) -> bool:
+        """Tell whether ``task_id`` is the gate of its loop in the Dag version ``dag_version_id``."""
+        if (
+            dag_version_id is None
+            or (dag := self.get_dag(dag_version_id)) is None
+            or not dag.has_task(task_id)
+        ):
+            return False
+        loop = enclosing_loop(dag.get_task(task_id))
+        return loop is not None and loop.gate_task_id == task_id
 
     def find_task(self, ti: TaskCoordinate) -> SerializedOperator | None:
         """Return the task of ``ti`` from its pinned Dag, or None when that Dag or the task is gone."""

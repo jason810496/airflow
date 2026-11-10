@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
@@ -28,8 +29,9 @@ from airflow.executors.workloads.base import BundleInfo
 from airflow.executors.workloads.task import ExecuteTask
 from airflow.models.dag_version import DagVersion
 from airflow.models.dagbag import DBDagBag
-from airflow.models.dynamic_region import AmbiguousProducerError, DynamicRegion
+from airflow.models.dynamic_region import SENTINEL_REGION_ID, AmbiguousProducerError, DynamicRegion
 from airflow.models.task_coordinates import (
+    LOOP_GATE_OPERATOR,
     TaskCoordinateResolver,
     build_coordinate_filters,
     get_public_map_index,
@@ -293,6 +295,46 @@ def test_public_map_index_and_plain_expansion_of_a_persisted_task_instance(
     with assert_queries_count(expected_queries):
         assert get_public_map_index(ti, session=session) == expected_index
     assert is_plain_expansion(ti, session=session) is expected_plain
+
+
+@pytest.mark.parametrize(
+    ("task_id", "expected"),
+    [("body.__loop_gate", True), ("body.producer", False), ("outside", False), ("removed", False)],
+)
+def test_loop_gate_is_read_off_its_pinned_loop(loop_coordinates, session, task_id, expected):
+    dr, producer, *_ = loop_coordinates
+    resolver = TaskCoordinateResolver(DBDagBag(), session)
+
+    assert resolver.is_pinned_loop_gate(producer.dag_version_id, task_id) is expected
+    assert resolver.is_pinned_loop_gate(None, task_id) is False
+
+
+@pytest.mark.parametrize(
+    ("operator", "is_stub", "in_region", "expected"),
+    [
+        pytest.param(LOOP_GATE_OPERATOR, None, True, True, id="python-gate"),
+        pytest.param("TypeScriptOperator", True, True, True, id="language-sdk-gate"),
+        pytest.param("TypeScriptOperator", True, False, False, id="stub-outside-every-region"),
+        pytest.param("PythonOperator", None, True, False, id="python-task-in-a-region"),
+    ],
+)
+def test_loop_gate_of_a_task_instance(loop_coordinates, session, operator, is_stub, in_region, expected):
+    dr, producer, *_ = loop_coordinates
+    candidate = SimpleNamespace(
+        dag_id=dr.dag_id,
+        run_id=dr.run_id,
+        task_id="body.__loop_gate",
+        region_id=producer.region_id if in_region else SENTINEL_REGION_ID,
+        region_index=1,
+        dag_version_id=producer.dag_version_id,
+        operator=operator,
+        is_stub=is_stub,
+    )
+    resolver = TaskCoordinateResolver(DBDagBag(), session)
+
+    # Only a stub task in a region is looked up in its pinned Dag.
+    with assert_queries_count(1 if is_stub and in_region else 0):
+        assert resolver.is_loop_gate(candidate) is expected
 
 
 @pytest.fixture
