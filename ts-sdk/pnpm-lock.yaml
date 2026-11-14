@@ -65,6 +65,33 @@ importers:
         specifier: ^6.0.2
         version: 6.0.3
 
+  providers/amazon:
+    devDependencies:
+      '@apache-airflow/ts-sdk':
+        specifier: workspace:*
+        version: link:../..
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+
+  providers/common-ai:
+    devDependencies:
+      '@apache-airflow/ts-sdk':
+        specifier: workspace:*
+        version: link:../..
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+
+  providers/standard:
+    devDependencies:
+      '@apache-airflow/ts-sdk':
+        specifier: workspace:*
+        version: link:../..
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+
 packages:
 
   '@apache-airflow/ts-sdk@file:':

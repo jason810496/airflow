@@ -18,6 +18,7 @@
 
 packages:
   - example
+  - providers/*
 
 # Give the ecosystem time to identify and remove compromised releases before
 # they can enter a newly generated lockfile. Existing locked versions continue

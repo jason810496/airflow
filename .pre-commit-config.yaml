@@ -451,6 +451,18 @@ repos:
           ^task-sdk/src/airflow/sdk/execution_time/schema/schema\.json$|
           ^ts-sdk/schema/.*\.json$|
           ^scripts/ci/prek/sync_ts_sdk_schemas\.py$
+      - id: check-ts-sdk-provider-packages
+        name: Check TypeScript SDK provider packages match the operator specs
+        description: "Fail when ts-sdk/providers/ is not what generated/lang_sdk_provider_operators/ generates"
+        entry: node ts-sdk/scripts/generate-providers.mjs --check
+        language: node
+        pass_filenames: false
+        files: >
+          (?x)
+          ^generated/lang_sdk_provider_operators/.*\.json$|
+          ^ts-sdk/providers/.*|
+          ^ts-sdk/package\.json$|
+          ^ts-sdk/scripts/generate-providers\.mjs$
       - id: sync-java-sdk-dag-schema
         name: Sync Java SDK Dag serialization schema with airflow-core
         env:

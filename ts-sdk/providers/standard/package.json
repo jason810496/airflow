@@ -1,0 +1,52 @@
+{
+  "name": "@apache-airflow/providers-standard",
+  "version": "1.22.0",
+  "description": "Apache Airflow apache-airflow-providers-standard operators for Dags written with the TypeScript SDK",
+  "license": "Apache-2.0",
+  "author": "Apache Software Foundation",
+  "type": "module",
+  "homepage": "https://airflow.apache.org",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apache/airflow.git",
+    "directory": "ts-sdk/providers/standard"
+  },
+  "bugs": {
+    "url": "https://github.com/apache/airflow/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "prepack": "pnpm run build"
+  },
+  "keywords": [
+    "airflow",
+    "apache-airflow",
+    "typescript",
+    "aip-108",
+    "standard"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@apache-airflow/ts-sdk": "workspace:^"
+  },
+  "devDependencies": {
+    "@apache-airflow/ts-sdk": "workspace:*",
+    "typescript": "^6.0.2"
+  }
+}
