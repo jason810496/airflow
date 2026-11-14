@@ -54,6 +54,7 @@ import {
   type TaskRecord,
 } from "../sdk/dag.js";
 import { buildDagGraph, type DagGraph } from "../sdk/dag-graph.js";
+import type { PythonOperatorArgument, PythonOperatorTarget } from "../sdk/operator.js";
 import { describeType, toPlainJson } from "../sdk/plain-json.js";
 
 /** A serialized Dag: JSON, by the time it reaches the supervisor as msgpack. */
@@ -86,6 +87,17 @@ const TASK_MODULE = "airflow.sdk.coordinators.node";
  * wants to tell language-native tasks apart without parsing `_task_module`.
  */
 const TASK_LANGUAGE = "typescript";
+
+/**
+ * Where a task that a Python worker runs carries the constructor keyword arguments of its
+ * operator class, as a `dict` type encoding.
+ *
+ * Python's own serializer keeps only what the scheduler needs, because a Python worker gets the
+ * operator back by importing the Dag file. A Python worker cannot import a TypeScript bundle, so
+ * it builds `_task_module.task_type(**_operator_kwargs)` from the serialized Dag instead.
+ */
+const OPERATOR_KWARGS_KEY = "_operator_kwargs";
+const XCOM_RETURN_KEY = "return_value";
 
 /**
  * Python's `DAG.edge_info`, keying a group end by its join node as Python does.
@@ -243,37 +255,118 @@ function serializeTask(
   inputs: RecordedInputs | undefined,
   dagQueue: string | undefined,
 ): SerializedValue {
-  const data: Record<string, SerializedValue> = {
-    task_id: taskId,
-    task_type: TASK_TYPE,
-    _task_module: TASK_MODULE,
-    language: TASK_LANGUAGE,
-    // Python's operator serializer always emits this — its list value never
-    // matches the tuple default it is compared against. A TypeScript task has
-    // no Jinja templating, so the list is empty rather than absent.
-    template_fields: [],
-    // The TypeScript runtime runs every task of a TypeScript Dag, a trigger task
-    // included, so every one of them is a stub. `is_stub` marks a task whose
-    // arguments the API server resolves per instance and sends to a foreign
-    // runtime, as `@task.stub` does on the Python side. `get_arg_bindings` reads
-    // nothing without it.
-    is_stub: true,
-  };
   const label = `task "${taskId}" of Dag "${dagId}"`;
+  const python = record.operator?.pythonOperator;
+  const data: Record<string, SerializedValue> = python
+    ? {
+        task_id: taskId,
+        task_type: python.className,
+        _task_module: python.module,
+        language: TASK_LANGUAGE,
+        ...serializePythonOperator(python),
+      }
+    : {
+        task_id: taskId,
+        task_type: TASK_TYPE,
+        _task_module: TASK_MODULE,
+        language: TASK_LANGUAGE,
+        // Python's operator serializer always emits this — its list value never
+        // matches the tuple default it is compared against. A TypeScript task has
+        // no Jinja templating, so the list is empty rather than absent.
+        template_fields: [],
+        // The TypeScript runtime runs every task it is handed, a trigger task
+        // included, so each of them is a stub. `is_stub` marks a task whose
+        // arguments the API server resolves per instance and sends to a foreign
+        // runtime, as `@task.stub` does on the Python side. `get_arg_bindings` reads
+        // nothing without it.
+        is_stub: true,
+      };
   if (record.operator) {
-    // Names the provider operator it mirrors, so the UI labels it as one.
-    data["_operator_name"] = record.operator.operatorName;
+    // Names the provider operator a TypeScript operator mirrors, so the UI labels it as one. A
+    // Python operator already is that class, and Python writes its name only when it differs.
+    if (!python || record.operator.operatorName !== python.className) {
+      data["_operator_name"] = record.operator.operatorName;
+    }
     Object.assign(data, record.operator.serialize?.(label));
   }
   const bindings = serializeArgBindings(inputs, label);
   if (bindings) data["_arg_bindings"] = bindings;
   // Lets `NotPreviouslySkippedDep` re-skip a cleared downstream, as Python's SkipMixin does.
   if (record.canSkipDownstream) data["_can_skip_downstream"] = true;
-  applySchemaFields(data, withDagQueue(record.spec, dagQueue), TASK_FIELD_RULES, label);
+  // A Python worker runs a Python operator, so the queue that routes the Dag's own tasks to
+  // the Node coordinator is not its queue.
+  const spec = python ? record.spec : withDagQueue(record.spec, dagQueue);
+  applySchemaFields(data, spec, TASK_FIELD_RULES, label);
+  if (python) {
+    data[OPERATOR_KWARGS_KEY] = {
+      __type: "dict",
+      __var: { ...serializeOperatorKwargs(python), ...serializeSpecKwargs(spec, label) },
+    };
+  }
   if (downstream?.size) {
     data["downstream_task_ids"] = [...downstream].sort();
   }
   return { __type: "operator", __var: data };
+}
+
+/** The fields of a Python operator that its class fixes rather than its arguments. */
+function serializePythonOperator(python: PythonOperatorTarget): Record<string, SerializedValue> {
+  return {
+    template_fields: [...python.templateFields],
+    ...(python.templateExt?.length && { template_ext: [...python.templateExt] }),
+    ...(python.templateFieldsRenderers && {
+      template_fields_renderers: { ...python.templateFieldsRenderers },
+    }),
+    ...(python.uiColor !== undefined && { ui_color: python.uiColor }),
+    ...(python.uiFgcolor !== undefined && { ui_fgcolor: python.uiFgcolor }),
+    ...(python.isSensor && { _is_sensor: true }),
+  };
+}
+
+/** The operator's own constructor arguments, each as `BaseSerialization.serialize()` writes it. */
+function serializeOperatorKwargs(python: PythonOperatorTarget): Record<string, SerializedValue> {
+  const kwargs: Record<string, SerializedValue> = {};
+  for (const [name, argument] of python.kwargs) kwargs[name] = serializeArgument(argument);
+  return kwargs;
+}
+
+function serializeArgument({ value, encoding }: PythonOperatorArgument): SerializedValue {
+  if (value === null) return null;
+  if (encoding === "timedelta") return { __type: "timedelta", __var: value as number };
+  return serializeArgumentValue(value);
+}
+
+/** {@link serializeValue}, with a task reference written as the `XComArg` it stands for. */
+function serializeArgumentValue(value: unknown): SerializedValue {
+  if (isTaskRef(value)) {
+    return { __type: "xcomref", __var: { task_id: value.taskId, key: XCOM_RETURN_KEY } };
+  }
+  if (Array.isArray(value)) return value.map(serializeArgumentValue);
+  if (typeof value === "object" && value !== null && !(value instanceof Date)) {
+    return {
+      __type: "dict",
+      __var: Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, serializeArgumentValue(item)]),
+      ),
+    };
+  }
+  return serializeValue(value);
+}
+
+/**
+ * The task options as `BaseOperator` constructor arguments. The worker has only the serialized
+ * Dag to build the operator from, and a schema key is the name of the argument it came from.
+ */
+function serializeSpecKwargs(spec: object, label: string): Record<string, SerializedValue> {
+  const kwargs: Record<string, SerializedValue> = {};
+  const values = spec as Record<string, unknown>;
+  for (const [name, field] of Object.entries(TASK_FIELD_RULES.fields)) {
+    if (field.virtual || TASK_FIELD_RULES.omitted.has(field.key)) continue;
+    const value = values[name];
+    if (value === undefined || value === field.default) continue;
+    kwargs[field.key] = encodeField(field, value, `${name} for ${label}`);
+  }
+  return kwargs;
 }
 
 /**

@@ -30,7 +30,8 @@
     "paths": {
       "@apache-airflow/ts-sdk": ["./src/index.ts"],
       "@apache-airflow/ts-sdk/coordinator": ["./src/coordinator/index.ts"],
-      "@apache-airflow/ts-sdk/hitl": ["./src/hitl/index.ts"]
+      "@apache-airflow/ts-sdk/hitl": ["./src/hitl/index.ts"],
+      "@apache-airflow/ts-sdk/provider": ["./src/provider/index.ts"]
     },
 
     "noEmit": true,
@@ -38,5 +39,11 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "example/src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.mjs",
+    "example/src/**/*.ts",
+    "providers/*/src/**/*.ts"
+  ]
 }

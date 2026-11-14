@@ -33,6 +33,9 @@ export default defineConfig({
         new URL("./src/coordinator/index.ts", import.meta.url),
       ),
       "@apache-airflow/ts-sdk/hitl": fileURLToPath(new URL("./src/hitl/index.ts", import.meta.url)),
+      "@apache-airflow/ts-sdk/provider": fileURLToPath(
+        new URL("./src/provider/index.ts", import.meta.url),
+      ),
     },
   },
   test: {

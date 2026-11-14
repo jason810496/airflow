@@ -36,6 +36,10 @@
     "./hitl": {
       "types": "./dist/hitl/index.d.ts",
       "import": "./dist/hitl/index.js"
+    },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "import": "./dist/provider/index.js"
     }
   },
   "files": [
@@ -57,7 +61,8 @@
     "verify:package": "node scripts/verify-package.mjs",
     "prepack": "pnpm run build",
     "generate:supervisor": "node scripts/generate-supervisor.mjs",
-    "generate:dag-schema": "node scripts/generate-dag-schema.mjs"
+    "generate:dag-schema": "node scripts/generate-dag-schema.mjs",
+    "generate:providers": "node scripts/generate-providers.mjs"
   },
   "keywords": [
     "airflow",

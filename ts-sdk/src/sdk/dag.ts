@@ -1103,6 +1103,8 @@ export class Dag {
         );
       }
       this.#wire(taskId, inputs[0]);
+      const upstream = operator?.getUpstreamTasks?.() ?? [];
+      if (upstream.length > 0) task.after(...upstream);
       return task;
     }) as TaskFactory<TArgs, TReturn>;
   }

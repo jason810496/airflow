@@ -35,7 +35,7 @@ import type {
 } from "../coordinator/protocol.js";
 import { brand, hasBrand } from "./brand.js";
 import type { JsonValue } from "./client-types.js";
-import type { Dag } from "./dag.js";
+import type { Dag, TaskRef } from "./dag.js";
 import type { TaskContext } from "./task.js";
 
 /** What an operator may end the task with. */
@@ -85,6 +85,32 @@ export interface OperatorDagDependency {
   readonly dependencyType: string;
 }
 
+/** One constructor argument of a Python operator, before the serializer encodes it. */
+export interface PythonOperatorArgument {
+  /** Plain JSON, with a `TaskRef` wherever an upstream task's result goes. */
+  readonly value: unknown;
+  /** Set for a value JSON has no type for: a number of seconds, or a `Date`. */
+  readonly encoding?: "timedelta" | "datetime";
+}
+
+/**
+ * The Python operator class a task is serialized as, so that a Python worker builds and runs it
+ * from the serialized Dag. See `airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md`.
+ */
+export interface PythonOperatorTarget {
+  /** Python module of the class, such as `airflow.providers.standard.operators.bash`. */
+  readonly module: string;
+  readonly className: string;
+  /** Constructor keyword arguments, by their Python name. */
+  readonly kwargs: ReadonlyMap<string, PythonOperatorArgument>;
+  readonly templateFields: readonly string[];
+  readonly templateExt?: readonly string[];
+  readonly templateFieldsRenderers?: Readonly<Record<string, string>>;
+  readonly uiColor?: string;
+  readonly uiFgcolor?: string;
+  readonly isSensor?: boolean;
+}
+
 // Carries an operator's argument and result types without carrying a value, as `TaskRef` does
 // for its return type. The argument is a parameter so that an operator of any argument type is
 // an `Operator<never, unknown>`.
@@ -122,6 +148,13 @@ export interface Operator<TArgs extends object | void = void, TResult = unknown>
   serialize?(label: string): Record<string, JsonValue>;
   /** @internal The Dags this task depends on. */
   getDagDependencies?(): readonly OperatorDagDependency[];
+  /**
+   * @internal Set when a Python worker runs the task as this class. The task is then not a stub,
+   * does not take the Dag's queue, and `execute` only runs when its queue is misrouted.
+   */
+  readonly pythonOperator?: PythonOperatorTarget;
+  /** @internal The tasks whose results the operator's own arguments take. */
+  getUpstreamTasks?(): readonly TaskRef[];
   /** @internal The task's first run. */
   execute(op: OperatorContext): Promise<OperatorOutcome>;
   /** @internal The run Airflow resumes with, after `awaitInput` or `defer`. */
