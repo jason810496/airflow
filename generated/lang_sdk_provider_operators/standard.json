@@ -1,0 +1,489 @@
+{
+  "spec_version": "1.0",
+  "provider": {
+    "id": "standard",
+    "package": "apache-airflow-providers-standard",
+    "version": "1.22.0"
+  },
+  "operators": [
+    {
+      "name": "BashOperator",
+      "module": "airflow.providers.standard.operators.bash",
+      "kind": "operator",
+      "description": "Execute a Bash script, command or set of commands.",
+      "template_fields": [
+        "bash_command",
+        "env",
+        "cwd"
+      ],
+      "template_ext": [
+        ".sh",
+        ".bash"
+      ],
+      "template_fields_renderers": {
+        "bash_command": "bash",
+        "env": "json"
+      },
+      "ui_color": "#f0ede4",
+      "params": [
+        {"name": "bash_command", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The command, set of commands or reference to a Bash script (must be '.sh' or '.bash') to be executed. (templated)"},
+        {"name": "env", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "string"}}, {"kind": "null"}]}, "templated": true, "description": "If env is not None, it must be a dict that defines the environment variables for the new process; these are used instead of inheriting the current process environment, which is the default behavior. (templated)"},
+        {"name": "append_env", "type": {"kind": "boolean"}, "default": false, "description": "If False(default) uses the environment variables passed in env params and does not inherit the current process environment. If True, inherits the environment variables from current passes and then environment variable passed by the user will either update the existing inherited environment variables or the new variables gets appended to it"},
+        {"name": "output_encoding", "type": {"kind": "string"}, "default": "utf-8", "description": "Output encoding of Bash command"},
+        {"name": "skip_on_exit_code", "type": {"kind": "union", "options": [{"kind": "integer"}, {"kind": "null"}]}, "default": 99, "description": "If task exits with this exit code, leave the task in `skipped` state (default: 99). If set to `None`, any non-zero exit code will be treated as a failure."},
+        {"name": "cwd", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Working directory to execute the command in (templated). If None (default), the command is run in a temporary directory. To use current DAG folder as the working directory, you might set template `{{ task.dag.folder }}`. When bash_command is a '.sh' or '.bash' file, Airflow must have write access to the working directory. The script will be rendered (Jinja template) into a new temporary file in this directory."}
+      ],
+      "omitted_params": [
+        {"name": "output_processor", "annotation": "Callable[[str], Any]"}
+      ]
+    },
+    {
+      "name": "BaseBranchOperator",
+      "module": "airflow.providers.standard.operators.branch",
+      "kind": "operator",
+      "description": "A base class for creating operators with branching functionality, like to BranchPythonOperator.",
+      "template_fields": [],
+      "can_skip_downstream": true,
+      "params": []
+    },
+    {
+      "name": "BranchDateTimeOperator",
+      "module": "airflow.providers.standard.operators.datetime",
+      "kind": "operator",
+      "description": "Branches into one of two lists of tasks depending on the current datetime.",
+      "template_fields": [],
+      "can_skip_downstream": true,
+      "params": [
+        {"name": "follow_task_ids_if_true", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}]}, "required": true, "description": "task_id, task_group_id, or a list of task_ids and/or task_group_ids to follow if `datetime.datetime.now()` falls above target_lower and below target_upper."},
+        {"name": "follow_task_ids_if_false", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}]}, "required": true, "description": "task_id, task_group_id, or a list of task_ids and/or task_group_ids to follow if `datetime.datetime.now()` falls below target_lower or above target_upper."},
+        {"name": "target_lower", "type": {"kind": "union", "options": [{"kind": "datetime"}, {"kind": "null"}]}, "required": true, "description": "target lower bound."},
+        {"name": "target_upper", "type": {"kind": "union", "options": [{"kind": "datetime"}, {"kind": "null"}]}, "required": true, "description": "target upper bound."},
+        {"name": "use_task_logical_date", "type": {"kind": "boolean"}, "default": false, "description": "If `True`, uses task's logical date to compare with targets. Logical date is useful for backfilling. If `False`, uses system's date."}
+      ]
+    },
+    {
+      "name": "EmptyOperator",
+      "module": "airflow.providers.standard.operators.empty",
+      "kind": "operator",
+      "description": "Operator that does literally nothing.",
+      "template_fields": [],
+      "ui_color": "#e8f7e4",
+      "params": []
+    },
+    {
+      "name": "ApprovalOperator",
+      "module": "airflow.providers.standard.operators.hitl",
+      "kind": "operator",
+      "description": "Human-in-the-loop Operator that has only 'Approval' and 'Reject' options.",
+      "template_fields": [
+        "subject",
+        "body"
+      ],
+      "can_skip_downstream": true,
+      "params": [
+        {"name": "ignore_downstream_trigger_rules", "type": {"kind": "boolean"}, "default": false},
+        {"name": "fail_on_reject", "type": {"kind": "boolean"}, "default": false},
+        {"name": "subject", "type": {"kind": "string"}, "required": true, "templated": true, "description": "Headline/subject presented to the user for the interaction task."},
+        {"name": "body", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Descriptive text (with Markdown support) that gives the details that are needed to decide."},
+        {"name": "defaults", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "The default options and the options that are taken if timeout is passed."},
+        {"name": "params", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "dictionary of parameter definitions that are in the format of Dag params such that a Form Field can be rendered. Entered data is validated (schema, required fields) like for a Dag run and added to XCom of the task result."},
+        {"name": "assigned_users", "type": {"kind": "union", "options": [{"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}, {"kind": "array", "items": {"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}}, {"kind": "null"}]}},
+        {"name": "response_timeout", "type": {"kind": "union", "options": [{"kind": "timedelta"}, {"kind": "null"}]}, "description": "Maximum time to wait for a human response. On Airflow 3.3+ this is enforced by the scheduler's `awaiting_input` timeout sweep; on older versions it is passed to the triggerer. This is separate from `execution_timeout`, which controls the execution phase before the task starts waiting. If not set, no timeout is applied to the human response wait."}
+      ],
+      "omitted_params": [
+        {"name": "notifiers", "annotation": "Sequence[BaseNotifier] | BaseNotifier | None"}
+      ]
+    },
+    {
+      "name": "HITLBranchOperator",
+      "module": "airflow.providers.standard.operators.hitl",
+      "kind": "operator",
+      "description": "BranchOperator based on Human-in-the-loop Response.",
+      "template_fields": [
+        "subject",
+        "body"
+      ],
+      "can_skip_downstream": true,
+      "params": [
+        {"name": "options_mapping", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "string"}}, {"kind": "null"}]}},
+        {"name": "subject", "type": {"kind": "string"}, "required": true, "templated": true, "description": "Headline/subject presented to the user for the interaction task."},
+        {"name": "options", "type": {"kind": "array", "items": {"kind": "string"}}, "required": true, "description": "List of options that the an user can select from to complete the task."},
+        {"name": "body", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Descriptive text (with Markdown support) that gives the details that are needed to decide."},
+        {"name": "defaults", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "The default options and the options that are taken if timeout is passed."},
+        {"name": "multiple", "type": {"kind": "boolean"}, "default": false, "description": "Whether the user can select one or multiple options."},
+        {"name": "params", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "dictionary of parameter definitions that are in the format of Dag params such that a Form Field can be rendered. Entered data is validated (schema, required fields) like for a Dag run and added to XCom of the task result."},
+        {"name": "assigned_users", "type": {"kind": "union", "options": [{"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}, {"kind": "array", "items": {"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}}, {"kind": "null"}]}},
+        {"name": "response_timeout", "type": {"kind": "union", "options": [{"kind": "timedelta"}, {"kind": "null"}]}, "description": "Maximum time to wait for a human response. On Airflow 3.3+ this is enforced by the scheduler's `awaiting_input` timeout sweep; on older versions it is passed to the triggerer. This is separate from `execution_timeout`, which controls the execution phase before the task starts waiting. If not set, no timeout is applied to the human response wait."}
+      ],
+      "omitted_params": [
+        {"name": "notifiers", "annotation": "Sequence[BaseNotifier] | BaseNotifier | None"}
+      ]
+    },
+    {
+      "name": "HITLEntryOperator",
+      "module": "airflow.providers.standard.operators.hitl",
+      "kind": "operator",
+      "description": "Human-in-the-loop Operator that is used to accept user input through TriggerForm.",
+      "template_fields": [
+        "subject",
+        "body"
+      ],
+      "params": [
+        {"name": "subject", "type": {"kind": "string"}, "required": true, "templated": true, "description": "Headline/subject presented to the user for the interaction task."},
+        {"name": "options", "type": {"kind": "array", "items": {"kind": "string"}}, "description": "List of options that the an user can select from to complete the task."},
+        {"name": "body", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Descriptive text (with Markdown support) that gives the details that are needed to decide."},
+        {"name": "defaults", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "The default options and the options that are taken if timeout is passed."},
+        {"name": "multiple", "type": {"kind": "boolean"}, "default": false, "description": "Whether the user can select one or multiple options."},
+        {"name": "params", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "dictionary of parameter definitions that are in the format of Dag params such that a Form Field can be rendered. Entered data is validated (schema, required fields) like for a Dag run and added to XCom of the task result."},
+        {"name": "assigned_users", "type": {"kind": "union", "options": [{"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}, {"kind": "array", "items": {"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}}, {"kind": "null"}]}},
+        {"name": "response_timeout", "type": {"kind": "union", "options": [{"kind": "timedelta"}, {"kind": "null"}]}, "description": "Maximum time to wait for a human response. On Airflow 3.3+ this is enforced by the scheduler's `awaiting_input` timeout sweep; on older versions it is passed to the triggerer. This is separate from `execution_timeout`, which controls the execution phase before the task starts waiting. If not set, no timeout is applied to the human response wait."}
+      ],
+      "omitted_params": [
+        {"name": "notifiers", "annotation": "Sequence[BaseNotifier] | BaseNotifier | None"}
+      ]
+    },
+    {
+      "name": "HITLOperator",
+      "module": "airflow.providers.standard.operators.hitl",
+      "kind": "operator",
+      "description": "Base class for all Human-in-the-loop Operators to inherit from.",
+      "template_fields": [
+        "subject",
+        "body"
+      ],
+      "params": [
+        {"name": "subject", "type": {"kind": "string"}, "required": true, "templated": true, "description": "Headline/subject presented to the user for the interaction task."},
+        {"name": "options", "type": {"kind": "array", "items": {"kind": "string"}}, "required": true, "description": "List of options that the an user can select from to complete the task."},
+        {"name": "body", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Descriptive text (with Markdown support) that gives the details that are needed to decide."},
+        {"name": "defaults", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "The default options and the options that are taken if timeout is passed."},
+        {"name": "multiple", "type": {"kind": "boolean"}, "default": false, "description": "Whether the user can select one or multiple options."},
+        {"name": "params", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "dictionary of parameter definitions that are in the format of Dag params such that a Form Field can be rendered. Entered data is validated (schema, required fields) like for a Dag run and added to XCom of the task result."},
+        {"name": "assigned_users", "type": {"kind": "union", "options": [{"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}, {"kind": "array", "items": {"kind": "struct", "fields": [{"name": "id", "type": {"kind": "string"}, "required": true}, {"name": "name", "type": {"kind": "string"}, "required": true}]}}, {"kind": "null"}]}},
+        {"name": "response_timeout", "type": {"kind": "union", "options": [{"kind": "timedelta"}, {"kind": "null"}]}, "description": "Maximum time to wait for a human response. On Airflow 3.3+ this is enforced by the scheduler's `awaiting_input` timeout sweep; on older versions it is passed to the triggerer. This is separate from `execution_timeout`, which controls the execution phase before the task starts waiting. If not set, no timeout is applied to the human response wait."}
+      ],
+      "omitted_params": [
+        {"name": "notifiers", "annotation": "Sequence[BaseNotifier] | BaseNotifier | None"}
+      ]
+    },
+    {
+      "name": "LatestOnlyOperator",
+      "module": "airflow.providers.standard.operators.latest_only",
+      "kind": "operator",
+      "description": "Skip tasks that are not running during the most recent schedule interval.",
+      "template_fields": [],
+      "ui_color": "#e9ffdb",
+      "can_skip_downstream": true,
+      "params": []
+    },
+    {
+      "name": "SmoothOperator",
+      "module": "airflow.providers.standard.operators.smooth",
+      "kind": "operator",
+      "description": "Operator that logs a YouTube link to Sade song \"Smooth Operator\".",
+      "template_fields": [],
+      "ui_color": "#e8f7e4",
+      "params": []
+    },
+    {
+      "name": "TriggerDagRunOperator",
+      "module": "airflow.providers.standard.operators.trigger_dagrun",
+      "kind": "operator",
+      "description": "Triggers a DAG run for a specified DAG ID.",
+      "template_fields": [
+        "trigger_dag_id",
+        "trigger_run_id",
+        "logical_date",
+        "conf",
+        "wait_for_completion",
+        "skip_when_already_exists"
+      ],
+      "template_fields_renderers": {
+        "conf": "py"
+      },
+      "ui_color": "#ffefeb",
+      "params": [
+        {"name": "trigger_dag_id", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The `dag_id` of the DAG to trigger (templated)."},
+        {"name": "trigger_run_id", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "The run ID to use for the triggered DAG run (templated). If not provided, a run ID will be automatically generated."},
+        {"name": "conf", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "templated": true, "description": "Configuration for the DAG run (templated)."},
+        {"name": "logical_date", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "Logical date for the triggered DAG (templated)."},
+        {"name": "run_after", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "description": "The date before which the triggered DAG should not run."},
+        {"name": "reset_dag_run", "type": {"kind": "boolean"}, "default": false, "description": "Whether clear existing DAG run if already exists. This is useful when backfill or rerun an existing DAG run. This only resets (not recreates) the DAG run. DAG run conf is immutable and will not be reset on rerun of an existing DAG run. When reset_dag_run=False and dag run exists, DagRunAlreadyExists will be raised. When reset_dag_run=True and dag run exists, existing DAG run will be cleared to rerun."},
+        {"name": "wait_for_completion", "type": {"kind": "boolean"}, "templated": true, "default": false, "description": "Whether or not wait for DAG run completion. (default: False)"},
+        {"name": "poke_interval", "type": {"kind": "integer"}, "default": 60, "description": "Poke interval to check DAG run status when wait_for_completion=True. (default: 60)"},
+        {"name": "allowed_states", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "union", "options": [{"kind": "string"}, {"kind": "literal", "literals": ["queued", "running", "success", "failed"]}]}}, {"kind": "null"}]}, "description": "Optional list of allowed DAG run states of the triggered DAG. This is useful when setting `wait_for_completion` to True. Must be a valid DagRunState. Default is `[DagRunState.SUCCESS]`."},
+        {"name": "failed_states", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "union", "options": [{"kind": "string"}, {"kind": "literal", "literals": ["queued", "running", "success", "failed"]}]}}, {"kind": "null"}]}, "description": "Optional list of failed or disallowed DAG run states of the triggered DAG. This is useful when setting `wait_for_completion` to True. Must be a valid DagRunState. Default is `[DagRunState.FAILED]`."},
+        {"name": "skip_when_already_exists", "type": {"kind": "boolean"}, "templated": true, "default": false, "description": "Set to true to mark the task as SKIPPED if a DAG run of the triggered DAG for the same logical date already exists."},
+        {"name": "fail_when_dag_is_paused", "type": {"kind": "boolean"}, "default": false, "description": "If the dag to trigger is paused, DagIsPaused will be raised. On Airflow 3.x this requires Airflow 3.2.0+ (it relies on the task-SDK DAG state endpoint added then); on Airflow 3.0/3.1 setting this raises `NotImplementedError`."},
+        {"name": "note", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}},
+        {"name": "deferrable", "type": {"kind": "boolean"}, "default": false, "description": "If waiting for completion, whether to defer the task until done, default is `False`."},
+        {"name": "openlineage_inject_parent_info", "type": {"kind": "boolean"}, "default": true, "description": "whether to include OpenLineage metadata about the parent task in the triggered DAG run's conf, enabling improved lineage tracking. The metadata is only injected if OpenLineage is enabled and running. This option does not modify any other part of the conf, and existing OpenLineage-related settings in the conf will not be overwritten. The injection process is safeguarded against exceptions - if any error occurs during metadata injection, it is gracefully handled and the conf remains unchanged - so it's safe to use. Default is `True`"}
+      ]
+    },
+    {
+      "name": "BranchDayOfWeekOperator",
+      "module": "airflow.providers.standard.operators.weekday",
+      "kind": "operator",
+      "description": "Branches into one of two lists of tasks depending on the current day.",
+      "template_fields": [],
+      "can_skip_downstream": true,
+      "params": [
+        {"name": "follow_task_ids_if_true", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}]}, "required": true, "description": "task_id, task_group_id, or a list of task_ids and/or task_group_ids to follow if criteria met."},
+        {"name": "follow_task_ids_if_false", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}]}, "required": true, "description": "task_id, task_group_id, or a list of task_ids and/or task_group_ids to follow if criteria not met."},
+        {"name": "week_day", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "literal", "literals": [1, 2, 3, 4, 5, 6, 7]}, {"kind": "array", "items": {"kind": "literal", "literals": [1, 2, 3, 4, 5, 6, 7]}}]}, "required": true, "description": "Day of the week to check (full name). Optionally, a set of days can also be provided using a set. Example values:"},
+        {"name": "use_task_logical_date", "type": {"kind": "boolean"}, "default": false, "description": "If `True`, uses task's logical date to compare with is_today. Execution Date is Useful for backfilling. If `False`, uses system's day of the week."}
+      ]
+    },
+    {
+      "name": "BashSensor",
+      "module": "airflow.providers.standard.sensors.bash",
+      "kind": "sensor",
+      "description": "Executes a bash command/script.",
+      "template_fields": [
+        "bash_command",
+        "env"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "bash_command", "type": {"kind": "any"}, "required": true, "templated": true, "description": "The command, set of commands or reference to a bash script (must be '.sh') to be executed."},
+        {"name": "env", "type": {"kind": "any"}, "templated": true, "description": "If env is not None, it must be a mapping that defines the environment variables for the new process; these are used instead of inheriting the current process environment, which is the default behavior. (templated)"},
+        {"name": "output_encoding", "type": {"kind": "any"}, "default": "utf-8", "description": "output encoding of bash command."},
+        {"name": "retry_exit_code", "type": {"kind": "union", "options": [{"kind": "integer"}, {"kind": "null"}]}, "description": "If task exits with this code, treat the sensor as not-yet-complete and retry the check later according to the usual retry/timeout settings. Any other non-zero return code will be treated as an error, and cause the sensor to fail. If set to `None` (the default), any non-zero exit code will cause a retry and the task will never raise an error except on time-out."},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "DateTimeSensor",
+      "module": "airflow.providers.standard.sensors.date_time",
+      "kind": "sensor",
+      "description": "Waits until the specified datetime.",
+      "template_fields": [
+        "target_time"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "target_time", "type": {"kind": "string"}, "required": true, "templated": true, "description": "datetime after which the job succeeds. (templated)"},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "DateTimeSensorAsync",
+      "module": "airflow.providers.standard.sensors.date_time",
+      "kind": "sensor",
+      "description": "Wait until the specified datetime occurs.",
+      "template_fields": [
+        "target_time"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "start_from_trigger", "type": {"kind": "boolean"}, "default": false, "description": "Start the task directly from the triggerer without going into the worker. Ignored on Airflow < 3.3 when `target_time` is a Jinja template."},
+        {"name": "end_from_trigger", "type": {"kind": "boolean"}, "default": false, "description": "End the task directly from the triggerer without going into the worker."},
+        {"name": "trigger_kwargs", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "The keyword arguments passed to the trigger when start_from_trigger is set to True during dynamic task mapping. This argument is not used in standard usage."},
+        {"name": "target_time", "type": {"kind": "string"}, "required": true, "templated": true, "description": "datetime after which the job succeeds. (templated)"},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "ExternalTaskMarker",
+      "module": "airflow.providers.standard.sensors.external_task",
+      "kind": "operator",
+      "description": "Use this operator to indicate that a task on a different DAG depends on this task.",
+      "template_fields": [
+        "external_dag_id",
+        "external_task_id",
+        "logical_date"
+      ],
+      "ui_color": "#4db7db",
+      "params": [
+        {"name": "external_dag_id", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The dag_id that contains the dependent task that needs to be cleared."},
+        {"name": "external_task_id", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The task_id of the dependent task that needs to be cleared."},
+        {"name": "logical_date", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "The logical date of the dependent task execution that needs to be cleared. Defaults to the logical date of this task's own run; a run without one clears nothing."},
+        {"name": "recursion_depth", "type": {"kind": "integer"}, "default": 10, "description": "The maximum level of transitive dependencies allowed. Default is 10. This is mostly used for preventing cyclic dependencies. It is fine to increase this number if necessary. However, too many levels of transitive dependencies will make it slower to clear tasks in the web UI."}
+      ]
+    },
+    {
+      "name": "ExternalTaskSensor",
+      "module": "airflow.providers.standard.sensors.external_task",
+      "kind": "sensor",
+      "description": "Waits for a different DAG, task group, or task to complete for a specific logical date.",
+      "template_fields": [
+        "external_dag_id",
+        "external_task_id",
+        "external_task_ids",
+        "external_task_group_id"
+      ],
+      "ui_color": "#4db7db",
+      "params": [
+        {"name": "external_dag_id", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The dag_id that contains the task you want to wait for. (templated)"},
+        {"name": "external_task_id", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "The task_id that contains the task you want to wait for. (templated)"},
+        {"name": "external_task_ids", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "templated": true, "description": "The list of task_ids that you want to wait for. (templated) If `None` (default value) the sensor waits for the DAG. Either external_task_id or external_task_ids can be passed to ExternalTaskSensor, but not both."},
+        {"name": "external_task_group_id", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "null"}]}, "templated": true, "description": "The task_group_id that contains the task you want to wait for. (templated)"},
+        {"name": "allowed_states", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "Iterable of allowed states, default is `['success']`"},
+        {"name": "skipped_states", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "Iterable of states to make this task mark as skipped, default is `None`"},
+        {"name": "failed_states", "type": {"kind": "union", "options": [{"kind": "array", "items": {"kind": "string"}}, {"kind": "null"}]}, "description": "Iterable of failed or dis-allowed states, default is `None`"},
+        {"name": "execution_delta", "type": {"kind": "union", "options": [{"kind": "timedelta"}, {"kind": "null"}]}, "description": "time difference with the previous execution to look at, the default is the same logical date as the current task or DAG. For yesterday, use [positive!] datetime.timedelta(days=1). Either execution_delta or execution_date_fn can be passed to ExternalTaskSensor, but not both."},
+        {"name": "check_existence", "type": {"kind": "boolean"}, "default": false, "description": "Set to `True` to check if the external task exists (when external_task_id is not None) or check if the DAG to wait for exists (when external_task_id is None), and immediately cease waiting if the external task or DAG does not exist (default value: False)."},
+        {"name": "poll_interval", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "(DEPRECATED) use `poke_interval` instead"},
+        {"name": "deferrable", "type": {"kind": "boolean"}, "default": false, "description": "Run sensor in deferrable mode"},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "polling period in seconds to check for the status"},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ],
+      "omitted_params": [
+        {"name": "execution_date_fn", "annotation": "Callable | None"}
+      ]
+    },
+    {
+      "name": "FileSensor",
+      "module": "airflow.providers.standard.sensors.filesystem",
+      "kind": "sensor",
+      "description": "Waits for a file or folder to land in a filesystem.",
+      "template_fields": [
+        "filepath",
+        "fs_conn_id"
+      ],
+      "ui_color": "#91818a",
+      "params": [
+        {"name": "filepath", "type": {"kind": "any"}, "required": true, "templated": true, "description": "File or folder name (relative to the base path set within the connection), can be a glob."},
+        {"name": "fs_conn_id", "type": {"kind": "any"}, "templated": true, "default": "fs_default", "description": "reference to the File (path) connection id"},
+        {"name": "recursive", "type": {"kind": "any"}, "default": false, "description": "when set to `True`, enables recursive directory matching behavior of `**` in glob filepath parameter. Defaults to `False`."},
+        {"name": "deferrable", "type": {"kind": "boolean"}, "default": false, "description": "If waiting for completion, whether to defer the task until done, default is `False`."},
+        {"name": "start_from_trigger", "type": {"kind": "boolean"}, "default": false, "description": "Start the task directly from the triggerer without going into the worker."},
+        {"name": "trigger_kwargs", "type": {"kind": "union", "options": [{"kind": "object", "values": {"kind": "any"}}, {"kind": "null"}]}, "description": "The keyword arguments passed to the trigger when start_from_trigger is set to True during dynamic task mapping. This argument is not used in standard usage."},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "TimeDeltaSensor",
+      "module": "airflow.providers.standard.sensors.time_delta",
+      "kind": "sensor",
+      "description": "Waits for a timedelta.",
+      "template_fields": [
+        "delta"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "delta", "type": {"kind": "integer"}, "required": true, "templated": true, "description": "time to wait before succeeding. If a templated value is provided, it will be cast to an integer representing the duration in minutes."},
+        {"name": "deferrable", "type": {"kind": "boolean"}, "default": false, "description": "Run sensor in deferrable mode. If set to True, task will defer itself to avoid taking up a worker slot while it is waiting."},
+        {"name": "end_from_trigger", "type": {"kind": "boolean"}, "default": false},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "TimeDeltaSensorAsync",
+      "module": "airflow.providers.standard.sensors.time_delta",
+      "kind": "sensor",
+      "description": "Deprecated. Use TimeDeltaSensor with deferrable=True instead.",
+      "template_fields": [
+        "delta"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "end_from_trigger", "type": {"kind": "boolean"}, "default": false},
+        {"name": "delta", "type": {"kind": "any"}, "required": true, "templated": true, "description": "time to wait before succeeding. If a templated value is provided, it will be cast to an integer representing the duration in minutes."},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "WaitSensor",
+      "module": "airflow.providers.standard.sensors.time_delta",
+      "kind": "sensor",
+      "description": "A sensor that waits a specified period of time before completing.",
+      "template_fields": [
+        "time_to_wait"
+      ],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "time_to_wait", "type": {"kind": "integer"}, "required": true, "templated": true, "description": "time length to wait after the task starts before succeeding."},
+        {"name": "deferrable", "type": {"kind": "boolean"}, "default": false, "description": "Run sensor in deferrable mode"},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    },
+    {
+      "name": "DayOfWeekSensor",
+      "module": "airflow.providers.standard.sensors.weekday",
+      "kind": "sensor",
+      "description": "Waits until the first specified day of the week.",
+      "template_fields": [],
+      "ui_color": "#e6f1f2",
+      "params": [
+        {"name": "week_day", "type": {"kind": "union", "options": [{"kind": "string"}, {"kind": "array", "items": {"kind": "string"}}, {"kind": "literal", "literals": [1, 2, 3, 4, 5, 6, 7]}, {"kind": "array", "items": {"kind": "literal", "literals": [1, 2, 3, 4, 5, 6, 7]}}]}, "required": true, "description": "Day of the week to check (full name). Optionally, a set of days can also be provided using a set. Example values:"},
+        {"name": "use_task_logical_date", "type": {"kind": "boolean"}, "default": false, "description": "If `True`, uses task's logical date to compare with week_day. Execution Date is Useful for backfilling. If `False`, uses system's day of the week. Useful when you don't want to run anything on weekdays on the system."},
+        {"name": "poke_interval", "type": {"kind": "number"}, "default": 60, "description": "Time that the job should wait in between each try. Can be `timedelta` or `float` seconds."},
+        {"name": "timeout", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds. This should not be confused with `execution_timeout` of the `BaseOperator` class. `timeout` measures the time elapsed between the first poke and the current time (taking into account any reschedule delay between each poke), while `execution_timeout` checks the **running** time of the task (leaving out any reschedule delay). In case that the `mode` is `poke` (see below), both of them are equivalent (as the sensor is never rescheduled), which is not the case in `reschedule` mode."},
+        {"name": "soft_fail", "type": {"kind": "boolean"}, "default": false, "description": "Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail."},
+        {"name": "mode", "type": {"kind": "string"}, "default": "poke", "description": "How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When set to `poke` the sensor is taking up a worker slot for its whole execution time and sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if a short poke interval is required. Note that the sensor will hold onto a worker slot and a pool slot for the duration of the sensor's runtime in this mode. When set to `reschedule` the sensor task frees the worker slot when the criteria is not yet met and it's rescheduled at a later time. Use this mode if the time before the criteria is met is expected to be quite long. The poke interval should be more than one minute to prevent too much load on the scheduler."},
+        {"name": "exponential_backoff", "type": {"kind": "boolean"}, "default": false, "description": "allow progressive longer waits between pokes by using exponential backoff algorithm"},
+        {"name": "max_wait", "type": {"kind": "union", "options": [{"kind": "number"}, {"kind": "null"}]}, "description": "maximum wait interval between pokes, can be `timedelta` or `float` seconds"},
+        {"name": "silent_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception different from AirflowSensorTimeout, AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log the error and continue its execution. Otherwise, the sensor task fails, and it can be retried based on the provided `retries` parameter."},
+        {"name": "never_fail", "type": {"kind": "boolean"}, "default": false, "description": "If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive with soft_fail."}
+      ]
+    }
+  ],
+  "skipped": [
+    {"module": "airflow.providers.standard.operators.python", "name": "BranchExternalPythonOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "BranchPythonOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "BranchPythonVirtualenvOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "ExternalPythonOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "PythonOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "PythonVirtualenvOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.operators.python", "name": "ShortCircuitOperator", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.sensors.asset", "name": "AssetEventSensor", "reason": "required argument 'asset' (Asset | AssetAlias | AssetRef) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.sensors.python", "name": "PythonSensor", "reason": "required argument 'python_callable' (Callable) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.sensors.time", "name": "TimeSensor", "reason": "required argument 'target_time' (datetime.time) is not JSON-serializable"},
+    {"module": "airflow.providers.standard.sensors.time", "name": "TimeSensorAsync", "reason": "required argument 'target_time' (datetime.time) is not JSON-serializable"}
+  ]
+}

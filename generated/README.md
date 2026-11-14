@@ -32,6 +32,12 @@ You can read more about pre-commit hooks [here](/contributing-docs/08_static_cod
   information in release notes and it is used to generate SBOM information for the providers. It is manually
   regenerated using `breeze release-management generate-providers-metadata` command."
 
+* `lang_sdk_provider_operators/<provider-id>.json` - describe the operators and sensors of a provider
+  that a language SDK can express: each one's Python class and the constructor arguments JSON can carry.
+  A language SDK generates its provider bindings from them, such as the packages in `ts-sdk/providers/`.
+  They are regenerated from the provider sources with
+  `python3 scripts/ci/lang_sdk_providers/generate_operator_specs.py --allow-list <provider-id>`.
+
 * `PYPI_README.md` - is generated from the comprehensive `README.md` of the project, which contains exhaustive
   project details. Unlike the full `README.md`, `PYPI_README.md` is a distilled version tailored for PyPI,
   focusing on select sections. This subset is produced by the `generate-pypi-readme` pre-commit hook specified in
