@@ -57,6 +57,32 @@ prek run compile-ts-sdk --all-files
 prek run --hook-stage manual verify-ts-sdk-package --all-files
 ```
 
+## Provider packages
+
+`providers/` holds one generated package per provider, such as
+`@apache-airflow/providers-amazon`, built from the operator specs in
+`generated/lang_sdk_provider_operators/`. Do not edit them by hand. To add a
+provider or pick up a provider change, regenerate its spec from the repository
+root, then the packages:
+
+```bash
+python3 scripts/ci/lang_sdk_providers/generate_operator_specs.py --allow-list amazon,common.ai,standard
+```
+
+```bash
+pnpm run generate:providers
+```
+
+The `check-ts-sdk-provider-packages` hook fails when the committed packages are
+not what the specs generate. A provider package resolves the SDK as the package
+it is published as, through its own `tsconfig.json`, so a Dag and its provider
+operators load one copy of the SDK. Build the packages before packing a Dag
+that uses them:
+
+```bash
+pnpm -r --filter './providers/*' run build
+```
+
 ## API reference
 
 The public API reference is generated from the TypeScript sources with

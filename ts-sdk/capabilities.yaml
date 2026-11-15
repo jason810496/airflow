@@ -181,6 +181,11 @@ capabilities:
     since: "3.4.0"
     sdk_version: "1.0.0"
     note: "approval() / hitl()"
+  provider-operators:
+    supported: true
+    since: "3.5.0"
+    sdk_version: "1.0.0"
+    note: "generated @apache-airflow/providers-* packages; a Python worker runs them"
   dag-test:
     supported: false
   asset-definition:

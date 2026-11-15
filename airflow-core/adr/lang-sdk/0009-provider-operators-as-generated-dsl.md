@@ -80,3 +80,35 @@ dag.Task(kubernetes.KubernetesPodOperator{
   a class or argument genuinely is not there, and a parse-time hard failure would take a whole Dag
   out over a version difference its tasks may not even touch. The hook also emits a coverage report,
   so which operators each SDK can reach is reviewable.
+
+## Appendix: Implementation Notes
+
+The TypeScript SDK implements decisions 1 to 6 and 8. Decision 7 and the Go and Java bindings are
+not implemented yet.
+
+- **One language-neutral spec per provider.** `scripts/ci/lang_sdk_providers/generate_operator_specs.py
+  --allow-list <provider-id>,...` imports each operator and sensor module a provider's `provider.yaml`
+  lists, reads the constructors across the class hierarchy down to `BaseOperator`, and writes
+  `generated/lang_sdk_provider_operators/<provider-id>.json`. Each provider is read in its own `uv`
+  environment. `BaseOperator`'s own arguments are left out: each SDK already has its task options
+  for them. The skipped operators and omitted arguments are listed in the spec, which is the
+  coverage report decision 3 asks for.
+- **Each SDK generates its bindings from the specs.** `ts-sdk/scripts/generate-providers.mjs`
+  writes one `@apache-airflow/providers-<provider-id>` package per spec, versioned as the provider.
+  The `check-ts-sdk-provider-packages` hook fails when the committed packages are not what the
+  specs generate.
+- **The serialized task is the Python operator.** A binding writes the class as `task_type` and
+  `_task_module`, its arguments under `_operator_kwargs` in the type encoding of
+  `BaseSerialization.serialize()`, and the class attributes the scheduler reads, such as
+  `template_fields`, `_is_sensor` and `_can_skip_downstream`. It is not a stub, so it gets no
+  argument bindings. A task's result given to a templated argument is written as an `xcomref` and
+  drawn as an upstream edge.
+- **The worker builds the operator from the serialized Dag.** When a worker cannot import the Dag
+  file, because a coordinator's importer claims it or no importer does, the task runner asks the
+  Execution API for the serialized Dag of the task instance's Dag version
+  (`GET /task-instances/{id}/serialized-dag`). If the task has `_operator_kwargs`, it builds the
+  class with them, inside a Dag whose other tasks are placeholders with the same ids and edges.
+  That is what an operator reads of its Dag, such as `ApprovalOperator` choosing what to skip.
+  Otherwise the task fails as before.
+- **Limitations.** A placeholder Dag has no task groups, so a branch operator that names a group
+  does not resolve it. A provider task cannot be mapped.

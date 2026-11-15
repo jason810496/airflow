@@ -118,6 +118,7 @@ CAPABILITY_DIMENSIONS: list[Capability] = [
     Capability("trigger-dag-run", "MAY", "dag-definition", True),
     Capability("dynamic-dag-generation", "MAY", "dag-definition", True),
     Capability("human-in-the-loop", "MAY", "dag-definition", True),
+    Capability("provider-operators", "MAY", "dag-definition", True),
     Capability("dag-test", "SHOULD", "dag-definition", True),
     Capability("asset-definition", "MAY", "dag-definition", True),
     Capability("asset-scheduling", "MAY", "dag-definition", True),

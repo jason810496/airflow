@@ -151,6 +151,7 @@ meaning of each dimension is defined in the
 | capability: `trigger-dag-run` | MAY † | ✓ | 3.4.0 | 1.0.0 | TriggerDagRun |
 | capability: `dynamic-dag-generation` | MAY † | ✓ | 3.4.0 | 1.0.0 |  |
 | capability: `human-in-the-loop` | MAY † | ✗ | – | – |  |
+| capability: `provider-operators` | MAY † | ✗ | – | – |  |
 | capability: `dag-test` | SHOULD † | ✗ | – | – |  |
 | capability: `asset-definition` | MAY † | ✗ | – | – |  |
 | capability: `asset-scheduling` | MAY † | ✗ | – | – |  |

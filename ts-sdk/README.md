@@ -143,6 +143,7 @@ Do not edit the table by hand. Update the manifest and run the `update-ts-sdk-re
 | capability: `trigger-dag-run` | MAY † | ✓ | 3.4.0 | 1.0.0 | triggerDagRun |
 | capability: `dynamic-dag-generation` | MAY † | ✓ | 3.4.0 | 1.0.0 |  |
 | capability: `human-in-the-loop` | MAY † | ✓ | 3.4.0 | 1.0.0 | approval() / hitl() |
+| capability: `provider-operators` | MAY † | ✓ | 3.5.0 | 1.0.0 | generated @apache-airflow/providers-* packages; a Python worker runs them |
 | capability: `dag-test` | SHOULD † | ✗ | – | – |  |
 | capability: `asset-definition` | MAY † | ✗ | – | – |  |
 | capability: `asset-scheduling` | MAY † | ✗ | – | – |  |

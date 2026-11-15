@@ -400,6 +400,43 @@ not rendered.
 The task runs on Node.js like the Dag's other tasks, and inherits the Dag's ``queue``. With ``deferrable``, it
 waits in the triggerer, which needs the standard provider installed.
 
+Provider operators
+~~~~~~~~~~~~~~~~~~
+
+The operators and sensors of a provider are available as typed bindings, one npm package per provider, such as
+``@apache-airflow/providers-amazon``. A module mirrors the Python module of the same path, and an argument is the
+Python argument in camel case. Pass the binding to ``dag.task`` in place of a handler:
+
+.. code-block:: typescript
+
+    import { S3CreateObjectOperator } from "@apache-airflow/providers-amazon/aws/operators/s3";
+    import { ApprovalOperator } from "@apache-airflow/providers-standard/operators/hitl";
+
+    const report = dag.task("build_report", async (): Promise<string> => JSON.stringify(rows))();
+
+    dag.task(
+      "write_report",
+      S3CreateObjectOperator({ s3Bucket: "reports", s3Key: "runs/{{ run_id }}/report.json", data: report }),
+      { retries: 2 },
+    )();
+    const decision = dag.task("review", ApprovalOperator({ subject: "Publish the report?" }))();
+
+A binding has no task body. The SDK writes the Python operator class and its arguments into the serialized Dag,
+and a Python worker builds the operator from there and runs it, so the worker needs the provider installed. Such
+a task does not take the Dag's ``queue``, which routes the Dag's own tasks to the Node.js coordinator: it runs on
+the default queue, or on the ``queue`` its task options name.
+
+* A templated argument takes a Jinja template, which the Python worker renders, or another task's result, which
+  also makes that task an upstream. Any other argument takes a value.
+* A duration is a number of seconds, and a datetime is a ``Date``.
+* A provider task's result reaches a TypeScript task the usual way, such as ``publish({ answer: decision })``.
+* An argument JSON cannot carry, such as a callable, is left out of the binding, and an operator that requires
+  one has no binding.
+
+The bindings describe one version of each provider. Pin the package to the provider version your deployment has
+installed: the operator that runs is the one the worker imports. ``ts-sdk/example/src/providers.ts`` uses the
+amazon, common.ai and standard providers in one Dag.
+
 A complete example
 ~~~~~~~~~~~~~~~~~~
 
