@@ -254,10 +254,10 @@ def read_super_init_overrides(klass: type) -> tuple[set[str], set[str]]:
     assignment into ``kwargs`` before that call gives an inherited required argument a default.
     """
     try:
-        tree = ast.parse(textwrap.dedent(inspect.getsource(klass.__init__)))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(vars(klass)["__init__"])))
     except (OSError, TypeError, SyntaxError):
         return set(), set()
-    own = set(inspect.signature(klass.__init__).parameters)
+    own = set(inspect.signature(vars(klass)["__init__"]).parameters)
     fixed: set[str] = set()
     defaulted: set[str] = set()
     for node in ast.walk(tree):
@@ -289,7 +289,7 @@ def collect_constructor_params(cls: type, base: type) -> list[tuple[inspect.Para
             break
         if "__init__" not in vars(klass):
             continue
-        signature = inspect.signature(klass.__init__)
+        signature = inspect.signature(vars(klass)["__init__"])
         for name, param in list(signature.parameters.items())[1:]:
             if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD) or name in params or name in fixed:
                 continue

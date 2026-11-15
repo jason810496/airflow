@@ -184,8 +184,8 @@ describe("defineProviderOperator", () => {
   it.each([
     [() => Notify({} as NotifyArgs), 'NotifyOperator(...) needs the argument "subject"'],
     [
-      () => Notify({ subject: "s", chanel: "ops" } as NotifyArgs),
-      'Unknown argument "chanel" for NotifyOperator(...)',
+      () => Notify({ subject: "s", channelName: "ops" } as NotifyArgs),
+      'Unknown argument "channelName" for NotifyOperator(...)',
     ],
     [() => Notify("s" as unknown as NotifyArgs), "takes an object of its arguments"],
     [

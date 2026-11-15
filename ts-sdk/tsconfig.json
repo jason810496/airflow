@@ -31,7 +31,10 @@
       "@apache-airflow/ts-sdk": ["./src/index.ts"],
       "@apache-airflow/ts-sdk/coordinator": ["./src/coordinator/index.ts"],
       "@apache-airflow/ts-sdk/hitl": ["./src/hitl/index.ts"],
-      "@apache-airflow/ts-sdk/provider": ["./src/provider/index.ts"]
+      "@apache-airflow/ts-sdk/provider": ["./src/provider/index.ts"],
+      "@apache-airflow/providers-amazon/*": ["./providers/amazon/src/*"],
+      "@apache-airflow/providers-common-ai/*": ["./providers/common-ai/src/*"],
+      "@apache-airflow/providers-standard/*": ["./providers/standard/src/*"]
     },
 
     "noEmit": true,

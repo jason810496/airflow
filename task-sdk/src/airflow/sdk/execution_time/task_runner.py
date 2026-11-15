@@ -1201,10 +1201,7 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
         if serialized_task is None and importer is not None:
             _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
 
-    if serialized_task is not None:
-        task = serialized_task
-        dag = task.dag
-    else:
+    if serialized_task is None:
         bag = BundleDagBag(
             dag_folder=dag_absolute_path,
             safe_mode=False,
@@ -1241,6 +1238,9 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
             )
             _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
             sys.exit(1)
+    else:
+        task = serialized_task
+        dag = task.dag
     dag_file_parse_ms = int((time.monotonic() - dag_file_parse_start) * 1000)
 
     if not isinstance(task, (BaseOperator, MappedOperator)):

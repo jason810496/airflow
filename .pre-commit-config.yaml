@@ -453,6 +453,8 @@ repos:
           ^scripts/ci/prek/sync_ts_sdk_schemas\.py$
       - id: check-ts-sdk-provider-packages
         name: Check TypeScript SDK provider packages match the operator specs
+        env:
+          PYTHONPYCACHEPREFIX: .build/pycache
         description: "Fail when ts-sdk/providers/ is not what generated/lang_sdk_provider_operators/ generates"
         entry: node ts-sdk/scripts/generate-providers.mjs --check
         language: node
@@ -1256,6 +1258,8 @@ repos:
           ^providers/\.pre-commit-config\.yaml$|
           ^providers/amazon/src/airflow/providers/amazon/aws/hooks/emr\.py$|
           ^providers/amazon/src/airflow/providers/amazon/aws/operators/emr\.py$|
+          ^generated/lang_sdk_provider_operators/amazon\.json$|
+          ^ts-sdk/providers/amazon/src/aws/operators/emr\.ts$|
           ^providers/.*/get_provider_info\.py$|
           ^providers/.*/provider\.yaml$|
           ^providers/apache/cassandra/src/airflow/providers/apache/cassandra/hooks/cassandra\.py$|
