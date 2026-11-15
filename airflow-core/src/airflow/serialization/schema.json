@@ -382,6 +382,10 @@
           "$comment": "Used for mixed-language tasks (the @task.stub operator) or tasks defined in a non-Python SDK Dag",
           "type": "array",
           "items": { "$ref": "#/definitions/arg_binding" }
+        },
+        "_operator_kwargs": {
+          "$comment": "Constructor keyword arguments of the task_type class in _task_module. Written by a non-Python SDK for a task a Python worker runs, which builds the operator from them because it cannot import the Dag file",
+          "$ref": "#/definitions/dict"
         }
       },
       "dependencies": {
