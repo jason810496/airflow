@@ -314,19 +314,28 @@ function renderPackageJson(provider, sdkPackage) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-const TSCONFIG_BUILD = `${JSON.stringify(
+// Its own tsconfig, so that a bundler resolves the SDK as the package it is published as, not as
+// the SDK sources the `paths` of the SDK's tsconfig name. Two resolutions would load two copies.
+const TSCONFIG = `${JSON.stringify(
   {
     extends: "../../tsconfig.json",
+    compilerOptions: { paths: {} },
+    include: ["src/**/*.ts"],
+  },
+  null,
+  2,
+)}\n`;
+
+const TSCONFIG_BUILD = `${JSON.stringify(
+  {
+    extends: "./tsconfig.json",
     compilerOptions: {
       noEmit: false,
       outDir: "./dist",
       rootDir: "./src",
       sourceMap: false,
       declarationMap: false,
-      // The SDK is resolved as the package it is published as, not as the sources next door.
-      paths: {},
     },
-    include: ["src/**/*.ts"],
   },
   null,
   2,
@@ -412,6 +421,7 @@ export function renderPackage(spec, sdkPackage) {
   const modules = [...byModule].sort(([a], [b]) => (a < b ? -1 : 1));
   const files = new Map([
     ["package.json", renderPackageJson(spec.provider, sdkPackage)],
+    ["tsconfig.json", TSCONFIG],
     ["tsconfig.build.json", TSCONFIG_BUILD],
     ["README.md", renderReadme(spec, modules)],
   ]);

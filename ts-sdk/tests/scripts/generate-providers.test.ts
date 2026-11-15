@@ -152,6 +152,7 @@ describe("renderPackage", () => {
   it("writes one module per Python module, plus the package files", () => {
     expect([...files.keys()]).toEqual([
       "package.json",
+      "tsconfig.json",
       "tsconfig.build.json",
       "README.md",
       "src/operators/send.ts",
@@ -262,8 +263,8 @@ describe("generate", () => {
   });
 
   it("writes the packages, and then finds nothing to change", () => {
-    expect(generate({ ...options, check: true })).toHaveLength(5);
-    expect(generate({ ...options, check: false })).toHaveLength(5);
+    expect(generate({ ...options, check: true })).toHaveLength(6);
+    expect(generate({ ...options, check: false })).toHaveLength(6);
     expect(generate({ ...options, check: true })).toEqual([]);
     expect(
       readFileSync(join(options.providersDir, "demo-mail", "src", "sensors", "inbox.ts"), "utf8"),
