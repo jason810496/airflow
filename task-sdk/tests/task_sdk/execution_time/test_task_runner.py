@@ -138,6 +138,7 @@ from airflow.sdk.execution_time.comms import (
     GetDRCount,
     GetPreviousDagRun,
     GetPreviousTI,
+    GetSerializedDag,
     GetTaskStates,
     GetTaskStateStore,
     GetTICount,
@@ -152,6 +153,7 @@ from airflow.sdk.execution_time.comms import (
     PrevSuccessfulDagRunResult,
     RescheduleTask,
     RetryTask,
+    SerializedDagResult,
     SetAssetStateStoreByName,
     SetAssetStateStoreByUri,
     SetExecutionTimeout,
@@ -188,6 +190,7 @@ from airflow.sdk.execution_time.task_runner import (
     RuntimeTaskInstance,
     TaskRunnerMarker,
     _axcom_push,
+    _can_import_dag_file,
     _defer_task,
     _find_native_dag_importer,
     _make_task_span,
@@ -1081,6 +1084,54 @@ def native_dag_startup(tmp_path: Path, make_ti_context):
         )
 
 
+class ProviderOperator(BaseOperator):
+    """Stands in for a provider operator that a native Dag declares."""
+
+    template_fields = ("message",)
+
+    def __init__(self, *, message: str, **kwargs):
+        super().__init__(**kwargs)
+        self.message = message
+
+    def execute(self, context):
+        return self.message
+
+
+def _serialized_native_dag(task_a: dict) -> dict:
+    """A serialized native Dag: task ``a``, as given, upstream of a task its own runtime runs."""
+    return {
+        "__version": 3,
+        "dag": {
+            "dag_id": "native_dag",
+            "tasks": [
+                {"__type": "operator", "__var": {"task_id": "a", "downstream_task_ids": ["b"], **task_a}},
+                {"__type": "operator", "__var": {"task_id": "b", "is_stub": True}},
+            ],
+        },
+    }
+
+
+NATIVE_STUB_TASK = {"task_type": "TypeScriptOperator", "_task_module": "x", "is_stub": True}
+NATIVE_PROVIDER_TASK = {
+    "task_type": "ProviderOperator",
+    "_task_module": __name__,
+    "_operator_kwargs": {"__type": "dict", "__var": {"message": "hello {{ ds }}", "retries": 3}},
+}
+
+
+def _answer_serialized_dag(mock_supervisor_comms, task_a: dict, *, other=None) -> None:
+    """Answer ``GetSerializedDag`` with a native Dag, and any other message with *other*."""
+
+    def send(msg):
+        if isinstance(msg, GetSerializedDag):
+            return SerializedDagResult(data=_serialized_native_dag(task_a))
+        if isinstance(other, Exception):
+            raise other
+        return other
+
+    mock_supervisor_comms.send.side_effect = send
+
+
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
 def test_parse_fails_a_task_of_a_native_dag_without_retries(
     mock_bag, native_dag_startup, mock_supervisor_comms, time_machine
@@ -1088,15 +1139,17 @@ def test_parse_fails_a_task_of_a_native_dag_without_retries(
     instant = timezone.datetime(2024, 11, 22)
     time_machine.move_to(instant, tick=False)
     log = mock.Mock()
+    _answer_serialized_dag(mock_supervisor_comms, NATIVE_STUB_TASK)
 
     with pytest.raises(SystemExit) as ctx:
         parse(native_dag_startup, log)
 
     assert ctx.value.code == 0
     mock_bag.assert_not_called()
-    mock_supervisor_comms.send.assert_called_once_with(
-        TaskState(state=TaskInstanceState.FAILED, end_date=instant)
-    )
+    assert mock_supervisor_comms.send.mock_calls == [
+        call(GetSerializedDag(ti_id=native_dag_startup.ti.id)),
+        call(TaskState(state=TaskInstanceState.FAILED, end_date=instant)),
+    ]
     log.error.assert_called_once_with(
         "This task belongs to a native Lang-SDK Dag and cannot run in Python. Give the Dag's tasks "
         "their own queue and route it to a %s in [sdk] queue_to_coordinator",
@@ -1148,10 +1201,85 @@ def test_check_xcom_backend_supports_loops_rejects_legacy_backend_in_loop_dag(mo
 
 
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_parse_builds_a_provider_operator_of_a_native_dag_from_its_serialized_dag(
+    mock_bag, native_dag_startup, mock_supervisor_comms
+):
+    _answer_serialized_dag(mock_supervisor_comms, NATIVE_PROVIDER_TASK)
+    log = mock.Mock()
+
+    ti = parse(native_dag_startup, log)
+
+    mock_bag.assert_not_called()
+    assert isinstance(ti.task, ProviderOperator)
+    assert ti.task.message == "hello {{ ds }}"
+    assert ti.task.retries == 3
+    assert ti.task.dag.dag_id == "native_dag"
+    assert ti.task.downstream_task_ids == {"b"}
+    assert ti.task.dag.fileloc.endswith("dag.native")
+    log.info.assert_any_call(
+        "Built the task from its serialized Dag",
+        dag_id="native_dag",
+        task_id="a",
+        operator=f"{__name__}.ProviderOperator",
+    )
+
+
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_parse_fails_a_task_of_a_native_dag_when_the_serialized_dag_cannot_be_read(
+    mock_bag, native_dag_startup, mock_supervisor_comms
+):
+    error = AirflowRuntimeError(ErrorResponse(error=ErrorType.API_SERVER_ERROR, detail={"status_code": 404}))
+    mock_supervisor_comms.send.side_effect = [error, None]
+    log = mock.Mock()
+
+    with pytest.raises(SystemExit):
+        parse(native_dag_startup, log)
+
+    mock_bag.assert_not_called()
+    log.warning.assert_called_once_with("Cannot read the serialized Dag of the task", error=str(error))
+    assert log.error.call_args.args[1] == "NativeCoordinator"
+
+
+@pytest.mark.parametrize(
+    ("task_a", "builds"),
+    [
+        pytest.param(NATIVE_PROVIDER_TASK, True, id="provider-operator"),
+        pytest.param(NATIVE_STUB_TASK, False, id="stub-reads-the-file"),
+    ],
+)
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_parse_reads_the_serialized_dag_of_a_file_no_importer_here_claims(
+    mock_bag, native_dag_startup, mock_supervisor_comms, task_a, builds
+):
+    """A worker with no coordinator configured cannot import the native file itself either."""
+    _answer_serialized_dag(mock_supervisor_comms, task_a)
+    mock_bag.return_value.dags = {}
+
+    with conf_vars({("sdk", "coordinators"): "{}"}):
+        if builds:
+            assert isinstance(parse(native_dag_startup, mock.Mock()).task, ProviderOperator)
+        else:
+            # The file is left to the Dag bag, which has no Dag in it to give.
+            with pytest.raises(AirflowRescheduleException):
+                parse(native_dag_startup, mock.Mock())
+
+    assert mock_bag.called is not builds
+
+
+@pytest.mark.usefixtures("native_dag_startup")
+@pytest.mark.parametrize(
+    ("file_name", "expected"),
+    [("dag.py", True), ("dag.native", False), ("dag.unknown", False)],
+)
+def test_can_import_dag_file(file_name, expected):
+    assert _can_import_dag_file(f"/bundle/{file_name}", "my-bundle") is expected
+
+
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
 def test_parse_exits_non_zero_when_the_failure_cannot_be_reported(
     mock_bag, native_dag_startup, mock_supervisor_comms
 ):
-    mock_supervisor_comms.send.side_effect = ConnectionError("supervisor gone")
+    _answer_serialized_dag(mock_supervisor_comms, NATIVE_STUB_TASK, other=ConnectionError("supervisor gone"))
 
     with pytest.raises(SystemExit, match="1"):
         parse(native_dag_startup, mock.Mock())

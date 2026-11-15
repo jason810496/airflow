@@ -67,7 +67,7 @@ from airflow.sdk.bases.xcom import (
     is_stored_through_backend,
 )
 from airflow.sdk.configuration import conf
-from airflow.sdk.coordinators._dag_importer import find_claiming_importer
+from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter, find_claiming_importer
 from airflow.sdk.definitions._internal.dag_parsing_context import _airflow_parsing_context_manager
 from airflow.sdk.definitions._internal.loop import LoopTaskGroup, is_loop_task_read_from_outside
 from airflow.sdk.definitions._internal.types import NOTSET, ArgNotSet, is_arg_set
@@ -114,6 +114,7 @@ from airflow.sdk.execution_time.comms import (
     GetDRCount,
     GetPreviousDagRun,
     GetPreviousTI,
+    GetSerializedDag,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -125,6 +126,7 @@ from airflow.sdk.execution_time.comms import (
     ResendLoggingFD,
     RetryTask,
     SentFDs,
+    SerializedDagResult,
     SetExecutionTimeout,
     SetRenderedFields,
     SetRenderedMapIndex,
@@ -167,8 +169,10 @@ from airflow.sdk.execution_time.email_backend import (
 from airflow.sdk.execution_time.lazy_sequence import LazyXComSequence
 from airflow.sdk.execution_time.loop import LoopContextAccessor
 from airflow.sdk.execution_time.sentry import Sentry
+from airflow.sdk.execution_time.serialized_task import build_task as build_serialized_task
 from airflow.sdk.execution_time.tracing import detail_span
 from airflow.sdk.execution_time.xcom import XCom
+from airflow.sdk.importers.base import get_importer_registry
 from airflow.sdk.listener import get_listener_manager
 from airflow.sdk.observability.metrics import stats_utils
 from airflow.sdk.serde import allow_class, iter_pydantic_models
@@ -180,7 +184,6 @@ if TYPE_CHECKING:
     from pendulum.datetime import DateTime
     from structlog.typing import FilteringBoundLogger as Logger
 
-    from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
     from airflow.sdk.definitions._internal.abstractoperator import AbstractOperator
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.retry_policy import RetryDecision
@@ -1117,6 +1120,37 @@ def _find_native_dag_importer(path: str, bundle_name: str) -> CoordinatorDagImpo
         return None
 
 
+def _can_import_dag_file(path: str, bundle_name: str) -> bool:
+    """Whether a Dag importer on this worker can import *path* itself, rather than a coordinator's runtime."""
+    importer = get_importer_registry(bundle_name).get_importer(Path(path))
+    return importer is not None and not isinstance(importer, CoordinatorDagImporter)
+
+
+def _build_task_from_serialized_dag(what: StartupDetails, dag_path: str, log: Logger) -> BaseOperator | None:
+    """
+    Build the task of *what* from its serialized Dag, when a Python operator runs it.
+
+    Returns ``None`` when the task is not one a Python operator runs, or when the API server cannot
+    send the serialized Dag.
+    """
+    try:
+        response = SUPERVISOR_COMMS.send(GetSerializedDag(ti_id=what.ti.id))
+    except AirflowRuntimeError as error:
+        log.warning("Cannot read the serialized Dag of the task", error=str(error))
+        return None
+    if TYPE_CHECKING:
+        assert isinstance(response, SerializedDagResult)
+    task = build_serialized_task(response.data, what.ti.task_id, fileloc=dag_path)
+    if task is not None:
+        log.info(
+            "Built the task from its serialized Dag",
+            dag_id=what.ti.dag_id,
+            task_id=what.ti.task_id,
+            operator=f"{type(task).__module__}.{type(task).__qualname__}",
+        )
+    return task
+
+
 def _fail_lang_sdk_task(what: StartupDetails, coordinator_classpath: str, log: Logger) -> NoReturn:
     """Fail a task of a native Lang-SDK Dag without retries: running it again cannot help."""
     log.error(
@@ -1157,44 +1191,57 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
     bundle_prepare_ms = int((time.monotonic() - bundle_prepare_start) * 1000)
 
     dag_absolute_path = os.fspath(Path(bundle_instance.path, what.dag_rel_path))
-    if (importer := _find_native_dag_importer(dag_absolute_path, bundle_info.name)) is not None:
-        _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
-
     dag_file_parse_start = time.monotonic()
-    bag = BundleDagBag(
-        dag_folder=dag_absolute_path,
-        safe_mode=False,
-        load_op_links=False,
-        bundle_path=bundle_instance.path,
-        bundle_name=bundle_info.name,
-    )
+    importer = _find_native_dag_importer(dag_absolute_path, bundle_info.name)
+    serialized_task = None
+    # A Dag written with a language SDK has no file Python can import; a provider operator it
+    # declares is built from the serialized Dag instead.
+    if importer is not None or not _can_import_dag_file(dag_absolute_path, bundle_info.name):
+        serialized_task = _build_task_from_serialized_dag(what, dag_absolute_path, log)
+        if serialized_task is None and importer is not None:
+            _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
+
+    if serialized_task is not None:
+        task = serialized_task
+        dag = task.dag
+    else:
+        bag = BundleDagBag(
+            dag_folder=dag_absolute_path,
+            safe_mode=False,
+            load_op_links=False,
+            bundle_path=bundle_instance.path,
+            bundle_name=bundle_info.name,
+        )
+        if TYPE_CHECKING:
+            assert what.ti.dag_id
+
+        try:
+            dag = bag.dags[what.ti.dag_id]
+        except KeyError:
+            log.error(
+                "Dag not found during start up",
+                dag_id=what.ti.dag_id,
+                bundle=bundle_info,
+                path=what.dag_rel_path,
+            )
+            _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
+            sys.exit(1)
+
+        # install_loader()
+
+        try:
+            task = dag.task_dict[what.ti.task_id]
+        except KeyError:
+            log.error(
+                "Task not found in Dag during start up",
+                dag_id=dag.dag_id,
+                task_id=what.ti.task_id,
+                bundle=bundle_info,
+                path=what.dag_rel_path,
+            )
+            _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
+            sys.exit(1)
     dag_file_parse_ms = int((time.monotonic() - dag_file_parse_start) * 1000)
-    if TYPE_CHECKING:
-        assert what.ti.dag_id
-
-    try:
-        dag = bag.dags[what.ti.dag_id]
-    except KeyError:
-        log.error(
-            "Dag not found during start up", dag_id=what.ti.dag_id, bundle=bundle_info, path=what.dag_rel_path
-        )
-        _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
-        sys.exit(1)
-
-    # install_loader()
-
-    try:
-        task = dag.task_dict[what.ti.task_id]
-    except KeyError:
-        log.error(
-            "Task not found in Dag during start up",
-            dag_id=dag.dag_id,
-            task_id=what.ti.task_id,
-            bundle=bundle_info,
-            path=what.dag_rel_path,
-        )
-        _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
-        sys.exit(1)
 
     if not isinstance(task, (BaseOperator, MappedOperator)):
         raise TypeError(
