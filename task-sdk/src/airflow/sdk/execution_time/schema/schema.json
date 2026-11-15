@@ -2549,6 +2549,27 @@
       "title": "GetPreviousTI",
       "type": "object"
     },
+    "GetSerializedDag": {
+      "description": "Ask for the serialized Dag of a task instance, to build a task whose Dag file cannot be imported.",
+      "properties": {
+        "ti_id": {
+          "format": "uuid",
+          "title": "Ti Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "GetSerializedDag",
+          "default": "GetSerializedDag",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ti_id"
+      ],
+      "title": "GetSerializedDag",
+      "type": "object"
+    },
     "GetTICount": {
       "properties": {
         "dag_id": {
@@ -3833,6 +3854,28 @@
         "fds"
       ],
       "title": "SentFDs",
+      "type": "object"
+    },
+    "SerializedDagResult": {
+      "description": "The serialized Dag of the running task instance, in reply to :class:`GetSerializedDag`.",
+      "properties": {
+        "data": {
+          "additionalProperties": true,
+          "description": "The Dag as its Dag processor serialized it. A Python worker builds a task from it when the Dag file is not one it can import, such as a Dag written with a language SDK.",
+          "title": "Data",
+          "type": "object"
+        },
+        "type": {
+          "const": "SerializedDagResult",
+          "default": "SerializedDagResult",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "SerializedDagResult",
       "type": "object"
     },
     "SetAssetStateStoreByName": {

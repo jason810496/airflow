@@ -65,6 +65,7 @@ const (
 	TypeGetPrevSuccessfulDagRun     = "GetPrevSuccessfulDagRun"
 	TypeGetPreviousDagRun           = "GetPreviousDagRun"
 	TypeGetPreviousTI               = "GetPreviousTI"
+	TypeGetSerializedDag            = "GetSerializedDag"
 	TypeGetTICount                  = "GetTICount"
 	TypeGetTaskBreadcrumbs          = "GetTaskBreadcrumbs"
 	TypeGetTaskRescheduleStartDate  = "GetTaskRescheduleStartDate"
@@ -89,6 +90,7 @@ const (
 	TypeResendLoggingFD             = "ResendLoggingFD"
 	TypeRetryTask                   = "RetryTask"
 	TypeSentFDs                     = "SentFDs"
+	TypeSerializedDagResult         = "SerializedDagResult"
 	TypeSetAssetStateStoreByName    = "SetAssetStateStoreByName"
 	TypeSetAssetStateStoreByURI     = "SetAssetStateStoreByUri"
 	TypeSetExecutionTimeout         = "SetExecutionTimeout"
@@ -247,6 +249,9 @@ func EnsureType(m any) any {
 	case GetPreviousTI:
 		b.Type = TypeGetPreviousTI
 		return b
+	case GetSerializedDag:
+		b.Type = TypeGetSerializedDag
+		return b
 	case GetTICount:
 		b.Type = TypeGetTICount
 		return b
@@ -318,6 +323,9 @@ func EnsureType(m any) any {
 		return b
 	case SentFDs:
 		b.Type = TypeSentFDs
+		return b
+	case SerializedDagResult:
+		b.Type = TypeSerializedDagResult
 		return b
 	case SetAssetStateStoreByName:
 		b.Type = TypeSetAssetStateStoreByName

@@ -71,6 +71,7 @@ from airflow.api_fastapi.execution_api.datamodels.taskinstance import (
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
+    TISerializedDagResponse,
     TISkippedDownstreamTasksStatePayload,
     TIStateUpdate,
     TISuccessStatePayload,
@@ -1887,6 +1888,38 @@ def _get_group_tasks(
     ).all()
 
     return group_tasks
+
+
+@ti_id_router.get(
+    "/{task_instance_id}/serialized-dag",
+    status_code=status.HTTP_200_OK,
+    responses=create_openapi_http_exception_doc(
+        [
+            (status.HTTP_404_NOT_FOUND, "Task Instance or its serialized Dag not found"),
+        ]
+    ),
+)
+def get_serialized_dag(
+    task_instance_id: UUID,
+    session: SessionDep,
+    dag_bag: DagBagDep,
+) -> TISerializedDagResponse:
+    """Get the serialized Dag of a task instance, at the Dag version the task instance runs."""
+    bind_contextvars(ti_id=str(task_instance_id))
+
+    dag_version_id = session.scalar(select(TI.dag_version_id).where(TI.id == task_instance_id))
+    serialized_dag = (
+        dag_bag.get_serialized_dag_model(dag_version_id, session=session) if dag_version_id else None
+    )
+    if serialized_dag is None or (data := serialized_dag.data) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "not_found",
+                "message": "Task Instance or its serialized Dag not found",
+            },
+        )
+    return TISerializedDagResponse(data=data)
 
 
 @ti_id_router.get(

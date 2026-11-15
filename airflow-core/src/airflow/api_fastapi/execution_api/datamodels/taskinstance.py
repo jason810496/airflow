@@ -628,6 +628,17 @@ class TaskBreadcrumbsResponse(BaseModel):
     breadcrumbs: Iterable[dict[str, Any]]
 
 
+class TISerializedDagResponse(BaseModel):
+    """The serialized Dag of a task instance, at the Dag version the task instance runs."""
+
+    data: dict[str, Any] = Field(
+        description=(
+            "The Dag as its Dag processor serialized it. A Python worker builds a task from it when "
+            "the Dag file is not one it can import, such as a Dag written with a language SDK."
+        )
+    )
+
+
 class InactiveAssetsResponse(BaseModel):
     """Response for inactive assets."""
 

@@ -93,6 +93,7 @@ from airflow.sdk.api.datamodels._generated import (
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
+    TISerializedDagResponse,
     TISkippedDownstreamTasksStatePayload,
     TISuccessStatePayload,
     TriggerDAGRunPayload,
@@ -581,6 +582,12 @@ class InactiveAssetsResult(InactiveAssetsResponse):
         return cls(**inactive_assets_response.model_dump(exclude_defaults=True), type="InactiveAssetsResult")
 
 
+class SerializedDagResult(TISerializedDagResponse):
+    """The serialized Dag of the running task instance, in reply to :class:`GetSerializedDag`."""
+
+    type: Literal["SerializedDagResult"] = "SerializedDagResult"
+
+
 class XComResult(XComResponse):
     """Response to ReadXCom request."""
 
@@ -908,6 +915,7 @@ ToTask = Annotated[
     | XComSequenceIndexResult
     | XComSequenceSliceResult
     | InactiveAssetsResult
+    | SerializedDagResult
     | CreateHITLDetailPayload
     | HITLDetailRequestResult
     | HITLDetailResponseResult
@@ -1262,6 +1270,13 @@ class ValidateInletsAndOutlets(BaseModel):
     type: Literal["ValidateInletsAndOutlets"] = "ValidateInletsAndOutlets"
 
 
+class GetSerializedDag(BaseModel):
+    """Ask for the serialized Dag of a task instance, to build a task whose Dag file cannot be imported."""
+
+    ti_id: UUID
+    type: Literal["GetSerializedDag"] = "GetSerializedDag"
+
+
 class GetPrevSuccessfulDagRun(BaseModel):
     ti_id: UUID
     type: Literal["GetPrevSuccessfulDagRun"] = "GetPrevSuccessfulDagRun"
@@ -1387,6 +1402,7 @@ ToSupervisor = Annotated[
     | SetExecutionTimeout
     | SucceedTask
     | ValidateInletsAndOutlets
+    | GetSerializedDag
     | TaskState
     | TriggerDagRun
     | UpdateDagRunNote

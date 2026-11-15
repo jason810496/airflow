@@ -661,6 +661,20 @@ class TIRetryStatePayload(BaseModel):
     retry_reason: Annotated[str | None, Field(title="Retry Reason")] = None
 
 
+class TISerializedDagResponse(BaseModel):
+    """
+    The serialized Dag of a task instance, at the Dag version the task instance runs.
+    """
+
+    data: Annotated[
+        dict[str, Any],
+        Field(
+            description="The Dag as its Dag processor serialized it. A Python worker builds a task from it when the Dag file is not one it can import, such as a Dag written with a language SDK.",
+            title="Data",
+        ),
+    ]
+
+
 class TISkippedDownstreamTasksStatePayload(BaseModel):
     """
     Schema for updating downstream tasks to a skipped state.

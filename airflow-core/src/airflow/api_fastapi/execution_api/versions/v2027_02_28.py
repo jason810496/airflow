@@ -49,6 +49,16 @@ class AddDagProcessorJobEndpoints(VersionChange):
     )
 
 
+class AddTaskInstanceSerializedDagEndpoint(VersionChange):
+    """Add the endpoint a worker reads its task's serialized Dag from, to run a task it cannot import."""
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (
+        endpoint("/task-instances/{task_instance_id}/serialized-dag", ["GET"]).didnt_exist,
+    )
+
+
 class AddExecutionTimeoutToTIRunContext(VersionChange):
     """Add ``execution_timeout`` so the supervisor can enforce it."""
 

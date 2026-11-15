@@ -893,6 +893,19 @@ class TestTaskInstanceOperations:
         )
         assert result.count == 10
 
+    def test_get_serialized_dag(self):
+        ti_id = uuid6.uuid7()
+        data = {"__version": 3, "dag": {"dag_id": "native_dag", "tasks": []}}
+
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
+            assert request.method == "GET"
+            assert request.url.path == f"/task-instances/{ti_id}/serialized-dag"
+            return httpx2.Response(status_code=200, json={"data": data})
+
+        client = make_client(transport=httpx2.MockTransport(handle_request))
+
+        assert client.task_instances.get_serialized_dag(ti_id).data == data
+
     def test_get_task_states_basic(self):
         """Test basic get_task_states functionality with just dag_id."""
 

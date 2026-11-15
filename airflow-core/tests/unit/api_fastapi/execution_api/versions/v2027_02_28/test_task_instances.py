@@ -52,6 +52,22 @@ def test_execution_timeout_schema_by_version(client, version):
     assert ("execution_timeout" in context) == (version == "2027-02-28")
 
 
+class TestSerializedDagEndpointVersioning:
+    URL = "/execution/task-instances/00000000-0000-0000-0000-000000000000/serialized-dag"
+
+    def test_old_version_has_no_route(self, old_ver_client):
+        response = old_ver_client.get(self.URL)
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not Found"}
+
+    def test_head_version_routes_to_endpoint(self, client):
+        response = client.get(self.URL)
+
+        assert response.status_code == 404
+        assert response.json()["detail"]["reason"] == "not_found"
+
+
 class TestExecutionTimeoutBackwardCompat:
     def setup_method(self):
         clear_db_runs()

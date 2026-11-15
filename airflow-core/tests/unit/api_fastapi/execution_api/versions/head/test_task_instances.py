@@ -6939,6 +6939,36 @@ class TestGetTaskInstanceBreadcrumbs:
         }
 
 
+class TestGetSerializedDag:
+    def setup_method(self):
+        clear_db_runs()
+
+    def teardown_method(self):
+        clear_db_runs()
+
+    def test_returns_the_serialized_dag_of_the_task_instance(self, client, dag_maker):
+        with dag_maker("test_serialized_dag_endpoint", serialized=True):
+            EmptyOperator(task_id="first") >> EmptyOperator(task_id="second")
+        ti = dag_maker.create_dagrun().get_task_instance("first")
+
+        response = client.get(f"/execution/task-instances/{ti.id}/serialized-dag")
+
+        assert response.status_code == 200
+        dag = response.json()["data"]["dag"]
+        assert dag["dag_id"] == "test_serialized_dag_endpoint"
+        tasks = {task["__var"]["task_id"]: task["__var"] for task in dag["tasks"]}
+        assert tasks["first"]["downstream_task_ids"] == ["second"]
+
+    def test_unknown_task_instance_is_not_found(self, client):
+        response = client.get(f"/execution/task-instances/{uuid6.uuid7()}/serialized-dag")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == {
+            "reason": "not_found",
+            "message": "Task Instance or its serialized Dag not found",
+        }
+
+
 class TestInvactiveInletsAndOutlets:
     @pytest.mark.parametrize(
         "logical_date",

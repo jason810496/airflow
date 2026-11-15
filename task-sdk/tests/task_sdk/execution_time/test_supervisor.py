@@ -120,6 +120,7 @@ from airflow.sdk.execution_time.comms import (
     GetPreviousDagRun,
     GetPreviousTI,
     GetPrevSuccessfulDagRun,
+    GetSerializedDag,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -144,6 +145,7 @@ from airflow.sdk.execution_time.comms import (
     ResendLoggingFD,
     RetryTask,
     SentFDs,
+    SerializedDagResult,
     SetAssetStateStoreByName,
     SetAssetStateStoreByUri,
     SetExecutionTimeout,
@@ -3376,6 +3378,16 @@ REQUEST_TEST_CASES = [
             ),
         ),
         test_id="validate_inlets_and_outlets",
+    ),
+    RequestTestCase(
+        message=GetSerializedDag(ti_id=TI_ID),
+        expected_body={"data": {"dag": {"dag_id": "native_dag"}}, "type": "SerializedDagResult"},
+        client_mock=ClientMock(
+            method_path="task_instances.get_serialized_dag",
+            args=(TI_ID,),
+            response=SerializedDagResult(data={"dag": {"dag_id": "native_dag"}}),
+        ),
+        test_id="get_serialized_dag",
     ),
     RequestTestCase(
         message=GetPrevSuccessfulDagRun(ti_id=uuid7()),

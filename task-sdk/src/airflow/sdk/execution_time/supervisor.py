@@ -110,6 +110,7 @@ from airflow.sdk.execution_time.comms import (
     GetPreviousDagRun,
     GetPreviousTI,
     GetPrevSuccessfulDagRun,
+    GetSerializedDag,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -130,6 +131,7 @@ from airflow.sdk.execution_time.comms import (
     ResendLoggingFD,
     RetryTask,
     SentFDs,
+    SerializedDagResult,
     SetAssetStateStoreByName,
     SetAssetStateStoreByUri,
     SetExecutionTimeout,
@@ -2299,6 +2301,12 @@ class ActivitySubprocess(WatchedSubprocess):
             "exclude_unset": True
         }
 
+    def _handle_get_serialized_dag(
+        self, msg: GetSerializedDag, log: FilteringBoundLogger, req_id: int
+    ) -> RequestResult:
+        serialized_dag = self.client.task_instances.get_serialized_dag(msg.ti_id)
+        return SerializedDagResult(data=serialized_dag.data), {}
+
     def _handle_resend_logging_fd(
         self, msg: ResendLoggingFD, log: FilteringBoundLogger, req_id: int
     ) -> RequestResult | ResponseSent:
@@ -2471,6 +2479,7 @@ class ActivitySubprocess(WatchedSubprocess):
                 register_request_method(GetAssetStateStoreByUri, _handle_get_asset_state_store_by_uri),
                 register_request_method(GetDag, _handle_get_dag),
                 register_request_method(GetDagRun, _handle_get_dag_run),
+                register_request_method(GetSerializedDag, _handle_get_serialized_dag),
                 register_request_method(GetTaskBreadcrumbs, _handle_get_task_breadcrumbs),
                 register_request_method(GetTaskRescheduleStartDate, _handle_get_task_reschedule_start_date),
                 register_request_method(GetTaskStateStore, _handle_get_task_state_store),

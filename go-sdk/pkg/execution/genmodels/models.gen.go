@@ -1042,6 +1042,16 @@ type GetPreviousTI struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// Ask for the serialized Dag of a task instance, to build a task whose Dag file
+// cannot be imported.
+type GetSerializedDag struct {
+	// TIID corresponds to the JSON schema field "ti_id".
+	TIID string `msgpack:"ti_id"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+}
+
 type GetTICount struct {
 	// DagID corresponds to the JSON schema field "dag_id".
 	DagID string `msgpack:"dag_id"`
@@ -1565,6 +1575,18 @@ type SentFDs struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// The serialized Dag of the running task instance, in reply to
+// :class:`GetSerializedDag`.
+type SerializedDagResult struct {
+	// The Dag as its Dag processor serialized it. A Python worker builds a task from
+	// it when the Dag file is not one it can import, such as a Dag written with a
+	// language SDK.
+	Data Data `msgpack:"data"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+}
+
 type SetAssetStateStoreByName struct {
 	// Key corresponds to the JSON schema field "key".
 	Key string `msgpack:"key"`
@@ -1890,25 +1912,26 @@ type TriggerKwargs map[string]interface{}
 
 type VersionData map[string]interface{}
 
+type TaskInstanceState string
+
+const TaskInstanceStateRemoved TaskInstanceState = "removed"
+
 const TaskInstanceStateAwaitingInput TaskInstanceState = "awaiting_input"
 const TaskInstanceStateDeferred TaskInstanceState = "deferred"
 const TaskInstanceStateSkipped TaskInstanceState = "skipped"
 const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
 const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
+
 const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
 const TaskInstanceStateFailed TaskInstanceState = "failed"
-
 const TaskInstanceStateRestarting TaskInstanceState = "restarting"
 const TaskInstanceStateSuccess TaskInstanceState = "success"
-const TaskInstanceStateRunning TaskInstanceState = "running"
-const TaskInstanceStateQueued TaskInstanceState = "queued"
 
 type TaskOutlets []AssetProfile
 
+const TaskInstanceStateRunning TaskInstanceState = "running"
+const TaskInstanceStateQueued TaskInstanceState = "queued"
 const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
-const TaskInstanceStateRemoved TaskInstanceState = "removed"
-
-type TaskInstanceState string
 
 // Variable schema for responses with fields that are needed for Runtime.
 type VariableResponse struct {

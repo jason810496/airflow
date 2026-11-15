@@ -22,6 +22,8 @@ New bodies in this version:
 
 - ``HITLDetailResponseResult``: the supervisor's reply when a running task reads its own
   Human-in-the-loop response.
+- ``GetSerializedDag`` and its reply ``SerializedDagResult``: a running task reads the serialized
+  Dag of its own Dag version, to build a provider operator a language SDK Dag declares.
 """
 
 from __future__ import annotations
