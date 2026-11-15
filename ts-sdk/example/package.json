@@ -8,10 +8,14 @@
     "build": "airflow-ts-pack src/main.ts --outdir dist",
     "typecheck": "tsc --noEmit",
     "build:hitl": "airflow-ts-pack src/hitl.ts --outfile dist/hitl.min.mjs",
-    "build:ai-approval": "airflow-ts-pack src/ai-approval.ts --outfile dist/ai-approval.min.mjs"
+    "build:ai-approval": "airflow-ts-pack src/ai-approval.ts --outfile dist/ai-approval.min.mjs",
+    "build:providers": "airflow-ts-pack src/providers.ts --outfile dist/providers.min.mjs"
   },
   "dependencies": {
-    "@apache-airflow/ts-sdk": "file:.."
+    "@apache-airflow/providers-amazon": "workspace:*",
+    "@apache-airflow/providers-common-ai": "workspace:*",
+    "@apache-airflow/providers-standard": "workspace:*",
+    "@apache-airflow/ts-sdk": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

@@ -881,8 +881,11 @@ def _setup_openlineage_integration(dot_env_file, tmp_dir, compose_file_names):
 
 def _build_ts_sdk_example_bundle(*, native=False):
     build_commands = (
-        "pnpm install --frozen-lockfile && pnpm run build && cd example && pnpm install"
-        " && pnpm run build && pnpm run build:ai-approval"
+        "pnpm install --frozen-lockfile && pnpm run build"
+        # The example imports the generated provider packages, which resolve to their own dist.
+        " && pnpm -r --filter './providers/*' run build"
+        " && cd example && pnpm install"
+        " && pnpm run build && pnpm run build:ai-approval && pnpm run build:providers"
     )
     if native:
         console.print("[yellow]Building TypeScript SDK example bundle (host toolchain)...")
@@ -930,6 +933,10 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
     _build_ts_sdk_example_bundle(native=LANG_SDK_NATIVE_TOOLCHAIN)
 
     copyfile(TS_COMPOSE_PATH, tmp_dir / "ts.yml")
+    # `ts_provider_operators` runs amazon S3 operators against LocalStack, and a common.ai operator,
+    # which the stock image does not ship, so the in-tree provider is installed in every service.
+    _copy_localstack_files(tmp_dir)
+    provider_paths = _write_providers_mount_override(tmp_dir, ["common.ai"])
 
     # Deliberately no metadata sidecar: the coordinator must resolve the schema
     # version from the metadata airflow-ts-pack embedded in the bundle.
@@ -943,6 +950,11 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
     (tmp_dir / "dags" / "typescript").mkdir()
     copyfile(
         TS_SDK_EXAMPLE_PATH / "dist" / "bundle.min.mjs", tmp_dir / "dags" / "typescript" / "example.min.mjs"
+    )
+    # A native Dag whose provider tasks a Python worker builds from the serialized Dag.
+    copyfile(
+        TS_SDK_EXAMPLE_PATH / "dist" / "providers.min.mjs",
+        tmp_dir / "dags" / "typescript" / "providers.min.mjs",
     )
 
     # Both of the example bundle's Dags: one bundle.mjs provides for two dag_ids,
@@ -976,6 +988,12 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
         f"AIRFLOW__SDK__QUEUE_TO_COORDINATOR='{queue_to_coordinator}'\n"
         "AIRFLOW_CONN_TYPESCRIPT_EXAMPLE_HTTP=http://user:pass@example.com/\n"
         "AIRFLOW_VAR_TYPESCRIPT_EXAMPLE_GREETING=greetings from e2e\n"
+        f"_PIP_ADDITIONAL_REQUIREMENTS={' '.join(provider_paths)}\n"
+        # The connections `ts_provider_operators` names. The LLM one needs no credentials for
+        # pydantic-ai's offline `test` model.
+        "AIRFLOW_CONN_AWS_LOCALSTACK=aws://test:test@\n"
+        "AIRFLOW_CONN_E2E_LLM=pydanticai://\n"
+        f"{LOCALSTACK_AWS_ENV}"
     )
     os.environ["ENV_FILE_PATH"] = str(dot_env_file)
 
@@ -1119,7 +1137,7 @@ def spin_up_airflow_environment(tmp_path_factory: pytest.TempPathFactory):
         compose_file_names.append("openlineage.yml")
         _setup_openlineage_integration(dot_env_file, tmp_dir, compose_file_names)
     elif E2E_TEST_MODE == "ts_sdk":
-        compose_file_names.append("ts.yml")
+        compose_file_names.extend(["localstack.yml", "ts.yml", "providers-mount.yml"])
         _setup_ts_sdk_integration(dot_env_file, tmp_dir)
     elif E2E_TEST_MODE == "yaml_dag":
         compose_file_names.extend(["localstack.yml", "yaml-dag.yml"])
