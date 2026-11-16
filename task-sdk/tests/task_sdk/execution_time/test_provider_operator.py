@@ -20,10 +20,15 @@ import datetime
 
 import pytest
 
+from airflow.sdk.api.datamodels._generated import TIProviderOperatorResponse
 from airflow.sdk.bases.operator import BaseOperator
 from airflow.sdk.definitions.dag import DAG
 from airflow.sdk.definitions.xcom_arg import PlainXComArg
-from airflow.sdk.execution_time.serialized_task import SerializedTaskError, build_task, decode_value
+from airflow.sdk.execution_time.provider_operator import (
+    ProviderOperatorError,
+    build_provider_operator,
+    decode_value,
+)
 
 FILELOC = "/bundles/app/dag.min.mjs"
 
@@ -44,36 +49,16 @@ class RecordingOperator(BaseOperator):
         return self.message
 
 
-def encoded_task(task_id, *, downstream=(), **fields):
-    return {
-        "__type": "operator",
-        "__var": {"task_id": task_id, "downstream_task_ids": list(downstream), **fields},
-    }
-
-
-def provider_task(task_id, kwargs, *, downstream=()):
-    return encoded_task(
-        task_id,
-        downstream=downstream,
-        task_type="RecordingOperator",
-        _task_module=__name__,
-        _operator_kwargs={"__type": "dict", "__var": kwargs},
+def provider_operator(kwargs, *, classpath=f"{__name__}.RecordingOperator", downstream_task_ids=None):
+    return TIProviderOperatorResponse(
+        classpath=classpath,
+        kwargs=kwargs,
+        downstream_task_ids=downstream_task_ids or {"notify": []},
     )
 
 
-def stub_task(task_id, *, downstream=(), **fields):
-    return encoded_task(
-        task_id,
-        downstream=downstream,
-        task_type="TypeScriptOperator",
-        _task_module="airflow.sdk.coordinators.node",
-        is_stub=True,
-        **fields,
-    )
-
-
-def serialized_dag(*tasks):
-    return {"__version": 3, "dag": {"dag_id": "native_dag", "tasks": list(tasks)}}
+def build(operator):
+    return build_provider_operator(operator, dag_id="native_dag", task_id="notify", fileloc=FILELOC)
 
 
 @pytest.mark.parametrize(
@@ -117,28 +102,27 @@ def test_decode_value_turns_a_reference_into_the_xcom_arg_of_that_task():
     ],
 )
 def test_decode_value_rejects_what_it_cannot_decode(encoded, message):
-    with pytest.raises(SerializedTaskError, match=message):
+    with pytest.raises(ProviderOperatorError, match=message):
         decode_value(encoded, DAG("d", schedule=None))
 
 
-def test_build_task_builds_the_operator_with_its_dag_around_it():
-    data = serialized_dag(
-        stub_task("extract", downstream=["notify"]),
-        provider_task(
-            "notify",
-            {
-                "message": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "return_value"}},
-                "timeout": {"__type": "timedelta", "__var": 30},
-                "extra": {"__type": "dict", "__var": {"tags": ["a"]}},
-                "retries": 2,
-            },
-            downstream=["report", "cleanup"],
-        ),
-        stub_task("report"),
-        stub_task("cleanup", is_teardown=True, trigger_rule="all_done"),
+def test_build_provider_operator_builds_the_operator_with_its_dag_around_it():
+    operator = provider_operator(
+        {
+            "message": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "return_value"}},
+            "timeout": {"__type": "timedelta", "__var": 30},
+            "extra": {"__type": "dict", "__var": {"tags": ["a"]}},
+            "retries": 2,
+        },
+        downstream_task_ids={
+            "extract": ["notify"],
+            "notify": ["report", "cleanup"],
+            "report": [],
+            "cleanup": [],
+        },
     )
 
-    task = build_task(data, "notify", fileloc=FILELOC)
+    task = build(operator)
 
     assert isinstance(task, RecordingOperator)
     assert task.dag.dag_id == "native_dag"
@@ -150,46 +134,24 @@ def test_build_task_builds_the_operator_with_its_dag_around_it():
     assert task.message.operator.task_id == "extract"
     assert task.upstream_task_ids == {"extract"}
     assert task.downstream_task_ids == {"report", "cleanup"}
-    cleanup = task.dag.task_dict["cleanup"]
-    assert cleanup.is_teardown is True
-    assert cleanup.trigger_rule == "all_done"
+    assert set(task.dag.task_dict) == {"extract", "notify", "report", "cleanup"}
 
 
 def test_a_placeholder_task_does_not_run():
-    data = serialized_dag(stub_task("extract"), provider_task("notify", {}))
-    placeholder = build_task(data, "notify", fileloc=FILELOC).dag.task_dict["extract"]
+    operator = provider_operator({}, downstream_task_ids={"extract": ["notify"], "notify": []})
+    placeholder = build(operator).dag.task_dict["extract"]
 
     with pytest.raises(RuntimeError, match="'extract' is a placeholder"):
         placeholder.execute({})
 
 
 @pytest.mark.parametrize(
-    "task_id",
+    ("classpath", "message"),
     [
-        pytest.param("stub", id="a task the language runtime runs"),
-        pytest.param("plain", id="a task without operator arguments"),
-        pytest.param("missing", id="a task the Dag does not have"),
+        ("no.such.module.Operator", "Cannot import operator no.such.module.Operator"),
+        ("datetime.timedelta", "datetime.timedelta is not an operator class"),
     ],
 )
-def test_build_task_returns_none_for_a_task_no_python_operator_runs(task_id):
-    data = serialized_dag(
-        stub_task("stub"),
-        encoded_task("plain", task_type="RecordingOperator", _task_module=__name__),
-    )
-
-    assert build_task(data, task_id, fileloc=FILELOC) is None
-
-
-@pytest.mark.parametrize(
-    ("module", "task_type", "message"),
-    [
-        ("no.such.module", "Operator", "Cannot import operator no.such.module.Operator"),
-        ("datetime", "timedelta", "datetime.timedelta is not an operator class"),
-    ],
-)
-def test_build_task_rejects_a_class_it_cannot_build(module, task_type, message):
-    task = provider_task("notify", {})
-    task["__var"].update(task_type=task_type, _task_module=module)
-
-    with pytest.raises(SerializedTaskError, match=message):
-        build_task(serialized_dag(task), "notify", fileloc=FILELOC)
+def test_build_provider_operator_rejects_a_class_it_cannot_build(classpath, message):
+    with pytest.raises(ProviderOperatorError, match=message):
+        build(provider_operator({}, classpath=classpath))

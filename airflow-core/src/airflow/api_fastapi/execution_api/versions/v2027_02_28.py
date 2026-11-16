@@ -49,13 +49,13 @@ class AddDagProcessorJobEndpoints(VersionChange):
     )
 
 
-class AddTaskInstanceSerializedDagEndpoint(VersionChange):
-    """Add the endpoint a worker reads its task's serialized Dag from, to run a task it cannot import."""
+class AddTaskInstanceProviderOperatorEndpoint(VersionChange):
+    """Add the endpoint a worker reads a language SDK Dag's provider operator from, to run it."""
 
     description = __doc__
 
     instructions_to_migrate_to_previous_version = (
-        endpoint("/task-instances/{task_instance_id}/serialized-dag", ["GET"]).didnt_exist,
+        endpoint("/task-instances/{task_instance_id}/provider-operator", ["GET"]).didnt_exist,
     )
 
 

@@ -103,12 +103,13 @@ not implemented yet.
   `template_fields`, `_is_sensor` and `_can_skip_downstream`. It is not a stub, so it gets no
   argument bindings. A task's result given to a templated argument is written as an `xcomref` and
   drawn as an upstream edge.
-- **The worker builds the operator from the serialized Dag.** When a worker cannot import the Dag
-  file, because a coordinator's importer claims it or no importer does, the task runner asks the
-  Execution API for the serialized Dag of the task instance's Dag version
-  (`GET /task-instances/{id}/serialized-dag`). If the task has `_operator_kwargs`, it builds the
-  class with them, inside a Dag whose other tasks are placeholders with the same ids and edges.
+- **The worker builds the operator from what the API server sends.** When a worker cannot import the
+  Dag file, because a coordinator's importer claims it or no importer does, the task runner asks the
+  Execution API for the task's operator (`GET /task-instances/{id}/provider-operator`). The API server
+  reads it from the serialized Dag of the task instance's Dag version and returns only the class path,
+  the `_operator_kwargs` and the Dag's edges. The worker builds the class
+  with the arguments, inside a Dag whose other tasks are placeholders with the same ids and edges.
   That is what an operator reads of its Dag, such as `ApprovalOperator` choosing what to skip.
-  Otherwise the task fails as before.
+  When the task has no `_operator_kwargs`, the API server answers 404 and the task fails as before.
 - **Limitations.** A placeholder Dag has no task groups, so a branch operator that names a group
   does not resolve it. A provider task cannot be mapped.

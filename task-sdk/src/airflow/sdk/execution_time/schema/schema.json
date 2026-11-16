@@ -2549,8 +2549,8 @@
       "title": "GetPreviousTI",
       "type": "object"
     },
-    "GetSerializedDag": {
-      "description": "Ask for the serialized Dag of a task instance, to build a task whose Dag file cannot be imported.",
+    "GetProviderOperator": {
+      "description": "Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported.",
       "properties": {
         "ti_id": {
           "format": "uuid",
@@ -2558,8 +2558,8 @@
           "type": "string"
         },
         "type": {
-          "const": "GetSerializedDag",
-          "default": "GetSerializedDag",
+          "const": "GetProviderOperator",
+          "default": "GetProviderOperator",
           "title": "Type",
           "type": "string"
         }
@@ -2567,7 +2567,7 @@
       "required": [
         "ti_id"
       ],
-      "title": "GetSerializedDag",
+      "title": "GetProviderOperator",
       "type": "object"
     },
     "GetTICount": {
@@ -3688,6 +3688,46 @@
       "title": "PreviousTIResult",
       "type": "object"
     },
+    "ProviderOperatorResult": {
+      "description": "The provider operator of the running task instance, in reply to :class:`GetProviderOperator`.",
+      "properties": {
+        "classpath": {
+          "description": "Import path of the operator class.",
+          "title": "Classpath",
+          "type": "string"
+        },
+        "kwargs": {
+          "additionalProperties": true,
+          "description": "Constructor keyword arguments, each in the type encoding of the serialized Dag.",
+          "title": "Kwargs",
+          "type": "object"
+        },
+        "downstream_task_ids": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "The direct downstream task ids of every task in the Dag, keyed by task id.",
+          "title": "Downstream Task Ids",
+          "type": "object"
+        },
+        "type": {
+          "const": "ProviderOperatorResult",
+          "default": "ProviderOperatorResult",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "classpath",
+        "kwargs",
+        "downstream_task_ids"
+      ],
+      "title": "ProviderOperatorResult",
+      "type": "object"
+    },
     "PutVariable": {
       "properties": {
         "key": {
@@ -3854,28 +3894,6 @@
         "fds"
       ],
       "title": "SentFDs",
-      "type": "object"
-    },
-    "SerializedDagResult": {
-      "description": "The serialized Dag of the running task instance, in reply to :class:`GetSerializedDag`.",
-      "properties": {
-        "data": {
-          "additionalProperties": true,
-          "description": "The Dag as its Dag processor serialized it. A Python worker builds a task from it when the Dag file is not one it can import, such as a Dag written with a language SDK.",
-          "title": "Data",
-          "type": "object"
-        },
-        "type": {
-          "const": "SerializedDagResult",
-          "default": "SerializedDagResult",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "data"
-      ],
-      "title": "SerializedDagResult",
       "type": "object"
     },
     "SetAssetStateStoreByName": {

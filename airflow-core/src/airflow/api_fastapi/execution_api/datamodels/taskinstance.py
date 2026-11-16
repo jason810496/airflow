@@ -628,14 +628,19 @@ class TaskBreadcrumbsResponse(BaseModel):
     breadcrumbs: Iterable[dict[str, Any]]
 
 
-class TISerializedDagResponse(BaseModel):
-    """The serialized Dag of a task instance, at the Dag version the task instance runs."""
+class TIProviderOperatorResponse(BaseModel):
+    """
+    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
 
-    data: dict[str, Any] = Field(
-        description=(
-            "The Dag as its Dag processor serialized it. A Python worker builds a task from it when "
-            "the Dag file is not one it can import, such as a Dag written with a language SDK."
-        )
+    A Python worker builds the operator from it, because it cannot import the Dag file.
+    """
+
+    classpath: str = Field(description="Import path of the operator class.")
+    kwargs: dict[str, Any] = Field(
+        description="Constructor keyword arguments, each in the type encoding of the serialized Dag."
+    )
+    downstream_task_ids: dict[str, list[str]] = Field(
+        description="The direct downstream task ids of every task in the Dag, keyed by task id."
     )
 
 

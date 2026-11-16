@@ -80,10 +80,10 @@ from airflow.sdk.api.datamodels._generated import (
     TIDeferredStatePayload,
     TIEnterRunningPayload,
     TIHeartbeatInfo,
+    TIProviderOperatorResponse,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
-    TISerializedDagResponse,
     TISkippedDownstreamTasksStatePayload,
     TISuccessStatePayload,
     TITerminalStatePayload,
@@ -522,10 +522,10 @@ class TaskInstanceOperations:
         resp = self.client.get("task-instances/breadcrumbs", params=params)
         return TaskBreadcrumbsResponse.model_validate_json(resp.read())
 
-    def get_serialized_dag(self, id: uuid.UUID) -> TISerializedDagResponse:
-        """Get the serialized Dag of a task instance, at the Dag version the task instance runs."""
-        resp = self.client.get(f"task-instances/{id}/serialized-dag")
-        return TISerializedDagResponse.model_validate_json(resp.read())
+    def get_provider_operator(self, id: uuid.UUID) -> TIProviderOperatorResponse:
+        """Get the provider operator a task instance of a language SDK Dag runs."""
+        resp = self.client.get(f"task-instances/{id}/provider-operator")
+        return TIProviderOperatorResponse.model_validate_json(resp.read())
 
     def validate_inlets_and_outlets(self, id: uuid.UUID) -> InactiveAssetsResponse:
         """Validate whether there're inactive assets in inlets and outlets of a given task instance."""

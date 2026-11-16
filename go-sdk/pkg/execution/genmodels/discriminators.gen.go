@@ -65,7 +65,7 @@ const (
 	TypeGetPrevSuccessfulDagRun     = "GetPrevSuccessfulDagRun"
 	TypeGetPreviousDagRun           = "GetPreviousDagRun"
 	TypeGetPreviousTI               = "GetPreviousTI"
-	TypeGetSerializedDag            = "GetSerializedDag"
+	TypeGetProviderOperator         = "GetProviderOperator"
 	TypeGetTICount                  = "GetTICount"
 	TypeGetTaskBreadcrumbs          = "GetTaskBreadcrumbs"
 	TypeGetTaskRescheduleStartDate  = "GetTaskRescheduleStartDate"
@@ -85,12 +85,12 @@ const (
 	TypePrevSuccessfulDagRunResult  = "PrevSuccessfulDagRunResult"
 	TypePreviousDagRunResult        = "PreviousDagRunResult"
 	TypePreviousTIResult            = "PreviousTIResult"
+	TypeProviderOperatorResult      = "ProviderOperatorResult"
 	TypePutVariable                 = "PutVariable"
 	TypeRescheduleTask              = "RescheduleTask"
 	TypeResendLoggingFD             = "ResendLoggingFD"
 	TypeRetryTask                   = "RetryTask"
 	TypeSentFDs                     = "SentFDs"
-	TypeSerializedDagResult         = "SerializedDagResult"
 	TypeSetAssetStateStoreByName    = "SetAssetStateStoreByName"
 	TypeSetAssetStateStoreByURI     = "SetAssetStateStoreByUri"
 	TypeSetExecutionTimeout         = "SetExecutionTimeout"
@@ -249,8 +249,8 @@ func EnsureType(m any) any {
 	case GetPreviousTI:
 		b.Type = TypeGetPreviousTI
 		return b
-	case GetSerializedDag:
-		b.Type = TypeGetSerializedDag
+	case GetProviderOperator:
+		b.Type = TypeGetProviderOperator
 		return b
 	case GetTICount:
 		b.Type = TypeGetTICount
@@ -309,6 +309,9 @@ func EnsureType(m any) any {
 	case PreviousTIResult:
 		b.Type = TypePreviousTIResult
 		return b
+	case ProviderOperatorResult:
+		b.Type = TypeProviderOperatorResult
+		return b
 	case PutVariable:
 		b.Type = TypePutVariable
 		return b
@@ -323,9 +326,6 @@ func EnsureType(m any) any {
 		return b
 	case SentFDs:
 		b.Type = TypeSentFDs
-		return b
-	case SerializedDagResult:
-		b.Type = TypeSerializedDagResult
 		return b
 	case SetAssetStateStoreByName:
 		b.Type = TypeSetAssetStateStoreByName

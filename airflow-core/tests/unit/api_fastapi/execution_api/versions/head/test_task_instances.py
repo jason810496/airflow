@@ -6939,28 +6939,90 @@ class TestGetTaskInstanceBreadcrumbs:
         }
 
 
-class TestGetSerializedDag:
+def _encoded_task(task_id, downstream=(), **fields):
+    return {
+        "__type": "operator",
+        "__var": {"task_id": task_id, "downstream_task_ids": list(downstream), **fields},
+    }
+
+
+def _serialized_language_sdk_dag(notify_fields):
+    return {
+        "__version": 3,
+        "dag": {
+            "dag_id": "language_sdk_dag",
+            "tasks": [
+                _encoded_task("extract", ["notify"], task_type="TypeScriptOperator", is_stub=True),
+                _encoded_task("notify", **notify_fields),
+            ],
+        },
+    }
+
+
+PROVIDER_OPERATOR_FIELDS = {
+    "task_type": "EmptyOperator",
+    "_task_module": "airflow.providers.standard.operators.empty",
+    "_operator_kwargs": {
+        "__type": "dict",
+        "__var": {"retries": 2, "doc": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "k"}}},
+    },
+}
+
+
+class TestGetProviderOperator:
     def setup_method(self):
         clear_db_runs()
 
     def teardown_method(self):
         clear_db_runs()
 
-    def test_returns_the_serialized_dag_of_the_task_instance(self, client, dag_maker):
-        with dag_maker("test_serialized_dag_endpoint", serialized=True):
-            EmptyOperator(task_id="first") >> EmptyOperator(task_id="second")
-        ti = dag_maker.create_dagrun().get_task_instance("first")
+    def _create_ti(self, dag_maker):
+        with dag_maker("language_sdk_dag", serialized=True):
+            EmptyOperator(task_id="extract") >> EmptyOperator(task_id="notify")
+        return dag_maker.create_dagrun().get_task_instance("notify")
 
-        response = client.get(f"/execution/task-instances/{ti.id}/serialized-dag")
+    @mock.patch.object(DBDagBag, "get_serialized_dag_model", autospec=True)
+    def test_returns_the_operator_and_the_edges(self, mock_get_model, client, dag_maker):
+        ti = self._create_ti(dag_maker)
+        mock_get_model.return_value.data = _serialized_language_sdk_dag(PROVIDER_OPERATOR_FIELDS)
+
+        response = client.get(f"/execution/task-instances/{ti.id}/provider-operator")
 
         assert response.status_code == 200
-        dag = response.json()["data"]["dag"]
-        assert dag["dag_id"] == "test_serialized_dag_endpoint"
-        tasks = {task["__var"]["task_id"]: task["__var"] for task in dag["tasks"]}
-        assert tasks["first"]["downstream_task_ids"] == ["second"]
+        assert response.json() == {
+            "classpath": "airflow.providers.standard.operators.empty.EmptyOperator",
+            "kwargs": {
+                "retries": 2,
+                "doc": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "k"}},
+            },
+            "downstream_task_ids": {"extract": ["notify"], "notify": []},
+        }
+        assert mock_get_model.call_args.args[1] == ti.dag_version_id
+
+    @pytest.mark.parametrize(
+        "notify_fields",
+        [
+            pytest.param({"task_type": "EmptyOperator", "_task_module": "m"}, id="no-operator-kwargs"),
+            pytest.param({**PROVIDER_OPERATOR_FIELDS, "is_stub": True}, id="stub"),
+        ],
+    )
+    @mock.patch.object(DBDagBag, "get_serialized_dag_model", autospec=True)
+    def test_a_task_that_is_not_a_provider_operator_is_not_found(
+        self, mock_get_model, client, dag_maker, notify_fields
+    ):
+        ti = self._create_ti(dag_maker)
+        mock_get_model.return_value.data = _serialized_language_sdk_dag(notify_fields)
+
+        response = client.get(f"/execution/task-instances/{ti.id}/provider-operator")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == {
+            "reason": "not_a_provider_operator",
+            "message": "Task 'notify' is not a provider operator of a language SDK Dag",
+        }
 
     def test_unknown_task_instance_is_not_found(self, client):
-        response = client.get(f"/execution/task-instances/{uuid6.uuid7()}/serialized-dag")
+        response = client.get(f"/execution/task-instances/{uuid6.uuid7()}/provider-operator")
 
         assert response.status_code == 404
         assert response.json()["detail"] == {

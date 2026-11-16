@@ -748,6 +748,9 @@ type DeleteXCom struct {
 
 type Detail map[string]interface{}
 
+// The direct downstream task ids of every task in the Dag, keyed by task id.
+type DownstreamTaskIds map[string][]string
+
 // Email notification request for task failures/retries.
 type EmailRequest struct {
 	// BundleName corresponds to the JSON schema field "bundle_name".
@@ -1042,9 +1045,9 @@ type GetPreviousTI struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
-// Ask for the serialized Dag of a task instance, to build a task whose Dag file
+// Ask for the provider operator of a task instance, to build a task whose Dag file
 // cannot be imported.
-type GetSerializedDag struct {
+type GetProviderOperator struct {
 	// TIID corresponds to the JSON schema field "ti_id".
 	TIID string `msgpack:"ti_id"`
 
@@ -1333,6 +1336,9 @@ type InactiveAssetsResult struct {
 
 type JsonValue interface{}
 
+// Constructor keyword arguments, each in the type encoding of the serialized Dag.
+type Kwargs map[string]interface{}
+
 // Lazily build information from the serialized DAG structure.
 //
 // An object that will present "enough" of the DAG like interface to update DAG db
@@ -1508,6 +1514,22 @@ type PreviousTIResult struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// The provider operator of the running task instance, in reply to
+// :class:`GetProviderOperator`.
+type ProviderOperatorResult struct {
+	// Import path of the operator class.
+	Classpath string `msgpack:"classpath"`
+
+	// The direct downstream task ids of every task in the Dag, keyed by task id.
+	DownstreamTaskIds DownstreamTaskIds `msgpack:"downstream_task_ids"`
+
+	// Constructor keyword arguments, each in the type encoding of the serialized Dag.
+	Kwargs Kwargs `msgpack:"kwargs"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+}
+
 type PutVariable struct {
 	// Description corresponds to the JSON schema field "description".
 	Description interface{} `msgpack:"description"`
@@ -1570,18 +1592,6 @@ type RunIds []string
 type SentFDs struct {
 	// Fds corresponds to the JSON schema field "fds".
 	Fds []int `msgpack:"fds"`
-
-	// Type corresponds to the JSON schema field "type".
-	Type string `msgpack:"type,omitempty"`
-}
-
-// The serialized Dag of the running task instance, in reply to
-// :class:`GetSerializedDag`.
-type SerializedDagResult struct {
-	// The Dag as its Dag processor serialized it. A Python worker builds a task from
-	// it when the Dag file is not one it can import, such as a Dag written with a
-	// language SDK.
-	Data Data `msgpack:"data"`
 
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
@@ -1906,41 +1916,23 @@ type TaskInstance struct {
 	TryNumber int `msgpack:"try_number"`
 }
 
-type Warnings []interface{}
-
-type TriggerKwargs map[string]interface{}
-
-type VersionData map[string]interface{}
-
 type TaskInstanceState string
-
-const TaskInstanceStateRemoved TaskInstanceState = "removed"
 
 const TaskInstanceStateAwaitingInput TaskInstanceState = "awaiting_input"
 const TaskInstanceStateDeferred TaskInstanceState = "deferred"
-const TaskInstanceStateSkipped TaskInstanceState = "skipped"
-const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
-const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
-
-const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
 const TaskInstanceStateFailed TaskInstanceState = "failed"
+const TaskInstanceStateQueued TaskInstanceState = "queued"
+const TaskInstanceStateRemoved TaskInstanceState = "removed"
 const TaskInstanceStateRestarting TaskInstanceState = "restarting"
+const TaskInstanceStateRunning TaskInstanceState = "running"
+const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
+const TaskInstanceStateSkipped TaskInstanceState = "skipped"
 const TaskInstanceStateSuccess TaskInstanceState = "success"
+const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
+const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
+const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
 
 type TaskOutlets []AssetProfile
-
-const TaskInstanceStateRunning TaskInstanceState = "running"
-const TaskInstanceStateQueued TaskInstanceState = "queued"
-const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
-
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value string `msgpack:"value"`
-}
 
 // Response containing the first reschedule date for a task instance.
 type TaskRescheduleStartDate struct {
@@ -1950,12 +1942,6 @@ type TaskRescheduleStartDate struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
-
-type TaskStateState string
-
-const TaskStateStateFailed TaskStateState = "failed"
-const TaskStateStateSkipped TaskStateState = "skipped"
-const TaskStateStateRemoved TaskStateState = "removed"
 
 // Update a task's state.
 //
@@ -1982,6 +1968,12 @@ type TaskState struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
+
+type TaskStateState string
+
+const TaskStateStateFailed TaskStateState = "failed"
+const TaskStateStateRemoved TaskStateState = "removed"
+const TaskStateStateSkipped TaskStateState = "skipped"
 
 // Response to GetTaskStateStore; wraps the generated API response for supervisor
 // to worker comms.
@@ -2031,6 +2023,21 @@ type TriggerDagRun struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
+
+type VersionData map[string]interface{}
+
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value string `msgpack:"value"`
+}
+
+type TriggerKwargs map[string]interface{}
+
+type Warnings []interface{}
 
 type UpdateDagRunNote struct {
 	// Note corresponds to the JSON schema field "note".

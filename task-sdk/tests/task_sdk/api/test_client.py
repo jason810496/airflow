@@ -893,18 +893,22 @@ class TestTaskInstanceOperations:
         )
         assert result.count == 10
 
-    def test_get_serialized_dag(self):
+    def test_get_provider_operator(self):
         ti_id = uuid6.uuid7()
-        data = {"__version": 3, "dag": {"dag_id": "native_dag", "tasks": []}}
+        body = {
+            "classpath": "airflow.providers.standard.operators.empty.EmptyOperator",
+            "kwargs": {"retries": 1},
+            "downstream_task_ids": {"a": []},
+        }
 
         def handle_request(request: httpx2.Request) -> httpx2.Response:
             assert request.method == "GET"
-            assert request.url.path == f"/task-instances/{ti_id}/serialized-dag"
-            return httpx2.Response(status_code=200, json={"data": data})
+            assert request.url.path == f"/task-instances/{ti_id}/provider-operator"
+            return httpx2.Response(status_code=200, json=body)
 
         client = make_client(transport=httpx2.MockTransport(handle_request))
 
-        assert client.task_instances.get_serialized_dag(ti_id).data == data
+        assert client.task_instances.get_provider_operator(ti_id).model_dump() == body
 
     def test_get_task_states_basic(self):
         """Test basic get_task_states functionality with just dag_id."""

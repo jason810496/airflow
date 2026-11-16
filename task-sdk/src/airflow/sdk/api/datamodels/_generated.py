@@ -633,6 +633,30 @@ class TIHeartbeatInfo(BaseModel):
     pid: Annotated[int, Field(title="Pid")]
 
 
+class TIProviderOperatorResponse(BaseModel):
+    """
+    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
+
+    A Python worker builds the operator from it, because it cannot import the Dag file.
+    """
+
+    classpath: Annotated[str, Field(description="Import path of the operator class.", title="Classpath")]
+    kwargs: Annotated[
+        dict[str, Any],
+        Field(
+            description="Constructor keyword arguments, each in the type encoding of the serialized Dag.",
+            title="Kwargs",
+        ),
+    ]
+    downstream_task_ids: Annotated[
+        dict[str, list[str]],
+        Field(
+            description="The direct downstream task ids of every task in the Dag, keyed by task id.",
+            title="Downstream Task Ids",
+        ),
+    ]
+
+
 class TIRescheduleStatePayload(BaseModel):
     """
     Schema for updating TaskInstance to a up_for_reschedule state.
@@ -659,20 +683,6 @@ class TIRetryStatePayload(BaseModel):
     rendered_map_index: Annotated[str | None, Field(title="Rendered Map Index")] = None
     retry_delay_seconds: Annotated[float | None, Field(title="Retry Delay Seconds")] = None
     retry_reason: Annotated[str | None, Field(title="Retry Reason")] = None
-
-
-class TISerializedDagResponse(BaseModel):
-    """
-    The serialized Dag of a task instance, at the Dag version the task instance runs.
-    """
-
-    data: Annotated[
-        dict[str, Any],
-        Field(
-            description="The Dag as its Dag processor serialized it. A Python worker builds a task from it when the Dag file is not one it can import, such as a Dag written with a language SDK.",
-            title="Data",
-        ),
-    ]
 
 
 class TISkippedDownstreamTasksStatePayload(BaseModel):

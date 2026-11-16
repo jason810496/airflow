@@ -15,11 +15,12 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Build a provider operator that a language SDK Dag declares, from the serialized Dag.
+Build a provider operator that a language SDK Dag declares.
 
 A Python worker gets a task by importing its Dag file. A Dag written with another language SDK
 has no file Python can import, so for a task that a Python operator runs, the SDK writes the
-operator's class and constructor arguments (``_operator_kwargs``) into the serialized Dag. See
+operator's class and constructor arguments (``_operator_kwargs``) into the serialized Dag, and the
+Execution API sends them to the worker with the Dag's edges. See
 ``airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md``.
 
 The other tasks of the Dag become placeholders that keep the task ids and the edges, which is
@@ -38,13 +39,11 @@ from airflow.sdk.definitions.dag import DAG
 from airflow.sdk.definitions.xcom_arg import XComArg
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-OPERATOR_KWARGS_KEY = "_operator_kwargs"
+    from airflow.sdk.api.datamodels._generated import TIProviderOperatorResponse
 
 
-class SerializedTaskError(ValueError):
-    """The serialized Dag does not describe a task that can be built."""
+class ProviderOperatorError(ValueError):
+    """The provider operator cannot be built."""
 
 
 class _PlaceholderTask(BaseOperator):
@@ -65,7 +64,7 @@ def decode_value(value: Any, dag: DAG) -> Any:
     if isinstance(value, list):
         return [decode_value(item, dag) for item in value]
     if not isinstance(value, dict) or "__type" not in value or "__var" not in value:
-        raise SerializedTaskError(f"Cannot decode {value!r}: it is not a type-encoded value")
+        raise ProviderOperatorError(f"Cannot decode {value!r}: it is not a type-encoded value")
     type_, var = value["__type"], value["__var"]
     if type_ == "dict":
         return {key: decode_value(item, dag) for key, item in var.items()}
@@ -81,55 +80,44 @@ def decode_value(value: Any, dag: DAG) -> Any:
         try:
             upstream = dag.task_dict[var["task_id"]]
         except KeyError:
-            raise SerializedTaskError(f"An argument takes the result of unknown task {var['task_id']!r}")
+            raise ProviderOperatorError(f"An argument takes the result of unknown task {var['task_id']!r}")
         return XComArg(upstream, key=var["key"])
-    raise SerializedTaskError(f"Cannot decode a value of type {type_!r}")
+    raise ProviderOperatorError(f"Cannot decode a value of type {type_!r}")
 
 
-def _find_operator_class(encoded_task: Mapping[str, Any]) -> type[BaseOperator]:
-    classpath = f"{encoded_task['_task_module']}.{encoded_task['task_type']}"
+def _find_operator_class(classpath: str) -> type[BaseOperator]:
     try:
         operator_class = import_string(classpath)
     except ImportError as exc:
-        raise SerializedTaskError(
+        raise ProviderOperatorError(
             f"Cannot import operator {classpath}; is the provider that has it installed on this worker?"
         ) from exc
     # Only an operator class is built: the serialized Dag names a class, not arbitrary code.
     if not isinstance(operator_class, type) or not issubclass(operator_class, BaseOperator):
-        raise SerializedTaskError(f"{classpath} is not an operator class")
+        raise ProviderOperatorError(f"{classpath} is not an operator class")
     return operator_class
 
 
-def build_task(data: Mapping[str, Any], task_id: str, *, fileloc: str) -> BaseOperator | None:
+def build_provider_operator(
+    operator: TIProviderOperatorResponse, *, dag_id: str, task_id: str, fileloc: str
+) -> BaseOperator:
     """
-    Build task *task_id* of the serialized Dag *data*, with its Dag around it.
+    Build task *task_id* from the provider *operator*, with its Dag around it.
 
-    Returns ``None`` when the serialized task is not one a Python operator runs, so the caller can
-    report that the task needs the runtime of its own language.
-
-    :raises SerializedTaskError: when the task names an operator that cannot be built.
+    :raises ProviderOperatorError: when the operator class cannot be built.
     """
-    serialized_dag = data["dag"]
-    encoded_tasks = {task["__var"]["task_id"]: task["__var"] for task in serialized_dag["tasks"]}
-    encoded_task = encoded_tasks.get(task_id)
-    if encoded_task is None or encoded_task.get("is_stub") is True or OPERATOR_KWARGS_KEY not in encoded_task:
-        return None
-    operator_class = _find_operator_class(encoded_task)
+    operator_class = _find_operator_class(operator.classpath)
 
-    dag = DAG(serialized_dag["dag_id"], schedule=None)
+    dag = DAG(dag_id, schedule=None)
     dag.fileloc = fileloc
     with dag:
         # The placeholders come first, so that an argument can refer to any of them.
-        for other_id, other in encoded_tasks.items():
+        for other_id in operator.downstream_task_ids:
             if other_id != task_id:
-                placeholder = _PlaceholderTask(
-                    task_id=other_id, trigger_rule=other.get("trigger_rule", "all_success")
-                )
-                placeholder.is_setup = other.get("is_setup", False)
-                placeholder.is_teardown = other.get("is_teardown", False)
-        kwargs = decode_value(encoded_task[OPERATOR_KWARGS_KEY], dag)
+                _PlaceholderTask(task_id=other_id)
+        kwargs = {name: decode_value(value, dag) for name, value in operator.kwargs.items()}
         task = operator_class(task_id=task_id, **kwargs)
-    for upstream_id, encoded in encoded_tasks.items():
-        for downstream_id in encoded.get("downstream_task_ids", []):
+    for upstream_id, downstream_ids in operator.downstream_task_ids.items():
+        for downstream_id in downstream_ids:
             dag.task_dict[upstream_id].set_downstream(dag.task_dict[downstream_id])
     return task

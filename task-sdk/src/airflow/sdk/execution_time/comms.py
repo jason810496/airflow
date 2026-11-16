@@ -90,10 +90,10 @@ from airflow.sdk.api.datamodels._generated import (
     TaskStateStoreResponse,
     TIAwaitingInputStatePayload,
     TIDeferredStatePayload,
+    TIProviderOperatorResponse,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
-    TISerializedDagResponse,
     TISkippedDownstreamTasksStatePayload,
     TISuccessStatePayload,
     TriggerDAGRunPayload,
@@ -582,10 +582,10 @@ class InactiveAssetsResult(InactiveAssetsResponse):
         return cls(**inactive_assets_response.model_dump(exclude_defaults=True), type="InactiveAssetsResult")
 
 
-class SerializedDagResult(TISerializedDagResponse):
-    """The serialized Dag of the running task instance, in reply to :class:`GetSerializedDag`."""
+class ProviderOperatorResult(TIProviderOperatorResponse):
+    """The provider operator of the running task instance, in reply to :class:`GetProviderOperator`."""
 
-    type: Literal["SerializedDagResult"] = "SerializedDagResult"
+    type: Literal["ProviderOperatorResult"] = "ProviderOperatorResult"
 
 
 class XComResult(XComResponse):
@@ -915,7 +915,7 @@ ToTask = Annotated[
     | XComSequenceIndexResult
     | XComSequenceSliceResult
     | InactiveAssetsResult
-    | SerializedDagResult
+    | ProviderOperatorResult
     | CreateHITLDetailPayload
     | HITLDetailRequestResult
     | HITLDetailResponseResult
@@ -1270,11 +1270,11 @@ class ValidateInletsAndOutlets(BaseModel):
     type: Literal["ValidateInletsAndOutlets"] = "ValidateInletsAndOutlets"
 
 
-class GetSerializedDag(BaseModel):
-    """Ask for the serialized Dag of a task instance, to build a task whose Dag file cannot be imported."""
+class GetProviderOperator(BaseModel):
+    """Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported."""
 
     ti_id: UUID
-    type: Literal["GetSerializedDag"] = "GetSerializedDag"
+    type: Literal["GetProviderOperator"] = "GetProviderOperator"
 
 
 class GetPrevSuccessfulDagRun(BaseModel):
@@ -1402,7 +1402,7 @@ ToSupervisor = Annotated[
     | SetExecutionTimeout
     | SucceedTask
     | ValidateInletsAndOutlets
-    | GetSerializedDag
+    | GetProviderOperator
     | TaskState
     | TriggerDagRun
     | UpdateDagRunNote

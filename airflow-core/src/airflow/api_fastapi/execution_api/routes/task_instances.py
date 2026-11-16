@@ -68,10 +68,10 @@ from airflow.api_fastapi.execution_api.datamodels.taskinstance import (
     TIDeferredStatePayload,
     TIEnterRunningPayload,
     TIHeartbeatInfo,
+    TIProviderOperatorResponse,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
-    TISerializedDagResponse,
     TISkippedDownstreamTasksStatePayload,
     TIStateUpdate,
     TISuccessStatePayload,
@@ -1891,27 +1891,34 @@ def _get_group_tasks(
 
 
 @ti_id_router.get(
-    "/{task_instance_id}/serialized-dag",
+    "/{task_instance_id}/provider-operator",
     status_code=status.HTTP_200_OK,
     responses=create_openapi_http_exception_doc(
         [
-            (status.HTTP_404_NOT_FOUND, "Task Instance or its serialized Dag not found"),
+            (
+                status.HTTP_404_NOT_FOUND,
+                "Task Instance or its serialized Dag not found, or the task is not a provider operator",
+            ),
         ]
     ),
 )
-def get_serialized_dag(
+def get_provider_operator(
     task_instance_id: UUID,
     session: SessionDep,
     dag_bag: DagBagDep,
-) -> TISerializedDagResponse:
-    """Get the serialized Dag of a task instance, at the Dag version the task instance runs."""
+) -> TIProviderOperatorResponse:
+    """Get the provider operator a task of a language SDK Dag runs, at the Dag version the task instance runs."""
     bind_contextvars(ti_id=str(task_instance_id))
 
-    dag_version_id = session.scalar(select(TI.dag_version_id).where(TI.id == task_instance_id))
+    row = session.execute(
+        select(TI.dag_version_id, TI.task_id).where(TI.id == task_instance_id)
+    ).one_or_none()
     serialized_dag = (
-        dag_bag.get_serialized_dag_model(dag_version_id, session=session) if dag_version_id else None
+        dag_bag.get_serialized_dag_model(row.dag_version_id, session=session)
+        if row and row.dag_version_id
+        else None
     )
-    if serialized_dag is None or (data := serialized_dag.data) is None:
+    if row is None or serialized_dag is None or (data := serialized_dag.data) is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
@@ -1919,7 +1926,24 @@ def get_serialized_dag(
                 "message": "Task Instance or its serialized Dag not found",
             },
         )
-    return TISerializedDagResponse(data=data)
+
+    tasks = {task["__var"]["task_id"]: task["__var"] for task in data["dag"]["tasks"]}
+    task = tasks.get(row.task_id)
+    if task is None or task.get("is_stub") is True or "_operator_kwargs" not in task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "reason": "not_a_provider_operator",
+                "message": f"Task {row.task_id!r} is not a provider operator of a language SDK Dag",
+            },
+        )
+    return TIProviderOperatorResponse(
+        classpath=f"{task['_task_module']}.{task['task_type']}",
+        kwargs=task["_operator_kwargs"]["__var"],
+        downstream_task_ids={
+            task_id: list(other.get("downstream_task_ids", [])) for task_id, other in tasks.items()
+        },
+    )
 
 
 @ti_id_router.get(

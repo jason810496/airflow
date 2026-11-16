@@ -465,7 +465,7 @@ export type LogicalDate5 = string | null;
 export type MapIndex2 = number;
 export type Type42 = "GetPreviousTI";
 export type TiId5 = string;
-export type Type43 = "GetSerializedDag";
+export type Type43 = "GetProviderOperator";
 export type DagId14 = string;
 export type MapIndex3 = number | null;
 export type TaskIds = string[] | null;
@@ -575,24 +575,28 @@ export type RegionId2 = string | null;
 export type RegionIndex1 = number | null;
 export type Duration = number | null;
 export type Type62 = "PreviousTIResult";
+/**
+ * Import path of the operator class.
+ */
+export type Classpath1 = string;
+export type Type63 = "ProviderOperatorResult";
 export type Key14 = string;
 export type Value1 = string;
 export type Description = string | null;
-export type Type63 = "PutVariable";
+export type Type64 = "PutVariable";
 export type State5 = "up_for_reschedule";
 export type RescheduleDate = string;
 export type EndDate5 = string;
-export type Type64 = "RescheduleTask";
-export type Type65 = "ResendLoggingFD";
+export type Type65 = "RescheduleTask";
+export type Type66 = "ResendLoggingFD";
 export type State6 = "up_for_retry";
 export type EndDate6 = string;
 export type RenderedMapIndex2 = string | null;
 export type RetryDelaySeconds = number | null;
 export type RetryReason = string | null;
-export type Type66 = "RetryTask";
-export type Type67 = "SentFDs";
+export type Type67 = "RetryTask";
+export type Type68 = "SentFDs";
 export type Fds = number[];
-export type Type68 = "SerializedDagResult";
 export type Name15 = string;
 export type Key15 = string;
 export type Type69 = "SetAssetStateStoreByName";
@@ -1508,12 +1512,12 @@ export interface GetPreviousTI {
   type?: Type42;
 }
 /**
- * Ask for the serialized Dag of a task instance, to build a task whose Dag file cannot be imported.
+ * Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported.
  *
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "GetSerializedDag".
+ * via the `definition` "GetProviderOperator".
  */
-export interface GetSerializedDag {
+export interface GetProviderOperator {
   ti_id: TiId5;
   type?: Type43;
 }
@@ -1768,6 +1772,30 @@ export interface PreviousTIResult {
   type?: Type62;
 }
 /**
+ * The provider operator of the running task instance, in reply to :class:`GetProviderOperator`.
+ *
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "ProviderOperatorResult".
+ */
+export interface ProviderOperatorResult {
+  classpath: Classpath1;
+  kwargs: Kwargs;
+  downstream_task_ids: DownstreamTaskIds;
+  type?: Type63;
+}
+/**
+ * Constructor keyword arguments, each in the type encoding of the serialized Dag.
+ */
+export interface Kwargs {
+  [k: string]: unknown;
+}
+/**
+ * The direct downstream task ids of every task in the Dag, keyed by task id.
+ */
+export interface DownstreamTaskIds {
+  [k: string]: string[];
+}
+/**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "PutVariable".
  */
@@ -1775,7 +1803,7 @@ export interface PutVariable {
   key: Key14;
   value: Value1;
   description: Description;
-  type?: Type63;
+  type?: Type64;
 }
 /**
  * Update a task instance state to reschedule/up_for_reschedule.
@@ -1787,14 +1815,14 @@ export interface RescheduleTask {
   state?: State5;
   reschedule_date: RescheduleDate;
   end_date: EndDate5;
-  type?: Type64;
+  type?: Type65;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "ResendLoggingFD".
  */
 export interface ResendLoggingFD {
-  type?: Type65;
+  type?: Type66;
 }
 /**
  * Update a task instance state to up_for_retry.
@@ -1808,31 +1836,15 @@ export interface RetryTask {
   rendered_map_index?: RenderedMapIndex2;
   retry_delay_seconds?: RetryDelaySeconds;
   retry_reason?: RetryReason;
-  type?: Type66;
+  type?: Type67;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "SentFDs".
  */
 export interface SentFDs {
-  type?: Type67;
-  fds: Fds;
-}
-/**
- * The serialized Dag of the running task instance, in reply to :class:`GetSerializedDag`.
- *
- * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "SerializedDagResult".
- */
-export interface SerializedDagResult {
-  data: Data1;
   type?: Type68;
-}
-/**
- * The Dag as its Dag processor serialized it. A Python worker builds a task from it when the Dag file is not one it can import, such as a Dag written with a language SDK.
- */
-export interface Data1 {
-  [k: string]: unknown;
+  fds: Fds;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema

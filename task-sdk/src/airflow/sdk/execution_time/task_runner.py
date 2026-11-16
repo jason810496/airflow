@@ -114,7 +114,7 @@ from airflow.sdk.execution_time.comms import (
     GetDRCount,
     GetPreviousDagRun,
     GetPreviousTI,
-    GetSerializedDag,
+    GetProviderOperator,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -122,11 +122,11 @@ from airflow.sdk.execution_time.comms import (
     InactiveAssetsResult,
     PreviousDagRunResult,
     PreviousTIResult,
+    ProviderOperatorResult,
     RescheduleTask,
     ResendLoggingFD,
     RetryTask,
     SentFDs,
-    SerializedDagResult,
     SetExecutionTimeout,
     SetRenderedFields,
     SetRenderedMapIndex,
@@ -168,8 +168,8 @@ from airflow.sdk.execution_time.email_backend import (
 )
 from airflow.sdk.execution_time.lazy_sequence import LazyXComSequence
 from airflow.sdk.execution_time.loop import LoopContextAccessor
+from airflow.sdk.execution_time.provider_operator import build_provider_operator
 from airflow.sdk.execution_time.sentry import Sentry
-from airflow.sdk.execution_time.serialized_task import build_task as build_serialized_task
 from airflow.sdk.execution_time.tracing import detail_span
 from airflow.sdk.execution_time.xcom import XCom
 from airflow.sdk.importers.base import get_importer_registry
@@ -1126,28 +1126,26 @@ def _can_import_dag_file(path: str, bundle_name: str) -> bool:
     return importer is not None and not isinstance(importer, CoordinatorDagImporter)
 
 
-def _build_task_from_serialized_dag(what: StartupDetails, dag_path: str, log: Logger) -> BaseOperator | None:
+def _build_provider_operator_task(what: StartupDetails, dag_path: str, log: Logger) -> BaseOperator | None:
     """
-    Build the task of *what* from its serialized Dag, when a Python operator runs it.
+    Build the task of *what* from the provider operator its language SDK Dag declares.
 
-    Returns ``None`` when the task is not one a Python operator runs, or when the API server cannot
-    send the serialized Dag.
+    Returns ``None`` when the task is not a provider operator, or when the API server cannot send it.
     """
     try:
-        response = SUPERVISOR_COMMS.send(GetSerializedDag(ti_id=what.ti.id))
+        response = SUPERVISOR_COMMS.send(GetProviderOperator(ti_id=what.ti.id))
     except AirflowRuntimeError as error:
-        log.warning("Cannot read the serialized Dag of the task", error=str(error))
+        log.warning("Cannot read the provider operator of the task", error=str(error))
         return None
     if TYPE_CHECKING:
-        assert isinstance(response, SerializedDagResult)
-    task = build_serialized_task(response.data, what.ti.task_id, fileloc=dag_path)
-    if task is not None:
-        log.info(
-            "Built the task from its serialized Dag",
-            dag_id=what.ti.dag_id,
-            task_id=what.ti.task_id,
-            operator=f"{type(task).__module__}.{type(task).__qualname__}",
-        )
+        assert isinstance(response, ProviderOperatorResult)
+    task = build_provider_operator(response, dag_id=what.ti.dag_id, task_id=what.ti.task_id, fileloc=dag_path)
+    log.info(
+        "Built the task from its provider operator",
+        dag_id=what.ti.dag_id,
+        task_id=what.ti.task_id,
+        operator=response.classpath,
+    )
     return task
 
 
@@ -1193,15 +1191,15 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
     dag_absolute_path = os.fspath(Path(bundle_instance.path, what.dag_rel_path))
     dag_file_parse_start = time.monotonic()
     importer = _find_native_dag_importer(dag_absolute_path, bundle_info.name)
-    serialized_task = None
+    provider_task = None
     # A Dag written with a language SDK has no file Python can import; a provider operator it
-    # declares is built from the serialized Dag instead.
+    # declares is built from what the API server sends instead.
     if importer is not None or not _can_import_dag_file(dag_absolute_path, bundle_info.name):
-        serialized_task = _build_task_from_serialized_dag(what, dag_absolute_path, log)
-        if serialized_task is None and importer is not None:
+        provider_task = _build_provider_operator_task(what, dag_absolute_path, log)
+        if provider_task is None and importer is not None:
             _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
 
-    if serialized_task is None:
+    if provider_task is None:
         bag = BundleDagBag(
             dag_folder=dag_absolute_path,
             safe_mode=False,
@@ -1239,7 +1237,7 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
             _maybe_reschedule_startup_failure(ti_context=what.ti_context, log=log)
             sys.exit(1)
     else:
-        task = serialized_task
+        task = provider_task
         dag = task.dag
     dag_file_parse_ms = int((time.monotonic() - dag_file_parse_start) * 1000)
 
