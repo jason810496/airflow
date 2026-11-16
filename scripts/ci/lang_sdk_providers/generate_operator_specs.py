@@ -41,6 +41,7 @@ import enum
 import importlib
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -516,7 +517,9 @@ def run_in_provider_environment(provider_id: str, output_dir: Path, *, check: bo
     command += ["--allow-list", provider_id, "--output-dir", str(output_dir)]
     if check:
         command.append("--check")
-    return subprocess.run(command, check=False, cwd=REPO_ROOT).returncode
+    # Some operators build template_fields from a set, whose order follows the hash seed.
+    env = {**os.environ, "PYTHONHASHSEED": "0"}
+    return subprocess.run(command, check=False, cwd=REPO_ROOT, env=env).returncode
 
 
 def parse_allow_list(values: list[str]) -> list[str]:

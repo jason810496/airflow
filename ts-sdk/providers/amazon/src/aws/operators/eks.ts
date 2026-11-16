@@ -897,7 +897,7 @@ export interface EksPodOperatorArgs {
 export const EksPodOperator = defineProviderOperator<EksPodOperatorArgs>({
   module: "airflow.providers.amazon.aws.operators.eks",
   className: "EksPodOperator",
-  templateFields: ["annotations", "namespace", "arguments", "volumes", "cluster_context", "trigger_kwargs", "env_from", "kubernetes_conn_id", "name", "configmaps", "cmds", "image", "region", "env_vars", "pod_template_file", "node_selector", "in_cluster", "config_file", "volume_mounts", "pod_name", "hostname", "container_resources", "labels", "cluster_name", "base_container_name", "pod_template_dict", "aws_conn_id"],
+  templateFields: ["labels", "namespace", "hostname", "annotations", "trigger_kwargs", "configmaps", "aws_conn_id", "volume_mounts", "env_vars", "node_selector", "image", "env_from", "config_file", "in_cluster", "volumes", "container_resources", "name", "base_container_name", "cmds", "pod_template_dict", "arguments", "pod_name", "pod_template_file", "cluster_context", "kubernetes_conn_id", "cluster_name", "region"],
   templateFieldsRenderers: { env_vars: "py" },
   params: {
     clusterName: { name: "cluster_name", required: true },

@@ -241,6 +241,7 @@ def test_main_reads_each_provider_in_its_own_environment(mock_run, tmp_path):
         str(tmp_path),
         "--check",
     ]
+    assert mock_run.call_args.kwargs["env"]["PYTHONHASHSEED"] == "0"
 
 
 @mock.patch("ci.lang_sdk_providers.generate_operator_specs.build_provider_spec", autospec=True)
