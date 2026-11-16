@@ -61,7 +61,7 @@ prek run --hook-stage manual verify-ts-sdk-package --all-files
 
 `providers/` holds one generated package per provider, such as
 `@apache-airflow/providers-amazon`, built from the operator specs in
-`generated/lang_sdk_provider_operators/`. Do not edit them by hand. To add a
+`providers/<provider>/_generated/lang_sdk_operators.json` at the repository root. Do not edit them by hand. To add a
 provider or pick up a provider change, regenerate its spec from the repository
 root, then the packages:
 

@@ -19,22 +19,24 @@
 
 // Generates one npm package per provider under providers/, from the operator specs that
 // scripts/ci/lang_sdk_providers/generate_operator_specs.py writes to
-// generated/lang_sdk_provider_operators/. Each Python operator module becomes one TypeScript
-// module of the same path, holding a typed binding per operator class.
+// providers/<provider>/_generated/lang_sdk_operators.json at the repository root. Each Python
+// operator module becomes one TypeScript module of the same path, holding a typed binding per
+// operator class.
 //
 // Re-run with: pnpm run generate:providers
 // Check only:  pnpm run generate:providers --check
 
 import console from "node:console";
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TS_SDK_ROOT = resolve(HERE, "..");
-const SPECS_DIR = resolve(TS_SDK_ROOT, "..", "generated", "lang_sdk_provider_operators");
-const PROVIDERS_DIR = join(TS_SDK_ROOT, "providers");
+export const TS_SDK_ROOT = resolve(HERE, "..");
+export const PROVIDER_SOURCES_DIR = resolve(TS_SDK_ROOT, "..", "providers");
+export const PROVIDERS_DIR = join(TS_SDK_ROOT, "providers");
+const SPEC_PATH = join("_generated", "lang_sdk_operators.json");
 const SPEC_SCRIPT = "scripts/ci/lang_sdk_providers/generate_operator_specs.py";
 const SUPPORTED_SPEC_MAJOR = "1";
 
@@ -449,17 +451,39 @@ function listFiles(directory) {
 }
 
 /**
- * Write the packages of every spec in `specsDir` under `providersDir`, or with `check` only
- * report what differs. Returns the paths that were, or would be, written or removed.
+ * The operator spec of every provider under `providerSourcesDir`. A provider is a directory with a
+ * `provider.yaml`, such as `amazon/` or `common/ai/`.
  */
-export function generate({ specsDir, providersDir, sdkPackage, check }) {
+export function findSpecFiles(providerSourcesDir) {
+  if (existsSync(join(providerSourcesDir, "provider.yaml"))) {
+    const specFile = join(providerSourcesDir, SPEC_PATH);
+    return existsSync(specFile) ? [specFile] : [];
+  }
+  let entries;
+  try {
+    entries = readdirSync(providerSourcesDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .flatMap((entry) => findSpecFiles(join(providerSourcesDir, entry.name)))
+    .sort();
+}
+
+/**
+ * Write the packages of every provider spec under `providerSourcesDir` to `providersDir`, or with
+ * `check` only report what differs. Returns the paths that were, or would be, written or removed.
+ */
+export function generate({ providerSourcesDir, providersDir, sdkPackage, check }) {
   const changed = [];
   const expected = new Set();
-  const specFiles = readdirSync(specsDir)
-    .filter((name) => name.endsWith(".json"))
-    .sort();
+  const specFiles = findSpecFiles(providerSourcesDir);
+  if (specFiles.length === 0) {
+    throw new Error(`No operator specs under ${providerSourcesDir}; run ${SPEC_SCRIPT} first`);
+  }
   for (const specFile of specFiles) {
-    const spec = JSON.parse(readFileSync(join(specsDir, specFile), "utf8"));
+    const spec = JSON.parse(readFileSync(specFile, "utf8"));
     const packageDir = join(providersDir, toPackageSlug(spec.provider.id));
     for (const [path, content] of renderPackage(spec, sdkPackage)) {
       const target = join(packageDir, ...path.split("/"));
@@ -486,22 +510,23 @@ export function generate({ specsDir, providersDir, sdkPackage, check }) {
   return changed;
 }
 
+/** The ts-sdk package.json, whose name and versions the provider packages follow. */
+export function readSdkPackage() {
+  return JSON.parse(readFileSync(join(TS_SDK_ROOT, "package.json"), "utf8"));
+}
+
 function main() {
   const check = process.argv.includes("--check");
-  if (!statSync(SPECS_DIR, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new Error(`No operator specs in ${SPECS_DIR}; run ${SPEC_SCRIPT} first`);
-  }
-  const sdkPackage = JSON.parse(readFileSync(join(TS_SDK_ROOT, "package.json"), "utf8"));
   const changed = generate({
-    specsDir: SPECS_DIR,
+    providerSourcesDir: PROVIDER_SOURCES_DIR,
     providersDir: PROVIDERS_DIR,
-    sdkPackage,
+    sdkPackage: readSdkPackage(),
     check,
   });
   const paths = changed.map((path) => relative(TS_SDK_ROOT, path).split(sep).join("/"));
   if (check && paths.length > 0) {
     console.error(
-      "The provider packages are out of date with generated/lang_sdk_provider_operators/. " +
+      "The provider packages are out of date with the provider operator specs. " +
         "Run `pnpm run generate:providers` in ts-sdk/ and commit the result:",
     );
     for (const path of paths) console.error(`  ${path}`);

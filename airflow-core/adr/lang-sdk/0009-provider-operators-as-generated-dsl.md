@@ -89,7 +89,7 @@ not implemented yet.
 - **One language-neutral spec per provider.** `scripts/ci/lang_sdk_providers/generate_operator_specs.py
   --allow-list <provider-id>,...` imports each operator and sensor module a provider's `provider.yaml`
   lists, reads the constructors across the class hierarchy down to `BaseOperator`, and writes
-  `generated/lang_sdk_provider_operators/<provider-id>.json`. Each provider is read in its own `uv`
+  `providers/<provider>/_generated/lang_sdk_operators.json`. Each provider is read in its own `uv`
   environment. `BaseOperator`'s own arguments are left out: each SDK already has its task options
   for them. The skipped operators and omitted arguments are listed in the spec, which is the
   coverage report decision 3 asks for.

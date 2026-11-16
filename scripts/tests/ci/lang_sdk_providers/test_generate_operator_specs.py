@@ -225,7 +225,7 @@ def test_parse_allow_list_splits_and_validates_provider_ids():
 def test_main_reads_each_provider_in_its_own_environment(mock_run, tmp_path):
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0)
 
-    assert generator.main(["--allow-list", "common.ai", "--output-dir", str(tmp_path), "--check"]) == 0
+    assert generator.main(["--allow-list", "common.ai", "--providers-dir", str(tmp_path), "--check"]) == 0
 
     assert mock_run.call_args.args[0] == [
         "uv",
@@ -237,7 +237,7 @@ def test_main_reads_each_provider_in_its_own_environment(mock_run, tmp_path):
         "--no-uv",
         "--allow-list",
         "common.ai",
-        "--output-dir",
+        "--providers-dir",
         str(tmp_path),
         "--check",
     ]
@@ -247,8 +247,9 @@ def test_main_reads_each_provider_in_its_own_environment(mock_run, tmp_path):
 @mock.patch("ci.lang_sdk_providers.generate_operator_specs.build_provider_spec", autospec=True)
 def test_main_check_fails_on_an_out_of_date_spec(mock_build, tmp_path):
     mock_build.return_value = {"provider": {"id": "standard"}, "operators": [], "skipped": []}
-    args = ["--no-uv", "--allow-list", "standard", "--output-dir", str(tmp_path)]
+    args = ["--no-uv", "--allow-list", "standard", "--providers-dir", str(tmp_path)]
 
     assert generator.main([*args, "--check"]) == 1
     assert generator.main(args) == 0
+    assert (tmp_path / "standard" / "_generated" / "lang_sdk_operators.json").is_file()
     assert generator.main([*args, "--check"]) == 0

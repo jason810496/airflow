@@ -19,7 +19,7 @@ Generate the operator specs a language SDK builds its provider bindings from.
 
 For each provider in ``--allow-list``, every operator and sensor its ``provider.yaml`` lists is
 imported and its constructor read across the class hierarchy. The result is one JSON file per
-provider, ``generated/lang_sdk_provider_operators/<provider-id>.json``, which names each operator's
+provider, ``providers/<provider>/_generated/lang_sdk_operators.json``, which names each operator's
 Python class and the constructor arguments a language SDK can express as JSON. See
 ``airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md``.
 
@@ -53,7 +53,8 @@ from typing import Any
 
 SPEC_VERSION = "1.0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "generated" / "lang_sdk_provider_operators"
+PROVIDERS_DIR = REPO_ROOT / "providers"
+SPEC_FILE_NAME = "lang_sdk_operators.json"
 
 TypeSpec = dict[str, Any]
 
@@ -421,7 +422,7 @@ def build_provider_spec(provider_id: str) -> dict[str, Any]:
     from airflow.sdk.bases.operator import BaseOperator
     from airflow.sdk.bases.sensor import BaseSensorOperator
 
-    provider_yaml = REPO_ROOT / "providers" / provider_id.replace(".", "/") / "provider.yaml"
+    provider_yaml = PROVIDERS_DIR / provider_id.replace(".", "/") / "provider.yaml"
     info = yaml.safe_load(provider_yaml.read_text())
     modules = sorted(
         {
@@ -506,15 +507,15 @@ def render_spec(spec: dict[str, Any]) -> str:
     return rendered + "\n"
 
 
-def get_spec_path(output_dir: Path, provider_id: str) -> Path:
-    return output_dir / f"{provider_id}.json"
+def get_spec_path(providers_dir: Path, provider_id: str) -> Path:
+    return providers_dir / provider_id.replace(".", "/") / "_generated" / SPEC_FILE_NAME
 
 
-def run_in_provider_environment(provider_id: str, output_dir: Path, *, check: bool) -> int:
+def run_in_provider_environment(provider_id: str, providers_dir: Path, *, check: bool) -> int:
     """Run this script for *provider_id* in the environment of its own distribution."""
-    project = REPO_ROOT / "providers" / provider_id.replace(".", "/")
+    project = PROVIDERS_DIR / provider_id.replace(".", "/")
     command = ["uv", "run", "--project", str(project), "python", __file__, "--no-uv"]
-    command += ["--allow-list", provider_id, "--output-dir", str(output_dir)]
+    command += ["--allow-list", provider_id, "--providers-dir", str(providers_dir)]
     if check:
         command.append("--check")
     # Some operators build template_fields from a set, whose order follows the hash seed.
@@ -525,7 +526,7 @@ def run_in_provider_environment(provider_id: str, output_dir: Path, *, check: bo
 def parse_allow_list(values: list[str]) -> list[str]:
     providers = [item.strip() for value in values for item in value.split(",") if item.strip()]
     for provider_id in providers:
-        if not (REPO_ROOT / "providers" / provider_id.replace(".", "/") / "provider.yaml").is_file():
+        if not (PROVIDERS_DIR / provider_id.replace(".", "/") / "provider.yaml").is_file():
             raise SystemExit(f"Unknown provider {provider_id!r}: no providers/.../provider.yaml for it")
     return sorted(set(providers))
 
@@ -539,7 +540,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PROVIDER[,PROVIDER...]",
         help="Provider ids to generate specs for, such as amazon,common.ai. May be repeated.",
     )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--providers-dir",
+        type=Path,
+        default=PROVIDERS_DIR,
+        help="Directory each provider's _generated/ spec is written under.",
+    )
     parser.add_argument("--no-uv", action="store_true", help="Read the providers in this interpreter.")
     parser.add_argument("--check", action="store_true", help="Fail when a spec file is out of date.")
     args = parser.parse_args(argv)
@@ -547,7 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     providers = parse_allow_list(args.allow_list)
     if not args.no_uv:
         results = [
-            run_in_provider_environment(provider_id, args.output_dir, check=args.check)
+            run_in_provider_environment(provider_id, args.providers_dir, check=args.check)
             for provider_id in providers
         ]
         return max(results, default=0)
@@ -556,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
     status = 0
     for provider_id in providers:
         rendered = render_spec(spec := build_provider_spec(provider_id))
-        path = get_spec_path(args.output_dir, provider_id)
+        path = get_spec_path(args.providers_dir, provider_id)
         if args.check:
             if not path.is_file() or path.read_text() != rendered:
                 print(

@@ -455,13 +455,13 @@ repos:
         name: Check TypeScript SDK provider packages match the operator specs
         env:
           PYTHONPYCACHEPREFIX: .build/pycache
-        description: "Fail when ts-sdk/providers/ is not what generated/lang_sdk_provider_operators/ generates"
+        description: "Fail when ts-sdk/providers/ is not what the provider operator specs generate"
         entry: node ts-sdk/scripts/generate-providers.mjs --check
         language: node
         pass_filenames: false
         files: >
           (?x)
-          ^generated/lang_sdk_provider_operators/.*\.json$|
+          ^providers/.*/_generated/lang_sdk_operators\.json$|
           ^ts-sdk/providers/.*|
           ^ts-sdk/package\.json$|
           ^ts-sdk/scripts/generate-providers\.mjs$
@@ -1258,7 +1258,7 @@ repos:
           ^providers/\.pre-commit-config\.yaml$|
           ^providers/amazon/src/airflow/providers/amazon/aws/hooks/emr\.py$|
           ^providers/amazon/src/airflow/providers/amazon/aws/operators/emr\.py$|
-          ^generated/lang_sdk_provider_operators/amazon\.json$|
+          ^providers/amazon/_generated/lang_sdk_operators\.json$|
           ^ts-sdk/providers/amazon/src/aws/operators/emr\.ts$|
           ^providers/.*/get_provider_info\.py$|
           ^providers/.*/provider\.yaml$|

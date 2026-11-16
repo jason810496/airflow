@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  findSpecFiles,
   generate,
   getEncoding,
   getModulePath,
@@ -248,14 +249,23 @@ describe("renderPackage", () => {
 
 describe("generate", () => {
   let root: string;
-  let options: { specsDir: string; providersDir: string; sdkPackage: typeof SDK_PACKAGE };
+  let options: { providerSourcesDir: string; providersDir: string; sdkPackage: typeof SDK_PACKAGE };
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), "generate-providers-"));
-    const specsDir = join(root, "specs");
-    mkdirSync(specsDir);
-    writeFileSync(join(specsDir, "demo.mail.json"), JSON.stringify(SPEC));
-    options = { specsDir, providersDir: join(root, "providers"), sdkPackage: SDK_PACKAGE };
+    const providerSourcesDir = join(root, "provider-sources");
+    const providerDir = join(providerSourcesDir, "demo", "mail");
+    mkdirSync(join(providerDir, "_generated"), { recursive: true });
+    writeFileSync(
+      join(providerDir, "provider.yaml"),
+      "package-name: apache-airflow-providers-demo-mail\n",
+    );
+    writeFileSync(join(providerDir, "_generated", "lang_sdk_operators.json"), JSON.stringify(SPEC));
+    options = {
+      providerSourcesDir,
+      providersDir: join(root, "providers"),
+      sdkPackage: SDK_PACKAGE,
+    };
   });
 
   afterEach(() => {
@@ -282,5 +292,17 @@ describe("generate", () => {
     generate({ ...options, check: false });
     expect(generate({ ...options, check: true })).toEqual([]);
     expect(() => readFileSync(stale)).toThrow();
+  });
+
+  it("finds the spec of a provider nested under a namespace directory", () => {
+    expect(findSpecFiles(options.providerSourcesDir)).toEqual([
+      join(options.providerSourcesDir, "demo", "mail", "_generated", "lang_sdk_operators.json"),
+    ]);
+  });
+
+  it("fails when no provider has a spec", () => {
+    expect(() =>
+      generate({ ...options, providerSourcesDir: join(root, "empty"), check: true }),
+    ).toThrow(/No operator specs/);
   });
 });
