@@ -21,10 +21,9 @@
 // scripts/ci/lang_sdk_providers/generate_operator_specs.py writes to
 // providers/<provider>/_generated/lang_sdk_operators.json at the repository root. Each Python
 // operator module becomes one TypeScript module of the same path, holding a typed binding per
-// operator class.
+// operator class. tests/scripts/generate-providers.test.ts fails when providers/ is out of date.
 //
 // Re-run with: pnpm run generate:providers
-// Check only:  pnpm run generate:providers --check
 
 import console from "node:console";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -516,24 +515,14 @@ export function readSdkPackage() {
 }
 
 function main() {
-  const check = process.argv.includes("--check");
   const changed = generate({
     providerSourcesDir: PROVIDER_SOURCES_DIR,
     providersDir: PROVIDERS_DIR,
     sdkPackage: readSdkPackage(),
-    check,
+    check: false,
   });
-  const paths = changed.map((path) => relative(TS_SDK_ROOT, path).split(sep).join("/"));
-  if (check && paths.length > 0) {
-    console.error(
-      "The provider packages are out of date with the provider operator specs. " +
-        "Run `pnpm run generate:providers` in ts-sdk/ and commit the result:",
-    );
-    for (const path of paths) console.error(`  ${path}`);
-    process.exitCode = 1;
-    return;
-  }
-  console.log(check ? "provider packages are up to date" : `wrote ${paths.length} files`);
+  for (const path of changed) console.log(relative(TS_SDK_ROOT, path).split(sep).join("/"));
+  console.log(`wrote ${changed.length} files`);
 }
 
 // Importable for tests; runs only when invoked as a script.

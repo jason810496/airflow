@@ -73,8 +73,8 @@ python3 scripts/ci/lang_sdk_providers/generate_operator_specs.py --allow-list am
 pnpm run generate:providers
 ```
 
-The `check-ts-sdk-provider-packages` hook fails when the committed packages are
-not what the specs generate. A provider package resolves the SDK as the package
+A unit test in `tests/scripts/generate-providers.test.ts` fails when the committed
+packages are not what the specs generate. A provider package resolves the SDK as the package
 it is published as, through its own `tsconfig.json`, so a Dag and its provider
 operators load one copy of the SDK. Build the packages before packing a Dag
 that uses them:

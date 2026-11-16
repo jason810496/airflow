@@ -628,6 +628,8 @@ CI_FILE_GROUP_MATCHES: HashableDict[FileGroupForCi] = HashableDict(
             # supervisor schema or the unit tests. `ts-sdk/docs/` is excluded too — it is the
             # docs toolchain's own package, with its own tests that vitest does not run.
             r"^ts-sdk/(?!api-docs/)(?!docs/)(?!.*\.md$).*",
+            # A unit test checks ts-sdk/providers/ against the provider operator specs.
+            r"^providers/.*/_generated/lang_sdk_operators\.json$",
         ],
         FileGroupForCi.TS_SDK_CONFORMANCE_FILES: [
             # The TS SDK, plus what its serialization conformance check compares it against:

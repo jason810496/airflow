@@ -24,11 +24,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  PROVIDER_SOURCES_DIR,
+  PROVIDERS_DIR,
   findSpecFiles,
   generate,
   getEncoding,
   getModulePath,
   renderPackage,
+  readSdkPackage,
   renderType,
   toCamelCase,
   toPackageSlug,
@@ -304,5 +307,18 @@ describe("generate", () => {
     expect(() =>
       generate({ ...options, providerSourcesDir: join(root, "empty"), check: true }),
     ).toThrow(/No operator specs/);
+  });
+});
+
+describe("the committed provider packages", () => {
+  it("are what the committed operator specs generate", () => {
+    const changed = generate({
+      providerSourcesDir: PROVIDER_SOURCES_DIR,
+      providersDir: PROVIDERS_DIR,
+      sdkPackage: readSdkPackage(),
+      check: true,
+    });
+    // Run `pnpm run generate:providers` in ts-sdk/ and commit the result.
+    expect(changed).toEqual([]);
   });
 });

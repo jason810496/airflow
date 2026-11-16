@@ -1576,6 +1576,14 @@ def assert_outputs_are_printed(expected_outputs: dict[str, str], stderr: str):
             id="Run ts-sdk unit tests and build docs when the documented sources change",
         ),
         pytest.param(
+            ("providers/common/ai/_generated/lang_sdk_operators.json",),
+            {
+                "run-ts-sdk-tests": "true",
+                "run-ts-sdk-docs": "false",
+            },
+            id="Run ts-sdk unit tests when a provider operator spec changes",
+        ),
+        pytest.param(
             ("ts-sdk/pnpm-lock.yaml",),
             {
                 "run-ts-sdk-tests": "true",

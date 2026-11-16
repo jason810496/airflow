@@ -576,7 +576,8 @@ together using `pytest-xdist` (pytest-xdist distributes the tests among parallel
     stays the same. Integration test selection is not narrowed.
 * `TS SDK unit tests` (the vitest suite run by `pnpm test` in `ts-sdk/`, exposed as the
   `run-ts-sdk-tests` output) run when `TS SDK files` change: anything under `ts-sdk/` except `.md`
-  files, `ts-sdk/api-docs/`, and `ts-sdk/docs/` (the docs toolchain's own package).
+  files, `ts-sdk/api-docs/`, and `ts-sdk/docs/` (the docs toolchain's own package), plus the
+  provider operator specs in `providers/*/_generated/lang_sdk_operators.json`.
 * `Lang SDK serialization conformance` (the `tests-lang-sdk-conformance` job, which serializes the Dags
   of `scripts/ci/lang_sdk_serialization/test_dags.yaml` with an SDK and with Airflow and compares the
   two) runs for each SDK listed in the `lang-sdk-conformance-sdks` output: `go` when `Go SDK
@@ -822,7 +823,7 @@ GitHub Actions to pass the list of parameters to a command to execute
 | run-translation-check                                   | Whether the UI translation completeness check runs: a translation file changed; off on component branches | true                                     |      |
 | run-ts-sdk-docs                                         | Whether the TypeScript SDK API reference should be built — on `ts-sdk/api-docs/`, `ts-sdk/docs/`, or `ts-sdk/src/` changes, including Markdown ("true"/"false")          | true                                     |      |
 | run-ts-sdk-e2e-tests                                    | Whether TypeScript SDK e2e tests should be run — on runtime-affecting `ts-sdk/`, TS e2e test, Node coordinator, or native Lang-SDK Dag parsing changes ("true"/"false") | true                                     |      |
-| run-ts-sdk-tests                                        | Whether TypeScript SDK unit tests should be run — on `ts-sdk/` changes except Markdown, `api-docs/`, and `docs/` ("true"/"false") | true                                     |      |
+| run-ts-sdk-tests                                        | Whether TypeScript SDK unit tests should be run — on `ts-sdk/` changes except Markdown, `api-docs/`, and `docs/`, or on provider operator spec changes ("true"/"false") | true                                     |      |
 | run-ui-tests                                            | Whether UI tests should be run ("true"/"false")                                                         | true                                     |      |
 | run-unit-tests                                          | Whether unit tests should be run ("true"/"false")                                                       | true                                     |      |
 | run-www-tests                                           | Whether Legacy WWW tests should be run ("true"/"false")                                                 | true                                     |      |

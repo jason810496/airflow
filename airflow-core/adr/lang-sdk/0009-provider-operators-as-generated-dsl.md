@@ -95,8 +95,7 @@ not implemented yet.
   coverage report decision 3 asks for.
 - **Each SDK generates its bindings from the specs.** `ts-sdk/scripts/generate-providers.mjs`
   writes one `@apache-airflow/providers-<provider-id>` package per spec, versioned as the provider.
-  The `check-ts-sdk-provider-packages` hook fails when the committed packages are not what the
-  specs generate.
+  A TypeScript SDK unit test fails when the committed packages are not what the specs generate.
 - **The serialized task is the Python operator.** A binding writes the class as `task_type` and
   `_task_module`, its arguments under `_operator_kwargs` in the type encoding of
   `BaseSerialization.serialize()`, and the class attributes the scheduler reads, such as
