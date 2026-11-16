@@ -20,7 +20,8 @@ Generate the operator specs a language SDK builds its provider bindings from.
 For each provider in ``--allow-list``, every operator and sensor its ``provider.yaml`` lists is
 imported and its constructor read across the class hierarchy. The result is one JSON file per
 provider, ``providers/<provider>/_generated/lang_sdk_operators.json``, which names each operator's
-Python class and the constructor arguments a language SDK can express as JSON. See
+Python class and the constructor arguments a language SDK can express as JSON. Each file follows
+``airflow-core/src/airflow/lang_sdk_provider_operators.schema.json``. See
 ``airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md``.
 
 Each provider is read in its own environment, so the host needs no provider installed::
@@ -55,6 +56,7 @@ SPEC_VERSION = "1.0"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PROVIDERS_DIR = REPO_ROOT / "providers"
 SPEC_FILE_NAME = "lang_sdk_operators.json"
+SCHEMA_PATH = REPO_ROOT / "airflow-core" / "src" / "airflow" / "lang_sdk_provider_operators.schema.json"
 
 TypeSpec = dict[str, Any]
 
@@ -511,6 +513,13 @@ def get_spec_path(providers_dir: Path, provider_id: str) -> Path:
     return providers_dir / provider_id.replace(".", "/") / "_generated" / SPEC_FILE_NAME
 
 
+def validate_spec(spec: dict[str, Any]) -> None:
+    """Raise ``jsonschema.ValidationError`` when *spec* does not follow the spec schema."""
+    import jsonschema
+
+    jsonschema.validate(spec, json.loads(SCHEMA_PATH.read_text()))
+
+
 def run_in_provider_environment(provider_id: str, providers_dir: Path, *, check: bool) -> int:
     """Run this script for *provider_id* in the environment of its own distribution."""
     project = PROVIDERS_DIR / provider_id.replace(".", "/")
@@ -561,7 +570,9 @@ def main(argv: list[str] | None = None) -> int:
     script = Path(__file__).relative_to(REPO_ROOT)
     status = 0
     for provider_id in providers:
-        rendered = render_spec(spec := build_provider_spec(provider_id))
+        spec = build_provider_spec(provider_id)
+        validate_spec(spec)
+        rendered = render_spec(spec)
         path = get_spec_path(args.providers_dir, provider_id)
         if args.check:
             if not path.is_file() or path.read_text() != rendered:

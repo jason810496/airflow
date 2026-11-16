@@ -665,6 +665,9 @@ CI_FILE_GROUP_MATCHES: HashableDict[FileGroupForCi] = HashableDict(
             r"^scripts/cov/.*\.py$",
             r"^scripts/tools/.*\.py$",
             r"^scripts/tests/.*\.py$",
+            # A scripts test validates the provider operator specs against their schema.
+            r"^providers/.*/_generated/lang_sdk_operators\.json$",
+            r"^airflow-core/src/airflow/lang_sdk_provider_operators\.schema\.json$",
         ],
         FileGroupForCi.PREK_FILES: [
             r"^scripts/ci/prek",

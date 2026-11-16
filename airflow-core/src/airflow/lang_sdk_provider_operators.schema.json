@@ -1,0 +1,215 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Language SDK provider operators",
+    "description": "The operators and sensors of one provider that a language SDK can express, with the constructor arguments JSON can carry. Written to providers/<provider>/_generated/lang_sdk_operators.json by scripts/ci/lang_sdk_providers/generate_operator_specs.py.",
+    "type": "object",
+    "properties": {
+        "spec_version": {
+            "description": "Version of this format, as major.minor. A language SDK generator rejects a major version it does not know.",
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "provider": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "Provider id, such as common.ai.",
+                    "type": "string"
+                },
+                "package": {
+                    "description": "Python distribution of the provider.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Provider version the spec was read from.",
+                    "type": "string"
+                }
+            },
+            "required": ["id", "package", "version"],
+            "additionalProperties": false
+        },
+        "operators": {
+            "type": "array",
+            "items": {"$ref": "#/definitions/operator"}
+        },
+        "skipped": {
+            "description": "Modules and classes a language SDK cannot express, with the reason.",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "module": {"type": "string"},
+                    "name": {
+                        "description": "Class name. Absent when the whole module is skipped.",
+                        "type": "string"
+                    },
+                    "reason": {"type": "string"}
+                },
+                "required": ["module", "reason"],
+                "additionalProperties": false
+            }
+        }
+    },
+    "required": ["spec_version", "provider", "operators", "skipped"],
+    "additionalProperties": false,
+    "definitions": {
+        "operator": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "description": "Python class name.",
+                    "type": "string"
+                },
+                "module": {
+                    "description": "Python module of the class.",
+                    "type": "string"
+                },
+                "kind": {"enum": ["operator", "sensor"]},
+                "description": {"type": "string"},
+                "template_fields": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "template_ext": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                },
+                "template_fields_renderers": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"}
+                },
+                "ui_color": {"type": "string"},
+                "ui_fgcolor": {"type": "string"},
+                "operator_name": {"type": "string"},
+                "can_skip_downstream": {
+                    "description": "Whether the operator can skip its downstream tasks, such as a branch operator.",
+                    "const": true
+                },
+                "params": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/param"}
+                },
+                "omitted_params": {
+                    "description": "Optional constructor arguments JSON cannot carry. They keep their Python default.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "annotation": {"type": "string"}
+                        },
+                        "required": ["name", "annotation"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["name", "module", "kind", "template_fields", "params"],
+            "additionalProperties": false
+        },
+        "param": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "type": {"$ref": "#/definitions/type"},
+                "required": {"const": true},
+                "templated": {"const": true},
+                "default": {
+                    "description": "Python default, when JSON can carry it and it is not None.",
+                    "type": ["string", "number", "boolean", "array"]
+                },
+                "description": {"type": "string"}
+            },
+            "required": ["name", "type"],
+            "additionalProperties": false
+        },
+        "type": {
+            "description": "A language-neutral argument type.",
+            "type": "object",
+            "required": ["kind"],
+            "oneOf": [
+                {
+                    "properties": {
+                        "kind": {
+                            "enum": ["any", "null", "string", "boolean", "integer", "number", "timedelta", "datetime"]
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "kind": {"const": "literal"},
+                        "literals": {
+                            "type": "array",
+                            "items": {"type": ["string", "integer", "boolean", "null"]},
+                            "minItems": 1
+                        }
+                    },
+                    "required": ["literals"],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "kind": {"const": "array"},
+                        "items": {"$ref": "#/definitions/type"}
+                    },
+                    "required": ["items"],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "kind": {"const": "tuple"},
+                        "items": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/type"},
+                            "minItems": 1
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "An object with string keys.",
+                    "properties": {
+                        "kind": {"const": "object"},
+                        "values": {"$ref": "#/definitions/type"}
+                    },
+                    "required": ["values"],
+                    "additionalProperties": false
+                },
+                {
+                    "description": "An object with known fields, from a TypedDict.",
+                    "properties": {
+                        "kind": {"const": "struct"},
+                        "fields": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "type": {"$ref": "#/definitions/type"},
+                                    "required": {"type": "boolean"}
+                                },
+                                "required": ["name", "type", "required"],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["fields"],
+                    "additionalProperties": false
+                },
+                {
+                    "properties": {
+                        "kind": {"const": "union"},
+                        "options": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/type"},
+                            "minItems": 2
+                        }
+                    },
+                    "required": ["options"],
+                    "additionalProperties": false
+                }
+            ]
+        }
+    }
+}

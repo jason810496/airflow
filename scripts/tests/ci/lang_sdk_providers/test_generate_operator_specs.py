@@ -24,6 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypedDict
 from unittest import mock
 
+import jsonschema
 import pytest
 from ci.lang_sdk_providers import generate_operator_specs as generator
 
@@ -244,12 +245,38 @@ def test_main_reads_each_provider_in_its_own_environment(mock_run, tmp_path):
     assert mock_run.call_args.kwargs["env"]["PYTHONHASHSEED"] == "0"
 
 
+VALID_SPEC = {
+    "spec_version": generator.SPEC_VERSION,
+    "provider": {"id": "standard", "package": "apache-airflow-providers-standard", "version": "1.0.0"},
+    "operators": [],
+    "skipped": [],
+}
+
+
 @mock.patch("ci.lang_sdk_providers.generate_operator_specs.build_provider_spec", autospec=True)
 def test_main_check_fails_on_an_out_of_date_spec(mock_build, tmp_path):
-    mock_build.return_value = {"provider": {"id": "standard"}, "operators": [], "skipped": []}
+    mock_build.return_value = VALID_SPEC
     args = ["--no-uv", "--allow-list", "standard", "--providers-dir", str(tmp_path)]
 
     assert generator.main([*args, "--check"]) == 1
     assert generator.main(args) == 0
     assert (tmp_path / "standard" / "_generated" / "lang_sdk_operators.json").is_file()
     assert generator.main([*args, "--check"]) == 0
+
+
+@mock.patch("ci.lang_sdk_providers.generate_operator_specs.build_provider_spec", autospec=True)
+def test_main_rejects_a_spec_that_breaks_the_schema(mock_build, tmp_path):
+    mock_build.return_value = {**VALID_SPEC, "operators": [{"name": "NoModuleOperator"}]}
+
+    with pytest.raises(jsonschema.ValidationError):
+        generator.main(["--no-uv", "--allow-list", "standard", "--providers-dir", str(tmp_path)])
+    assert not (tmp_path / "standard").exists()
+
+
+@pytest.mark.parametrize(
+    "spec_path",
+    sorted(generator.PROVIDERS_DIR.glob(f"**/_generated/{generator.SPEC_FILE_NAME}")),
+    ids=lambda path: str(path.relative_to(generator.PROVIDERS_DIR).parent.parent),
+)
+def test_committed_spec_follows_the_schema(spec_path):
+    generator.validate_spec(json.loads(spec_path.read_text()))
