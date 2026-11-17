@@ -70,6 +70,7 @@ class SerializedBaseOperator(DAGNode):
     _is_empty: bool
     _arg_bindings: list[dict[str, Any]] | None = None
     _operator_kwargs: list[dict[str, Any]] | None = None
+    _operator_module: str | None = None
     _external_clear_target: dict[str, Any] | None = None
     _needs_expansion: bool
     _task_display_name: str | None = None
@@ -312,6 +313,11 @@ class SerializedBaseOperator(DAGNode):
     def operator_kwargs(self) -> list[dict[str, Any]] | None:
         """The constructor arguments a language SDK wrote for a Python operator, or None for other tasks."""
         return self._operator_kwargs
+
+    @property
+    def operator_module(self) -> str | None:
+        """The module of the language SDK that implements the operator, or None when none is declared."""
+        return self._operator_module
 
     @property
     def external_clear_target(self) -> dict[str, Any] | None:

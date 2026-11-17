@@ -429,6 +429,8 @@ pre-installed when Airflow is installed.
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | keycloak            | ``pip install apache-airflow[keycloak]``             | Keycloak hooks and operators         |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
+| localfile           | ``pip install 'apache-airflow[localfile]'``          | Local file operators (TypeScript)    |              |
++---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | microsoft-psrp      | ``pip install 'apache-airflow[microsoft-psrp]'``     | PSRP hooks and operators             |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | microsoft-winrm     | ``pip install 'apache-airflow[microsoft-winrm]'``    | WinRM hooks and operators            |              |

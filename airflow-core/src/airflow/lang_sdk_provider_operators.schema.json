@@ -28,6 +28,13 @@
             "required": ["id", "package", "version"],
             "additionalProperties": false
         },
+        "implemented_in": {
+            "description": "Language SDKs that implement the provider's operators. Absent when the provider is implemented in Python. A spec that names a language is written by that SDK, and every other SDK generates its wrapper from it.",
+            "type": "array",
+            "items": {"enum": ["TypeScript", "Go", "Java"]},
+            "minItems": 1,
+            "uniqueItems": true
+        },
         "operators": {
             "type": "array",
             "items": {"$ref": "#/definitions/operator"}
@@ -62,6 +69,10 @@
                 },
                 "module": {
                     "description": "Python module of the class.",
+                    "type": "string"
+                },
+                "implementation_module": {
+                    "description": "Module of the language SDK package that exports the operator under the class name, such as @apache-airflow/providers-localfile/operators/file for TypeScript. A runtime imports it to run an operator its bundle does not declare. Present when the provider is implemented in a language SDK.",
                     "type": "string"
                 },
                 "kind": {"enum": ["operator", "sensor"]},

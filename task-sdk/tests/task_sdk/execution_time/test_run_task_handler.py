@@ -22,6 +22,7 @@ from unittest import mock
 
 import pytest
 
+from airflow.sdk import LangSdkProviderOperator
 from airflow.sdk.api.datamodels._generated import (
     LiteralArgBinding,
     TaskArgBinding,
@@ -124,6 +125,30 @@ def test_run_dispatches_on_is_stub(monkeypatch):
     _run(operator_ti)
 
     assert seen == ["handler", "operator"]
+
+
+def test_run_gives_a_provider_wrapper_to_its_execute_and_not_to_a_handler(monkeypatch):
+    class WriteFileOperator(LangSdkProviderOperator):
+        operator_params = ("path",)
+
+        def __init__(self, *, path: str, **kwargs):
+            super().__init__(**kwargs)
+            self.path = path
+
+    seen = []
+    monkeypatch.setattr(
+        _TaskRunner, "_run_handler", classmethod(lambda cls, ti, context, log: seen.append("handler"))
+    )
+    monkeypatch.setattr(
+        _TaskRunner, "_run_operator", classmethod(lambda cls, ti, context, log: seen.append("operator"))
+    )
+    ti = _fake_ti(arg_bindings=None)
+    ti.task = WriteFileOperator(task_id="write", path="/tmp/a")
+
+    assert ti.task.is_stub is True
+    _run(ti)
+
+    assert seen == ["operator"]
 
 
 def test_handler_runs_through_execute_callable(monkeypatch):

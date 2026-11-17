@@ -111,6 +111,7 @@ class SerializedMappedOperator(DAGNode):
     _operator_kwargs: list[dict[str, Any]] | None = attrs.field(
         alias="operator_kwargs", init=False, default=None
     )
+    _operator_module: str | None = attrs.field(alias="operator_module", init=False, default=None)
     _external_clear_target: dict[str, Any] | None = attrs.field(
         alias="external_clear_target", init=False, default=None
     )
@@ -205,6 +206,11 @@ class SerializedMappedOperator(DAGNode):
     def operator_kwargs(self) -> list[dict[str, Any]] | None:
         """Always ``None``: a provider operator cannot be mapped."""
         return self._operator_kwargs
+
+    @property
+    def operator_module(self) -> str | None:
+        """Always ``None``: a provider operator cannot be mapped."""
+        return self._operator_module
 
     @property
     def external_clear_target(self) -> dict[str, Any] | None:

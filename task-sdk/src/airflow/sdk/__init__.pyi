@@ -26,6 +26,7 @@ from airflow.sdk.bases.branch import (
     BranchMixIn as BranchMixIn,
 )
 from airflow.sdk.bases.hook import BaseHook as BaseHook
+from airflow.sdk.bases.lang_sdk_provider_operator import LangSdkProviderOperator as LangSdkProviderOperator
 from airflow.sdk.bases.notifier import BaseNotifier as BaseNotifier
 from airflow.sdk.bases.operator import (
     BaseAsyncOperator as BaseAsyncOperator,
@@ -188,6 +189,7 @@ __all__ = [
     "HourWindow",
     "IdentityMapper",
     "Label",
+    "LangSdkProviderOperator",
     "LoopDecision",
     "Metadata",
     "MinimumCount",

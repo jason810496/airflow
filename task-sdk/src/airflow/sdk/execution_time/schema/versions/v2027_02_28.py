@@ -22,6 +22,8 @@ New bodies in this version:
 
 - ``HITLDetailResponseResult``: the supervisor's reply when a running task reads its own
   Human-in-the-loop response.
+- ``RenderTemplateFields`` and its reply ``RenderedTemplateFieldsResult``: a language SDK runtime
+  asks the supervisor to render the template fields of its task, since it cannot render Jinja.
 """
 
 from __future__ import annotations

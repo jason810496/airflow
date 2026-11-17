@@ -30,6 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, ClassVar, cast
 from unittest.mock import ANY, MagicMock, call, patch
 
@@ -60,6 +61,8 @@ from airflow.sdk.coordinators._subprocess import (
     log,
 )
 from airflow.sdk.coordinators._xcom_backend import (
+    RenderCall,
+    RenderResult,
     XComBackendCall,
     XComBackendError,
     XComBackendProcess,
@@ -72,6 +75,7 @@ from airflow.sdk.execution_time.comms import (
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    RenderTemplateFields,
     SetTaskStateStore,
     SetXCom,
     TaskState,
@@ -2068,6 +2072,188 @@ class TestPopenActivitySubprocessXComBackend:
             proc._monitor_subprocess()
 
         backend.stop.assert_called_once_with()
+
+
+class TestPopenActivitySubprocessRenderTemplateFields:
+    @pytest.fixture
+    def proc(self, make_ti_context):
+        ti = _make_ti()
+        stdin = MagicMock(spec=socket.socket)
+        proc = _PopenActivitySubprocess(
+            id=ti.id,
+            pid=12345,
+            process=MagicMock(spec=ProcessTracker, pid=12345),
+            process_log=structlog.get_logger(logger_name="task"),
+            stdin=stdin,
+            client=MagicMock(spec=Client),
+            comm_server=MagicMock(spec=socket.socket),
+            logs_server=MagicMock(spec=socket.socket),
+        )
+        proc.ti = ti  # type: ignore[assignment]
+        proc._open_sockets[stdin] = "requests"
+        proc._ti_context = make_ti_context()
+        proc._render_start_date = datetime(2024, 12, 1, 1, tzinfo=UTC)
+        yield proc
+        proc.selector.close()
+
+    @pytest.fixture
+    def renderer(self, proc):
+        """The helper process the supervisor starts, so a test answers its calls itself."""
+        renderer = MagicMock(spec=XComBackendProcess)
+        renderer.can_run_a_call = True
+        with patch.object(XComBackendProcess, "start", autospec=True, return_value=renderer) as start:
+            renderer.start = start
+            yield renderer
+
+    @staticmethod
+    def _finish(renderer: MagicMock, call_number: int = 0) -> Callable[[RenderResult], None]:
+        return renderer.send_render.call_args_list[call_number].args[1]
+
+    def test_answers_after_the_helper_has_rendered(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "{{ run_id }}"}), log, 1)
+
+        sent_call = renderer.send_render.call_args.args[0]
+        assert sent_call == RenderCall(
+            ti=proc.ti,
+            ti_context=proc._ti_context,
+            start_date=proc._render_start_date,
+            values={"path": "{{ run_id }}"},
+        )
+        # The request loop is free while the helper renders.
+        cast("MagicMock", proc.stdin).sendall.assert_not_called()
+
+        self._finish(renderer)(RenderResult(values={"path": "run_1"}, rendered_fields={"path": "run_1"}))
+
+        assert _sent_body(proc) == {"values": {"path": "run_1"}, "type": "RenderedTemplateFieldsResult"}
+
+    def test_sends_the_sdk_task_instance_of_an_executor_workload(self, proc, renderer):
+        sdk_ti = proc.ti
+        proc.ti = SimpleNamespace(**sdk_ti.model_dump(), pool_slots=1, priority_weight=1)
+
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+
+        assert renderer.send_render.call_args.args[0].ti == sdk_ti
+
+    def test_stores_the_rendered_fields_of_the_task(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "a", "content": "b"}), log, 1)
+
+        self._finish(renderer)(
+            RenderResult(
+                values={"path": "a", "content": "b"}, rendered_fields={"path": "a", "content": "***"}
+            )
+        )
+
+        proc.client.task_instances.set_rtif.assert_called_once_with(proc.id, {"path": "a", "content": "***"})
+
+    def test_keeps_the_rendered_fields_of_earlier_requests(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+        proc._handle_request(RenderTemplateFields(values={"content": "b"}), log, 2)
+
+        self._finish(renderer, 0)(RenderResult(values={"path": "a"}, rendered_fields={"path": "a"}))
+        self._finish(renderer, 1)(RenderResult(values={"content": "b"}, rendered_fields={"content": "b"}))
+
+        assert proc.client.task_instances.set_rtif.call_args_list == [
+            call(proc.id, {"path": "a"}),
+            call(proc.id, {"path": "a", "content": "b"}),
+        ]
+
+    def test_answers_a_failed_render_with_an_error(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "{{ nope"}), log, 1)
+
+        self._finish(renderer)(RenderResult(error="TemplateSyntaxError: unexpected end of template"))
+
+        error = _sent_error(proc)
+        assert error["error"] == ErrorType.GENERIC_ERROR.value
+        assert error["detail"]["message"] == "TemplateSyntaxError: unexpected end of template"
+        proc.client.task_instances.set_rtif.assert_not_called()
+
+    def test_answers_with_an_error_when_the_rendered_fields_cannot_be_stored(self, proc, renderer):
+        proc.client.task_instances.set_rtif.side_effect = RuntimeError("database is down")
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+
+        self._finish(renderer)(RenderResult(values={"path": "a"}, rendered_fields={"path": "a"}))
+
+        error = _sent_error(proc)
+        assert error["error"] == ErrorType.GENERIC_ERROR.value
+        assert error["detail"]["message"] == "database is down"
+
+    def test_answers_with_an_error_before_the_task_has_started(self, proc, renderer):
+        proc._ti_context = None
+
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+
+        renderer.send_render.assert_not_called()
+        assert _sent_error(proc)["error"] == ErrorType.GENERIC_ERROR.value
+
+    def test_starts_one_helper_for_the_task(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+        proc._handle_request(RenderTemplateFields(values={"path": "b"}), log, 2)
+
+        renderer.start.assert_called_once_with(
+            id=proc.id, client=proc.client, logger=proc.process_log, selector=proc.selector
+        )
+
+    def test_shares_the_helper_with_the_xcom_backend_calls(self, proc, renderer):
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+        proc._start_xcom_backend_call(XComBackendCall(hook="purge", key="return_value"), MagicMock())
+
+        renderer.start.assert_called_once()
+        renderer.send_render.assert_called_once()
+        renderer.send_call.assert_called_once()
+
+    def test_replaces_a_helper_that_cannot_answer(self, proc, renderer):
+        dead = proc._xcom_backend = MagicMock(spec=XComBackendProcess)
+        dead.can_run_a_call = False
+
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+
+        dead.stop.assert_called_once_with()
+        assert proc._xcom_backend is renderer
+
+    def test_a_runtime_that_has_exited_is_not_answered(self, proc, renderer, captured_logs):
+        del proc._open_sockets[proc.stdin]
+        proc._handle_request(RenderTemplateFields(values={"path": "a"}), log, 1)
+
+        self._finish(renderer)(RenderResult(values={"path": "a"}, rendered_fields={"path": "a"}))
+
+        assert {
+            "event": "The runtime exited before its render request was answered",
+            "request_id": 1,
+            "level": "warning",
+            "logger": "task",
+            "timestamp": ANY,
+            "loc": ANY,
+        } in captured_logs
+
+    @patch.object(ActivitySubprocess, "_monitor_subprocess", autospec=True, side_effect=RuntimeError("boom"))
+    def test_stops_the_helper_when_the_task_process_is_done(self, mock_monitor, proc):
+        renderer = proc._xcom_backend = MagicMock(spec=XComBackendProcess)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            proc._monitor_subprocess()
+
+        renderer.stop.assert_called_once_with()
+        assert proc._xcom_backend is None
+
+    @pytest.mark.parametrize(
+        ("resumed_at", "expected"),
+        [
+            pytest.param(
+                datetime(2024, 12, 2, 3, tzinfo=UTC), datetime(2024, 12, 2, 3, tzinfo=UTC), id="resumed"
+            ),
+            pytest.param(None, datetime(2025, 1, 1, tzinfo=UTC), id="first-start"),
+        ],
+    )
+    def test_keeps_the_context_the_helper_needs(
+        self, proc, make_ti_context, time_machine, resumed_at, expected
+    ):
+        time_machine.move_to(datetime(2025, 1, 1, tzinfo=UTC), tick=False)
+        ti_context = make_ti_context().model_copy(update={"start_date": resumed_at})
+
+        proc._prepare_ti_context(proc.ti, ti_context)
+
+        assert proc._ti_context is ti_context
+        assert proc._render_start_date == expected
 
 
 class TestResolveArtifactBundle:

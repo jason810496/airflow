@@ -15,13 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Materialize the TaskFlow arg-binding spec for lang-SDK stub tasks, at Dag-serialization time.
+Materialize the arg-binding spec for lang-SDK stub tasks, at Dag-serialization time.
 
-Any non-mapped operator flagged ``is_stub`` (currently only ``@task.stub``'s ``_StubOperator``)
-gets its ordered positional-argument spec built here, from the live operator's already-bound
-``python_callable``/``op_args``/``op_kwargs`` -- called from
+Any non-mapped operator flagged ``is_stub`` gets its ordered argument spec built here, called from
 ``OperatorSerialization._serialize_node`` the same way ``is_stub`` itself is derived, so no
-provider needs to duplicate this against the execution API's ``TaskArgBinding`` schema.
+provider needs to duplicate this against the execution API's ``TaskArgBinding`` schema:
+
+- ``@task.stub``'s ``_StubOperator`` gets it from the live operator's already-bound
+  ``python_callable``/``op_args``/``op_kwargs`` (``build_arg_bindings``).
+- A ``LangSdkProviderOperator`` gets it from its ``operator_params`` (``build_provider_operator_kwargs``).
 """
 
 from __future__ import annotations
@@ -46,6 +48,12 @@ from airflow.sdk.definitions.xcom_arg import PlainXComArg
 
 if TYPE_CHECKING:
     from airflow.sdk.bases.decorator import DecoratedOperator
+    from airflow.sdk.bases.lang_sdk_provider_operator import LangSdkProviderOperator  # noqa: SDK001
+
+
+# The ``value_schema`` formats a language SDK runtime reads a datetime or a timedelta back by.
+DATE_TIME_SCHEMA = {"type": "string", "format": "date-time"}
+DURATION_SECONDS_SCHEMA = {"type": "number", "format": "duration-seconds"}
 
 
 class _ValueSchemaGenerator(GenerateJsonSchema):
@@ -171,10 +179,10 @@ def _resolve_param_annotations(python_callable: Any, sig: Signature) -> dict[str
     return {name: _resolve(name, param) for name, param in sig.parameters.items()}
 
 
-def _ensure_json_literal(value: Any, task_id: str, name: str) -> None:
+def _ensure_json_literal(value: Any, subject: str, name: str) -> None:
     if next(XComArg.iter_xcom_references(value), None) is not None:
         raise ValueError(
-            f"@task.stub task {task_id!r} parameter {name!r} received a collection with an "
+            f"{subject} parameter {name!r} received a collection with an "
             "upstream task output nested inside it; only a direct XComArg argument can cross "
             "the language boundary -- pass the upstream output as its own argument"
         )
@@ -182,25 +190,25 @@ def _ensure_json_literal(value: Any, task_id: str, name: str) -> None:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError):
         raise ValueError(
-            f"@task.stub task {task_id!r} parameter {name!r} received a literal of type "
+            f"{subject} parameter {name!r} received a literal of type "
             f"{type(value).__name__} that is not JSON-serializable, so it cannot be passed "
             "to the foreign runtime; pass it in its JSON form instead"
         )
 
 
-def _validate_xcom_value(value: Any, task_id: str, name: str) -> bool:
+def _validate_xcom_value(value: Any, subject: str, name: str) -> bool:
     """Validate an XComArg argument, returning True when it is a bindable direct upstream output."""
     if isinstance(value, PlainXComArg):
         if value.key != XCOM_RETURN_KEY:
             raise ValueError(
-                f"@task.stub task {task_id!r} parameter {name!r} references the XCom key "
+                f"{subject} parameter {name!r} references the XCom key "
                 f"{value.key!r}; only an upstream task's return value can cross the language "
                 "boundary -- indexing an output by a custom key is not supported"
             )
         # isinstance, not .is_mapped: Airflow 2.11 operators have no is_mapped attribute.
         if isinstance(value.operator, MappedOperator):
             raise ValueError(
-                f"@task.stub task {task_id!r} parameter {name!r} references the aggregated "
+                f"{subject} parameter {name!r} references the aggregated "
                 f"output of the mapped task {value.operator.task_id!r}; a foreign runtime "
                 "pulls single XCom rows, so a mapped upstream's combined output is not "
                 "supported"
@@ -208,7 +216,7 @@ def _validate_xcom_value(value: Any, task_id: str, name: str) -> bool:
         return True
     if isinstance(value, XComArg):
         raise ValueError(
-            f"@task.stub task {task_id!r} parameter {name!r} received a "
+            f"{subject} parameter {name!r} received a "
             f"{type(value).__name__}; only direct upstream task outputs can cross the "
             "language boundary -- .map()/.zip()/.concat() results are not supported"
         )
@@ -261,17 +269,18 @@ def build_arg_bindings(op: DecoratedOperator) -> list[dict[str, Any]] | None:
 
     annotations = _resolve_param_annotations(python_callable, op_signature)
 
+    subject = f"@task.stub task {task_id!r}"
     spec: list[dict[str, Any]] = []
     for name in op_signature.parameters:
         value = bound.arguments[name]
         value_schema = _infer_value_schema(annotations[name])
-        if _validate_xcom_value(value, task_id, name):
+        if _validate_xcom_value(value, subject, name):
             xcom_entry: dict[str, Any] = {"name": name, "kind": "xcom", "task_id": value.operator.task_id}
             if value_schema is not None:
                 xcom_entry["value_schema"] = value_schema
             spec.append(xcom_entry)
             continue
-        _ensure_json_literal(value, task_id, name)
+        _ensure_json_literal(value, subject, name)
         entry: dict[str, Any] = {"name": name, "kind": "literal", "value": value}
         if value_schema is not None:
             # Key omission (never ``None``) is the wire contract for "unconstrained":
@@ -280,4 +289,46 @@ def build_arg_bindings(op: DecoratedOperator) -> list[dict[str, Any]] | None:
         if name not in explicitly_bound:
             entry["from_default"] = True
         spec.append(entry)
+    return spec
+
+
+def _build_provider_literal(subject: str, name: str, value: Any) -> dict[str, Any]:
+    """Bind a literal argument of a provider operator, writing a datetime or timedelta as plain JSON."""
+    if isinstance(value, datetime.datetime):
+        return {"name": name, "kind": "literal", "value": value.isoformat(), "value_schema": DATE_TIME_SCHEMA}
+    if isinstance(value, datetime.timedelta):
+        return {
+            "name": name,
+            "kind": "literal",
+            "value": value.total_seconds(),
+            "value_schema": DURATION_SECONDS_SCHEMA,
+        }
+    if isinstance(value, (set, frozenset, tuple)):
+        value = list(value)
+    _ensure_json_literal(value, subject, name)
+    return {"name": name, "kind": "literal", "value": value}
+
+
+def build_provider_operator_kwargs(op: LangSdkProviderOperator) -> list[dict[str, Any]]:
+    """
+    Bind the constructor arguments of a provider operator that a language SDK implements.
+
+    Each entry is a plain dict matching one variant of the execution API's ``TaskArgBinding`` union,
+    in the order of ``op.operator_params``. An upstream task's return value, given as a whole argument,
+    is an ``XComArgBinding``. Any other value is a ``LiteralArgBinding``, where a datetime is an ISO 8601
+    string and a timedelta a number of seconds, each with the ``value_schema`` format a runtime reads
+    it back by, and a set or a tuple is a list. An argument left as ``None``, which a generated wrapper
+    stores for an optional argument the author omitted, is left out so the implementation applies its
+    own default.
+    """
+    subject = f"Provider operator {op.task_id!r}"
+    spec: list[dict[str, Any]] = []
+    for name in op.operator_params:
+        value = getattr(op, name)
+        if value is None:
+            continue
+        if _validate_xcom_value(value, subject, name):
+            spec.append({"name": name, "kind": "xcom", "task_id": value.operator.task_id})
+        else:
+            spec.append(_build_provider_literal(subject, name, value))
     return spec

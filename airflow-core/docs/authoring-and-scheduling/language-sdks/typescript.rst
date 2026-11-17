@@ -873,6 +873,40 @@ File names do not matter beyond the ``.min.mjs`` suffix, so one Dag bundle can h
 The Dag processor also reads a bundle that only implements stub tasks, which starts ``node`` once per parse
 and finds no Dags. List such bundles in ``.airflowignore`` to skip that; the coordinator still finds them.
 
+Python Dag with a provider operator implemented in TypeScript
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some providers, such as ``apache-airflow-providers-localfile``, implement their operators in TypeScript. A Python
+Dag uses the Python wrapper that the provider ships, and sets the task's ``queue`` to one that
+``queue_to_coordinator`` routes to the ``NodeCoordinator``. It needs no bundle.
+
+Install the SDK and the provider package into one ``node_modules`` directory on the workers, such as in the
+worker image:
+
+.. code-block:: bash
+
+    npm install --prefix /opt/airflow/ts @apache-airflow/ts-sdk @apache-airflow/providers-localfile
+
+Then give the directory to the coordinator with ``node_modules_path``:
+
+.. code-block:: ini
+
+    [sdk]
+    coordinators = {
+      "ts": {
+        "classpath": "airflow.sdk.coordinators.node.NodeCoordinator",
+        "kwargs": {"node_modules_path": "/opt/airflow/ts/node_modules"}
+      }
+    }
+    queue_to_coordinator = {"typescript": "ts"}
+
+When no bundle declares the task's ``dag_id``, the coordinator runs the SDK's provider runner from that directory.
+The runner imports the operator's package and runs the operator.
+
+A Python Dag whose ``dag_id`` a bundle declares, for example because it also has stub tasks, runs in that bundle
+instead of the provider runner. The bundle then has to resolve the operator's package, and share its copy of the
+SDK, for the operator to run.
+
 Where the configuration is needed
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -907,6 +941,11 @@ The ``kwargs`` of a ``coordinators`` entry are passed to
    * - ``node_executable``
      - ``"node"``
      - Path to the ``node`` binary.
+   * - ``node_modules_path``
+     - *(unset)*
+     - A ``node_modules`` directory that holds ``@apache-airflow/ts-sdk`` and the provider packages that
+       implement operators in TypeScript. A task that no bundle declares runs in the SDK's provider runner from
+       it. When unset, such a task fails.
    * - ``task_startup_timeout``
      - ``10.0``
      - Seconds to wait for a task's bundle to start. Increase it if your bundle starts slowly, for example on

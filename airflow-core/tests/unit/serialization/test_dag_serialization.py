@@ -37,7 +37,7 @@ from datetime import UTC, datetime, timedelta, timezone as dt_timezone
 from glob import glob
 from pathlib import Path
 from textwrap import dedent
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import attrs
@@ -68,6 +68,7 @@ from airflow.sdk import (
     Asset,
     AssetAlias,
     BaseHook,
+    LangSdkProviderOperator,
     TaskGroup,
     TriggerRule,
     WeightRule,
@@ -3780,6 +3781,7 @@ def test_operator_kwargs_round_trip():
     ser_dag = DagSerialization.to_dict(dag)
     notify = next(t[Encoding.VAR] for t in ser_dag["dag"]["tasks"] if t[Encoding.VAR]["task_id"] == "notify")
     notify["_operator_kwargs"] = operator_kwargs
+    notify["_operator_module"] = "@scope/provider/operators/notify"
     jsonschema.validate(
         notify["_operator_kwargs"],
         {
@@ -3787,11 +3789,14 @@ def test_operator_kwargs_round_trip():
             **load_dag_schema_dict()["definitions"]["operator"]["properties"]["_operator_kwargs"],
         },
     )
+    DagSerialization.validate_schema(ser_dag)
 
     round_tripped = DagSerialization.from_dict(ser_dag)
 
     assert round_tripped.task_dict["notify"].operator_kwargs == operator_kwargs
+    assert round_tripped.task_dict["notify"].operator_module == "@scope/provider/operators/notify"
     assert round_tripped.task_dict["extract"].operator_kwargs is None
+    assert round_tripped.task_dict["extract"].operator_module is None
 
 
 @pytest.mark.parametrize("raw", ["false", "true", 0, 1, None, [], {"a": 1}])
@@ -3804,6 +3809,119 @@ def test_task_is_stub_fails_closed_on_non_boolean(raw):
     ser_dag["dag"]["tasks"][0][Encoding.VAR]["is_stub"] = raw
 
     assert DagSerialization.from_dict(ser_dag).task_dict["simple_task"].is_stub is False
+
+
+class _WriteFileOperator(LangSdkProviderOperator):
+    template_fields = ("path", "content")
+    operator_params = ("path", "content", "mode", "encoding", "not_before", "delay", "labels")
+    implemented_in = ("TypeScript",)
+    implementation_module = "@scope/provider/operators/file"
+
+    def __init__(
+        self,
+        *,
+        path: str,
+        content: Any,
+        mode: str = "overwrite",
+        encoding: str | None = None,
+        not_before: datetime | None = None,
+        delay: timedelta | None = None,
+        labels: Any = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.path = path
+        self.content = content
+        self.mode = mode
+        self.encoding = encoding
+        self.not_before = not_before
+        self.delay = delay
+        self.labels = labels
+
+
+def _serialize_write_task(make_kwargs):
+    with DAG(dag_id="test_lang_sdk_provider_operator", schedule=None) as dag:
+        build = BaseOperator(task_id="build")
+        _WriteFileOperator(task_id="write", **{"path": "/tmp/a.txt", "content": "x", **make_kwargs(build)})
+    ser_dag = DagSerialization.to_dict(dag)
+    DagSerialization.validate_schema(ser_dag)
+    return {t[Encoding.VAR]["task_id"]: t[Encoding.VAR] for t in ser_dag["dag"]["tasks"]}
+
+
+def test_lang_sdk_provider_operator_serializes_its_arguments_as_bindings():
+    """An argument left as None is left out, so the implementation applies its own default."""
+    encoded_tasks = _serialize_write_task(
+        lambda build: {"path": "/tmp/{{ run_id }}.txt", "content": XComArg(build)}
+    )
+
+    write = encoded_tasks["write"]
+    assert write["task_type"] == "_WriteFileOperator"
+    assert write["_task_module"] == _WriteFileOperator.__module__
+    assert write["is_stub"] is True
+    assert write["_operator_module"] == "@scope/provider/operators/file"
+    assert write["_operator_kwargs"] == [
+        {"name": "path", "kind": "literal", "value": "/tmp/{{ run_id }}.txt"},
+        {"name": "content", "kind": "xcom", "task_id": "build"},
+        {"name": "mode", "kind": "literal", "value": "overwrite"},
+    ]
+    assert encoded_tasks["build"]["downstream_task_ids"] == ["write"]
+    assert "_operator_kwargs" not in encoded_tasks["build"]
+    assert "_operator_module" not in encoded_tasks["build"]
+
+
+def test_lang_sdk_provider_operator_writes_temporal_values_as_plain_json():
+    encoded_tasks = _serialize_write_task(
+        lambda build: {
+            "not_before": datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+            "delay": timedelta(minutes=1, seconds=30),
+            "labels": ("a", "b"),
+        }
+    )
+
+    assert encoded_tasks["write"]["_operator_kwargs"][3:] == [
+        {
+            "name": "not_before",
+            "kind": "literal",
+            "value": "2026-01-02T03:04:05+00:00",
+            "value_schema": {"type": "string", "format": "date-time"},
+        },
+        {
+            "name": "delay",
+            "kind": "literal",
+            "value": 90.0,
+            "value_schema": {"type": "number", "format": "duration-seconds"},
+        },
+        {"name": "labels", "kind": "literal", "value": ["a", "b"]},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("make_kwargs", "message"),
+    [
+        pytest.param(
+            lambda build: {"labels": ["a", XComArg(build)]},
+            "upstream task output nested inside it",
+            id="nested-xcom",
+        ),
+        pytest.param(
+            lambda build: {"content": XComArg(build, key="report")},
+            "references the XCom key 'report'",
+            id="custom-xcom-key",
+        ),
+        pytest.param(lambda build: {"labels": {"when": object()}}, "not JSON-serializable", id="not-json"),
+    ],
+)
+def test_lang_sdk_provider_operator_rejects_values_that_cannot_be_bound(make_kwargs, message):
+    with pytest.raises(SerializationError, match=message):
+        _serialize_write_task(make_kwargs)
+
+
+def test_lang_sdk_provider_operator_cannot_be_mapped():
+    with DAG(dag_id="test_lang_sdk_provider_operator_mapped", schedule=None) as dag:
+        _WriteFileOperator.partial(task_id="write", content="x").expand(path=["/tmp/a", "/tmp/b"])
+
+    with pytest.raises(SerializationError, match="_WriteFileOperator is implemented in a Lang SDK"):
+        DagSerialization.to_dict(dag)
 
 
 def test_handle_v1_serdag():

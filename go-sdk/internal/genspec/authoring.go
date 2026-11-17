@@ -150,6 +150,7 @@ var taskShape = authoringShape{
 		"_expand_input_attr":            "a mapped-task serialization detail",
 		"_arg_bindings":                 "the bindings airflow.Inputs records",
 		"_operator_kwargs":              "the arguments a generated provider operator records",
+		"_operator_module":              "the module a generated provider operator records",
 		"has_on_execute_callback":       "derived from whether a callback is registered",
 		"has_on_failure_callback":       "derived from whether a callback is registered",
 		"has_on_skipped_callback":       "derived from whether a callback is registered",

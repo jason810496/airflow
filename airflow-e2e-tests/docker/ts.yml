@@ -25,6 +25,10 @@
 # A native TypeScript Dag has no Python Dag file: the Dag processor runs node on
 # the bundle itself to parse it, so it gets the same bundle mount and node binary.
 # The API server reads Dag source from the database and needs neither.
+#
+# A provider operator implemented in TypeScript, used from a Python Dag that no bundle declares, runs
+# in the SDK's provider runner. The worker mounts the node_modules directory that holds the SDK and the
+# provider, which NodeCoordinator is given as node_modules_path.
 ---
 services:
   node-provider:
@@ -50,6 +54,7 @@ services:
   airflow-worker:
     volumes:
       - ./ts-bundles:/opt/airflow/ts-bundles:ro
+      - ./ts-node-modules:/opt/airflow/ts-node-modules:ro
       - nodejs-bin:/opt/nodejs:ro
     command: celery worker -q typescript,default
     depends_on:

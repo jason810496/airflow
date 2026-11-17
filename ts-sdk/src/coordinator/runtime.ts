@@ -36,6 +36,13 @@
 //        - DagFileParseRequest → respond with DagFileParsingResult, exit
 //        - StartupDetails      → run task, respond Succeed or Fail, exit
 //
+// A task runs in one of two ways, and both end through the same path: the failure and retry
+// response, and the `return_value` XCom of what succeeded.
+//   a. The bundle declares it: a task handler, or an operator of a Dag declared in TypeScript.
+//   b. The bundle does not, and `ti_context.provider_operator` is set: the runtime imports the
+//      module that implements the provider operator. The provider runner serves an empty bundle,
+//      so every provider task of a Python Dag takes this way.
+//
 import { resolveArgs, type BoundArgs } from "./arg-binding.js";
 import { createCoordinatorClient, type CoordinatorClient } from "./client.js";
 import { CommChannel } from "./comm-channel.js";
@@ -59,7 +66,9 @@ import { bundleDags, bundleDagTaskIds, getBundleTask, type Bundle } from "../sdk
 import { finalizeDag } from "../sdk/dag.js";
 import { SERIALIZATION_VERSION } from "../generated/dag-schema-fields.js";
 import { computeRelativeFileloc, serializeDag } from "./serde.js";
-import { buildOperatorContext, runOperator } from "./operator-runner.js";
+import { buildOperatorContext, buildProviderRunContext, runOperator } from "./operator-runner.js";
+import { importProviderImplementation } from "./provider-module.js";
+import { runProviderImplementation } from "../sdk/provider-implementation.js";
 import type { OperatorOutcome } from "../sdk/operator.js";
 import { runInTaskScope, type TaskContext, type TaskFunction } from "../sdk/task.js";
 import type { JsonValue } from "../sdk/client-types.js";
@@ -347,26 +356,10 @@ async function handleTask(
 ): Promise<OperatorOutcome> {
   const ti = details.ti;
   const task = getBundleTask(bundle, ti.dag_id, ti.task_id);
-
-  if (!task) {
-    logs.warning("No handler registered for task", {
-      dag_id: ti.dag_id,
-      task_id: ti.task_id,
-      available: Object.fromEntries(bundleDagTaskIds(bundle)),
-    });
-    // A missing handler means this bundle cannot run the task, so retrying the
-    // same bundle/configuration mismatch would not help.
-    const response: RuntimeTaskState = {
-      type: "TaskState",
-      state: "removed",
-      end_date: new Date().toISOString(),
-    };
-    return response;
-  }
-
   const ctx = buildContext(details, signal);
   const client = createCoordinatorClient(comm, ctx, ti.id, clientLogs);
-  if (task.kind === "handler") {
+
+  if (task?.kind === "handler") {
     return runHandler(details, task.fn, ctx, client, logs);
   }
 
@@ -378,16 +371,44 @@ async function handleTask(
     return buildFailureResponse(details, message);
   };
   try {
-    switch (task.kind) {
-      case "operator":
-        return await runOperator(
-          task.operator,
-          buildOperatorContext({ details, dag: task.dag, ctx, client, logs, fail }),
-        );
+    if (task?.kind === "operator") {
+      return await runOperator(
+        task.operator,
+        buildOperatorContext({ details, dag: task.dag, ctx, client, logs, fail }),
+      );
     }
+    if (details.ti_context.provider_operator != null) {
+      const implementation = await importProviderImplementation(
+        details.ti_context.provider_operator,
+      );
+      return await runProviderImplementation(
+        implementation,
+        buildProviderRunContext({ details, ctx, client, logs, fail }),
+      );
+    }
+    return buildRemovedResponse(details, bundle, logs);
   } catch (err) {
     return fail((err as Error).message ?? String(err));
   }
+}
+
+function buildRemovedResponse(
+  details: StartupDetails,
+  bundle: Bundle,
+  logs: LogChannel,
+): RuntimeTaskState {
+  logs.warning("No handler registered for task", {
+    dag_id: details.ti.dag_id,
+    task_id: details.ti.task_id,
+    available: Object.fromEntries(bundleDagTaskIds(bundle)),
+  });
+  // A missing handler means this bundle cannot run the task, so retrying the
+  // same bundle/configuration mismatch would not help.
+  return {
+    type: "TaskState",
+    state: "removed",
+    end_date: new Date().toISOString(),
+  };
 }
 
 /** Run the author's handler: bind its arguments, call it, push what it returns. */

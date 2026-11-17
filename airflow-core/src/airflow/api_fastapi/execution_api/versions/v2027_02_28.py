@@ -51,7 +51,12 @@ class AddDagProcessorJobEndpoints(VersionChange):
 
 
 class AddProviderOperatorToTIRunContext(VersionChangeWithSideEffects):
-    """Add ``provider_operator``, the Python operator a task of a language SDK Dag runs."""
+    """
+    Add ``provider_operator``, the provider operator a task of a language SDK Dag runs.
+
+    It holds the Python operator's class path and arguments, and the module of the language SDK that
+    implements it, when one does.
+    """
 
     description = __doc__
 

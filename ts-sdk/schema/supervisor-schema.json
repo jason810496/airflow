@@ -3703,6 +3703,52 @@
       "title": "PutVariable",
       "type": "object"
     },
+    "RenderTemplateFields": {
+      "description": "Ask the supervisor to render the template fields of the task, which a language SDK runtime cannot.\n\nThe values are the literals of the operator's template fields, as plain JSON, by their Python\nargument name. A language SDK runtime sends it, and a Python task never does.",
+      "properties": {
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Values",
+          "type": "object"
+        },
+        "type": {
+          "const": "RenderTemplateFields",
+          "default": "RenderTemplateFields",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "title": "RenderTemplateFields",
+      "type": "object"
+    },
+    "RenderedTemplateFieldsResult": {
+      "description": "The rendered values of a task's template fields, in reply to :class:`RenderTemplateFields`.",
+      "properties": {
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Values",
+          "type": "object"
+        },
+        "type": {
+          "const": "RenderedTemplateFieldsResult",
+          "default": "RenderedTemplateFieldsResult",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "values"
+      ],
+      "title": "RenderedTemplateFieldsResult",
+      "type": "object"
+    },
     "RescheduleTask": {
       "additionalProperties": false,
       "description": "Update a task instance state to reschedule/up_for_reschedule.",
@@ -5372,12 +5418,25 @@
       "type": "object"
     },
     "TIProviderOperator": {
-      "description": "The Python operator a task of a language SDK Dag runs, and the Dag's edges.\n\nA Python worker builds the operator from it, because it cannot import the Dag file.",
+      "description": "The provider operator a task of a language SDK Dag, or of a language SDK provider wrapper, runs.\n\nA Python worker builds the Python operator from it, because it cannot import the Dag file. A\nlanguage SDK runtime imports ``module`` to run its own implementation. The Dag's edges come with it.",
       "properties": {
         "classpath": {
           "description": "Import path of the operator class.",
           "title": "Classpath",
           "type": "string"
+        },
+        "module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Module of the language SDK that implements the operator, which exports it under the class name. Absent when no language SDK implements it.",
+          "title": "Module"
         },
         "kwargs": {
           "description": "Constructor keyword arguments, in the order of the operator's parameters.",

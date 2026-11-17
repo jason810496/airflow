@@ -470,13 +470,20 @@ export function findSpecFiles(providerSourcesDir) {
     .sort();
 }
 
+/** Whether the provider is implemented in TypeScript, so its package is hand-written. */
+export function isImplementedInTypeScript(spec) {
+  return (spec.implemented_in ?? []).includes("TypeScript");
+}
+
 /**
  * Write the packages of every provider spec under `providerSourcesDir` to `providersDir`, or with
  * `check` only report what differs. Returns the paths that were, or would be, written or removed.
+ * A provider implemented in TypeScript gets no generated package, and its directory is left alone.
  */
 export function generate({ providerSourcesDir, providersDir, sdkPackage, check }) {
   const changed = [];
   const expected = new Set();
+  const handWritten = [];
   const specFiles = findSpecFiles(providerSourcesDir);
   if (specFiles.length === 0) {
     throw new Error(`No operator specs under ${providerSourcesDir}; run ${SPEC_SCRIPT} first`);
@@ -484,6 +491,10 @@ export function generate({ providerSourcesDir, providersDir, sdkPackage, check }
   for (const specFile of specFiles) {
     const spec = JSON.parse(readFileSync(specFile, "utf8"));
     const packageDir = join(providersDir, toPackageSlug(spec.provider.id));
+    if (isImplementedInTypeScript(spec)) {
+      handWritten.push(packageDir + sep);
+      continue;
+    }
     for (const [path, content] of renderPackage(spec, sdkPackage)) {
       const target = join(packageDir, ...path.split("/"));
       expected.add(target);
@@ -502,7 +513,9 @@ export function generate({ providerSourcesDir, providersDir, sdkPackage, check }
     }
   }
   // A module whose operators all left the spec, or a provider that left the allow list.
-  for (const stale of listFiles(providersDir).filter((path) => !expected.has(path))) {
+  const isStale = (path) =>
+    !expected.has(path) && !handWritten.some((directory) => path.startsWith(directory));
+  for (const stale of listFiles(providersDir).filter(isStale)) {
     changed.push(stale);
     if (!check) rmSync(stale);
   }

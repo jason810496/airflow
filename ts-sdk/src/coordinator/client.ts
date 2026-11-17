@@ -47,6 +47,8 @@ import type {
   SetTaskStateStore,
   ConnectionResult as WireConnectionResult,
   CreateHITLDetailPayload,
+  RenderTemplateFields,
+  RenderedTemplateFieldsResult,
 } from "./protocol.js";
 
 /**
@@ -122,6 +124,12 @@ export interface CoordinatorClient extends TaskClient {
    * request and drops any response already given, so a resumed task must never call this.
    */
   createHITLDetail(msg: Omit<CreateHITLDetailPayload, "type">): Promise<void>;
+
+  /**
+   * Render template fields in Python. `values` are the literals of the operator's template
+   * fields, by their Python argument name; the answer holds each one rendered, as plain JSON.
+   */
+  renderTemplateFields(values: RenderTemplateFields["values"]): Promise<Record<string, JsonValue>>;
 }
 
 const VARIABLE_ABSENT_POLICY: AbsentRowPolicy = {
@@ -446,6 +454,23 @@ export function createCoordinatorClient(
         () => undefined,
         "throw",
       );
+    },
+
+    // ---- Provider operators ----
+
+    async renderTemplateFields(
+      values: RenderTemplateFields["values"],
+    ): Promise<Record<string, JsonValue>> {
+      const msg: RenderTemplateFields = { type: "RenderTemplateFields", values };
+      const rendered = await rpc(
+        "RenderTemplateFields",
+        "RenderedTemplateFieldsResult",
+        msg,
+        (body) =>
+          (body as unknown as RenderedTemplateFieldsResult).values as Record<string, JsonValue>,
+        "throw",
+      );
+      return rendered!;
     },
 
     // ---- Connections ----

@@ -19,7 +19,7 @@
 
 // Runs an operator the SDK executes itself: starts it, or resumes it after it parked or deferred.
 
-import { resolveArgs } from "./arg-binding.js";
+import { resolveArgs, resolveProviderArgs } from "./arg-binding.js";
 import type { CoordinatorClient } from "./client.js";
 import type { LogChannel } from "./log-channel.js";
 import type {
@@ -31,7 +31,12 @@ import type {
 import type { JsonValue } from "../sdk/client-types.js";
 import { isPlainRecord, skipTasks, type Dag } from "../sdk/dag.js";
 import { getBooleanEnv } from "../sdk/env.js";
-import type { Operator, OperatorContext, OperatorOutcome } from "../sdk/operator.js";
+import type {
+  Operator,
+  OperatorContext,
+  OperatorOutcome,
+  ProviderRunContext,
+} from "../sdk/operator.js";
 import type { TaskContext } from "../sdk/task.js";
 
 const EXECUTE_COMPLETE = "execute_complete";
@@ -40,14 +45,18 @@ const TRIGGER_FAIL = "__fail__";
 
 const NO_ARG_NAMES: ReadonlyMap<string, string> = new Map();
 
-/** What {@link buildOperatorContext} builds the context from. */
-export interface OperatorContextDeps {
+/** What {@link buildProviderRunContext} builds the context from. */
+export interface ProviderRunContextDeps {
   readonly details: StartupDetails;
-  readonly dag: Dag;
   readonly ctx: TaskContext;
   readonly client: CoordinatorClient;
   readonly logs: LogChannel;
   readonly fail: OperatorContext["fail"];
+}
+
+/** What {@link buildOperatorContext} builds the context from. */
+export interface OperatorContextDeps extends ProviderRunContextDeps {
+  readonly dag: Dag;
 }
 
 /** Run `operator`: its `execute` on the first run, `executeComplete` on the run that resumes it. */
@@ -74,15 +83,42 @@ function failedToResume(op: OperatorContext, kwargs: Record<string, unknown>) {
   return op.fail(String(kwargs["error"] ?? "Unknown"));
 }
 
-export function buildOperatorContext(deps: OperatorContextDeps): OperatorContext {
-  const { details, dag, ctx, client, logs, fail } = deps;
+/** Push `value` under `return_value` when it is given, then build the `SucceedTask` response. */
+export async function succeedTask(
+  client: CoordinatorClient,
+  value?: JsonValue,
+): Promise<RuntimeSucceedTask> {
+  if (value !== undefined) await client.setXCom({ key: "return_value", value });
+  // The Execution API's TISuccessStatePayload validator rejects null for
+  // `task_outlets` and `outlet_events`, so both are empty lists.
+  return {
+    type: "SucceedTask",
+    end_date: new Date().toISOString(),
+    task_outlets: [],
+    outlet_events: [],
+  };
+}
+
+/** The part of a task's context that every task has, whether or not a bundle declares its Dag. */
+export function buildProviderRunContext(deps: ProviderRunContextDeps): ProviderRunContext {
+  const { details, ctx, client, logs, fail } = deps;
   return {
     details,
-    dag,
     ctx,
     client,
     logs,
     fail,
+    resolveProviderArgs: (bindings, definition) =>
+      resolveProviderArgs(bindings, definition, { client, signal: ctx.signal, logs }),
+    succeed: (value) => succeedTask(client, value),
+  };
+}
+
+export function buildOperatorContext(deps: OperatorContextDeps): OperatorContext {
+  const { details, dag, ctx, client, logs } = deps;
+  return {
+    ...buildProviderRunContext(deps),
+    dag,
     async resolveArgs(argNames = NO_ARG_NAMES) {
       const bound = await resolveArgs(details.ti_context?.arg_bindings, {
         client,
@@ -91,17 +127,6 @@ export function buildOperatorContext(deps: OperatorContextDeps): OperatorContext
         argNames,
       });
       return bound.args;
-    },
-    async succeed(value?: JsonValue): Promise<RuntimeSucceedTask> {
-      if (value !== undefined) await client.setXCom({ key: "return_value", value });
-      // The Execution API's TISuccessStatePayload validator rejects null for
-      // `task_outlets` and `outlet_events`, so both are empty lists.
-      return {
-        type: "SucceedTask",
-        end_date: new Date().toISOString(),
-        task_outlets: [],
-        outlet_events: [],
-      };
     },
     skip: (taskIds) => skipTasks(client, taskIds),
     awaitInput(opts = {}): RuntimeAwaitInputTask {

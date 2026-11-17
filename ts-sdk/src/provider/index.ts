@@ -22,8 +22,12 @@
 
 export { defineProviderOperator } from "../sdk/provider-operator.js";
 export type {
+  ProviderOperatorBinding,
+  ProviderOperatorContext,
   ProviderOperatorDefinition,
+  ProviderOperatorLogger,
   ProviderParamDefinition,
+  ResolvedArgs,
   Templated,
 } from "../sdk/provider-operator.js";
 export type { Operator } from "../sdk/operator.js";

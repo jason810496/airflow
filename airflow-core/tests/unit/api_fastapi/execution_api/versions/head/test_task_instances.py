@@ -1351,6 +1351,18 @@ class TestTIRunState:
         }
         assert get_dag.call_args.args[1] == ti.dag_version_id
 
+    def test_ti_run_returns_the_module_that_implements_the_provider_operator(self, client, dag_maker):
+        ti = self._queue_notify_ti(dag_maker)
+        sdag = self._serialize_language_sdk_dag(
+            {**self.PROVIDER_OPERATOR_FIELDS, "_operator_module": "@scope/provider/operators/notify"}
+        )
+
+        with mock.patch.object(DBDagBag, "get_dag", autospec=True, return_value=sdag):
+            response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+
+        assert response.status_code == 200
+        assert response.json()["provider_operator"]["module"] == "@scope/provider/operators/notify"
+
     def test_ti_run_returns_no_provider_operator_for_a_stub_without_kwargs(self, client, dag_maker):
         ti = self._queue_notify_ti(dag_maker)
         sdag = self._serialize_language_sdk_dag({"is_stub": True})

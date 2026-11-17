@@ -28,7 +28,6 @@ export default defineConfig({
       // `dist/`. A test that reaches into both would hold two copies of the
       // SDK, and a Dag from one is not an instance of the other's class.
       // Tests run against the sources, so the example does too.
-      "@apache-airflow/ts-sdk": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
       "@apache-airflow/ts-sdk/coordinator": fileURLToPath(
         new URL("./src/coordinator/index.ts", import.meta.url),
       ),
@@ -36,6 +35,8 @@ export default defineConfig({
       "@apache-airflow/ts-sdk/provider": fileURLToPath(
         new URL("./src/provider/index.ts", import.meta.url),
       ),
+      // Last: an alias matches subpaths too, so the root entry must not shadow the ones above.
+      "@apache-airflow/ts-sdk": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
     },
   },
   test: {

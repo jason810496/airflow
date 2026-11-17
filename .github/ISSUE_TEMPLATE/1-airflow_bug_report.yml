@@ -175,6 +175,7 @@ body:
         - jdbc
         - jenkins
         - keycloak
+        - localfile
         - microsoft-azure
         - microsoft-mssql
         - microsoft-psrp

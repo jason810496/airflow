@@ -16,36 +16,58 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-The XCom backend for the tasks of a language SDK runtime.
+The XCom backend and the template rendering for the tasks of a language SDK runtime.
 
-The supervisor runs the configured XCom backend on a runtime's XCom requests, in a helper process per task,
-so the long-lived supervisor process keeps none of the backend's state. It services the helper from the
-task's selector, so a backend call never blocks the task's request loop.
+The supervisor runs the configured XCom backend on a runtime's XCom requests, and renders the template
+fields of its task, in a helper process per task, so the long-lived supervisor process keeps none of the
+backend's state. The process starts on the first call of either kind. A language SDK runtime cannot
+render Jinja, so the helper builds the task's template context from the task's start-up details and a
+placeholder task, and services ``var``, ``conn`` and ``xcom_pull`` through the supervisor. The Dag's
+params, ``template_ext`` files and user-defined macros do not reach the helper, since the Execution API
+sends none of them.
+
+The supervisor services the helper from the task's selector, so a call never blocks the task's request
+loop.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import selectors
 import signal
 import time
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Union, get_args
 from uuid import UUID
 
 import attrs
 import structlog
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter
 
+from airflow.sdk.api.datamodels._generated import TaskInstance, TIRunContext  # noqa: TC001
 from airflow.sdk.bases.xcom import BaseXCom, XComCoordinate
 from airflow.sdk.execution_time.comms import (
-    ConnectionResult,
     ErrorResponse,
     GetConnection,
+    GetDagRunState,
+    GetDRCount,
+    GetPreviousDagRun,
+    GetPreviousTI,
+    GetPrevSuccessfulDagRun,
+    GetTaskStates,
+    GetTICount,
     GetVariable,
+    GetVariableKeys,
+    GetXCom,
+    GetXComCount,
+    GetXComSequenceItem,
+    GetXComSequenceSlice,
     MaskSecret,
-    VariableResult,
+    ToSupervisor,
+    ToTask,
     XComResult,
 )
 from airflow.sdk.execution_time.supervisor import (
@@ -62,10 +84,20 @@ if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
     from airflow.sdk.api.client import Client
+    from airflow.sdk.definitions.dag import DAG
 
 log: FilteringBoundLogger = structlog.get_logger(logger_name="xcom_backend")
 
 _EXIT_TIMEOUT = 10.0
+
+
+class TemplateRenderError(RuntimeError):
+    """
+    Rendering the template fields failed.
+
+    For an exception raised in the helper process, the message holds its type and message, since the
+    exception itself does not cross the process boundary.
+    """
 
 
 class XComBackendError(RuntimeError):
@@ -120,18 +152,49 @@ class XComBackendResult(BaseModel):
     type: Literal["XComBackendResult"] = "XComBackendResult"
 
 
+class RenderCall(BaseModel):
+    """
+    Template field values for the helper process to render, with what it needs to build the task's context.
+
+    ``values`` are the plain JSON literals of the operator's template fields, by their Python argument name.
+    """
+
+    ti: TaskInstance
+    ti_context: TIRunContext
+    start_date: datetime
+    values: dict[str, JsonValue]
+    type: Literal["RenderCall"] = "RenderCall"
+
+
+class RenderResult(BaseModel):
+    """
+    The outcome of a render, sent by the helper process.
+
+    ``values`` are what the runtime receives. ``rendered_fields`` are the same values prepared for the
+    task's rendered fields, which truncates and redacts them as a Python task does, with the secrets the
+    helper process has seen.
+    """
+
+    values: dict[str, JsonValue] = {}
+    rendered_fields: dict[str, JsonValue] = {}
+    error: str | None = None
+    type: Literal["RenderResult"] = "RenderResult"
+
+
 class AwaitXComBackendCall(BaseModel):
     """Sent by the helper process when it is ready for its first call."""
 
     type: Literal["AwaitXComBackendCall"] = "AwaitXComBackendCall"
 
 
-_ToXComBackendProcess = Annotated[
-    XComBackendCall | ConnectionResult | VariableResult | ErrorResponse,
+# The helper services the lazy accessors of a template context, which send any request a task process can.
+# Built from the unions at run time, which mypy cannot follow, so it sees them as Any.
+_ToXComBackendProcess: Any = Annotated[
+    Union[(*get_args(get_args(ToTask)[0]), XComBackendCall, RenderCall)],
     Field(discriminator="type"),
 ]
-_FromXComBackendProcess = Annotated[
-    AwaitXComBackendCall | XComBackendResult | GetConnection | GetVariable | MaskSecret,
+_FromXComBackendProcess: Any = Annotated[
+    Union[(*get_args(get_args(ToSupervisor)[0]), AwaitXComBackendCall, XComBackendResult, RenderResult)],
     Field(discriminator="type"),
 ]
 
@@ -158,24 +221,30 @@ def send_unless_exited(
     return True
 
 
-_PendingCall = tuple[XComBackendCall, Callable[[XComBackendResult], None]]
+_PendingCall = tuple[XComBackendCall | RenderCall, Callable[[Any], None]]
+
+
+def _build_error_result(call: XComBackendCall | RenderCall, error: str) -> XComBackendResult | RenderResult:
+    """Return the result ``call`` gets when it fails with ``error``."""
+    return RenderResult(error=error) if isinstance(call, RenderCall) else XComBackendResult(error=error)
 
 
 @attrs.define(kw_only=True)
 class XComBackendProcess(WatchedSubprocess):
     """
-    The helper process that runs XCom backend calls for the task of a language SDK runtime.
+    The helper process of a language SDK runtime's task, which runs XCom backend calls and renders template fields.
 
     The process asks for a call, runs it, and answers with its result, which is also how it asks for the
-    next call. Connection and Variable lookups of the backend reach the API server through ``client``.
+    next call. Its lookups, such as the backend's Connection and Variable lookups, reach the API server
+    through ``client``.
     """
 
     client: Client
-    decoder: ClassVar[TypeAdapter[_FromXComBackendProcess]] = TypeAdapter(_FromXComBackendProcess)
+    decoder: ClassVar[TypeAdapter] = TypeAdapter(_FromXComBackendProcess)
 
     _call_request_id: int | None = attrs.field(default=None, init=False)
     _queued_calls: deque[_PendingCall] = attrs.field(factory=deque, init=False)
-    _running_call: Callable[[XComBackendResult], None] | None = attrs.field(default=None, init=False)
+    _running_call: _PendingCall | None = attrs.field(default=None, init=False)
     _stopping: bool = attrs.field(default=False, init=False)
 
     @classmethod
@@ -212,6 +281,11 @@ class XComBackendProcess(WatchedSubprocess):
         self._queued_calls.append((call, finish))
         self._send_next_call()
 
+    def send_render(self, call: RenderCall, finish: Callable[[RenderResult], None]) -> None:
+        """Send ``call`` to the process, which answers it like :meth:`send_call`, with a render result."""
+        self._queued_calls.append((call, finish))
+        self._send_next_call()
+
     def _send_next_call(self) -> None:
         """Hand the process its oldest waiting call, or ``exit`` once stopping, if it asks and runs none."""
         if self._call_request_id is None or self._running_call is not None:
@@ -222,7 +296,8 @@ class XComBackendProcess(WatchedSubprocess):
             return
         if not self._queued_calls:
             return
-        call, self._running_call = self._queued_calls.popleft()
+        self._running_call = self._queued_calls.popleft()
+        call = self._running_call[0]
         request_id, self._call_request_id = self._call_request_id, None
         if not send_unless_exited(self, call, request_id):
             self._fail_waiting_calls("The XCom backend process exited before it was sent a call")
@@ -231,15 +306,15 @@ class XComBackendProcess(WatchedSubprocess):
         """Answer every call the process has not answered with ``error``."""
         running, self._running_call = self._running_call, None
         if running is not None:
-            running(XComBackendResult(error=error))
+            running[1](_build_error_result(running[0], error))
         self._fail_queued_calls(error)
 
     def _fail_queued_calls(self, error: str) -> None:
         """Answer every call that has not been sent to the process with ``error``."""
-        queued = [finish for _, finish in self._queued_calls]
+        queued = list(self._queued_calls)
         self._queued_calls.clear()
-        for finish in queued:
-            finish(XComBackendResult(error=error))
+        for call, finish in queued:
+            finish(_build_error_result(call, error))
 
     def stop(self) -> None:
         """Let the helper process exit, and kill it if it does not exit in time."""
@@ -277,40 +352,64 @@ class XComBackendProcess(WatchedSubprocess):
         self._send_next_call()
         return ResponseSent.ALREADY_SENT
 
-    def _handle_result(self, msg: XComBackendResult, log: FilteringBoundLogger, req_id: int) -> ResponseSent:
+    def _handle_result(
+        self, msg: XComBackendResult | RenderResult, log: FilteringBoundLogger, req_id: int
+    ) -> ResponseSent:
         self._call_request_id = req_id
-        finish, self._running_call = self._running_call, None
+        running, self._running_call = self._running_call, None
         self._send_next_call()
-        if finish is not None:
-            finish(msg)
+        if running is not None:
+            running[1](msg)
         return ResponseSent.ALREADY_SENT
 
     _request_handlers = {
-        **WatchedSubprocess._get_shared_request_handlers(GetConnection, GetVariable, MaskSecret),
+        **WatchedSubprocess._get_shared_request_handlers(
+            GetConnection,
+            GetDRCount,
+            GetDagRunState,
+            GetPrevSuccessfulDagRun,
+            GetPreviousDagRun,
+            GetPreviousTI,
+            GetTICount,
+            GetTaskStates,
+            GetVariable,
+            GetVariableKeys,
+            GetXCom,
+            GetXComCount,
+            GetXComSequenceItem,
+            GetXComSequenceSlice,
+            MaskSecret,
+        ),
         **dict(
             [
                 register_request_method(AwaitXComBackendCall, _handle_await_call),
                 register_request_method(XComBackendResult, _handle_result),
+                register_request_method(RenderResult, _handle_result),
             ]
         ),
     }
 
 
 def run_xcom_backend() -> None:
-    """Run the XCom backend calls that the supervisor sends, until it sends ``exit``."""
+    """Run the XCom backend calls and renders that the supervisor sends, until it sends ``exit``."""
     from airflow.sdk.execution_time import task_runner
     from airflow.sdk.execution_time.comms import CommsDecoder
     from airflow.sdk.execution_time.xcom import XCom
 
-    comms = CommsDecoder[_ToXComBackendProcess, _FromXComBackendProcess](
-        log=log, body_decoder=TypeAdapter(_ToXComBackendProcess)
-    )
-    # The secrets backends of a task process look up Connections and Variables through SUPERVISOR_COMMS.
+    comms = CommsDecoder[BaseModel, BaseModel](log=log, body_decoder=TypeAdapter(_ToXComBackendProcess))
+    # The secrets backends and the accessors of a template context look up Connections, Variables and
+    # XComs through SUPERVISOR_COMMS.
     task_runner.SUPERVISOR_COMMS = comms  # type: ignore[assignment]
     runner = _HookRunner(XCom)
     call = comms.send(AwaitXComBackendCall())
-    while isinstance(call, XComBackendCall) and call.hook != "exit":
-        call = comms.send(runner.run(call))
+    while True:
+        if isinstance(call, RenderCall):
+            result: BaseModel = render_call(call)
+        elif isinstance(call, XComBackendCall) and call.hook != "exit":
+            result = runner.run(call)
+        else:
+            break
+        call = comms.send(result)
 
 
 @attrs.define
@@ -355,3 +454,62 @@ class _HookRunner:
 
         # No fallback to the raw row, which would hide that the backend is unusable.
         return serialize(self.xcom._load(XComResult(key=key, value=row)))  # type: ignore[return-value]
+
+
+def build_placeholder_dag(dag_id: str, task_id: str) -> DAG:
+    """Build a Dag of one placeholder task, which is what the context of ``task_id`` is built from."""
+    from airflow.sdk.definitions.dag import DAG
+    from airflow.sdk.execution_time.provider_operator import _PlaceholderTask
+
+    dag = DAG(dag_id, schedule=None)
+    with dag:
+        _PlaceholderTask(task_id=task_id)
+    return dag
+
+
+def render_call(call: RenderCall) -> RenderResult:
+    """Render the values of ``call``, and report a failure as the error of the result."""
+    try:
+        return _render(call)
+    except Exception as e:
+        log.exception("Rendering the template fields failed", task_id=call.ti.task_id)
+        return RenderResult(error=f"{type(e).__name__}: {e}")
+
+
+def _render(call: RenderCall) -> RenderResult:
+    from airflow.sdk._shared.secrets_masker import redact
+    from airflow.sdk.execution_time.context import set_current_team_name
+    from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance, _serialize_template_field
+
+    set_current_team_name(call.ti_context.dag_run.team_name)
+    ti = call.ti
+    dag = build_placeholder_dag(ti.dag_id, ti.task_id)
+    task = dag.task_dict[ti.task_id]
+    runtime_ti = RuntimeTaskInstance.model_construct(
+        **ti.model_dump(exclude_unset=True),
+        task=task,
+        _ti_context_from_server=call.ti_context,
+        max_tries=call.ti_context.max_tries,
+        start_date=call.start_date,
+        state=None,
+    )
+    context = runtime_ti.get_template_context()
+
+    values: dict[str, JsonValue] = {}
+    rendered_fields: dict[str, JsonValue] = {}
+    for name, value in call.values.items():
+        rendered = task.render_template(value, context)
+        values[name] = _to_json(name, rendered)
+        serialized = _serialize_template_field(rendered, name)
+        rendered_fields[name] = TypeAdapter(JsonValue).validate_python(redact(serialized, name))
+    return RenderResult(values=values, rendered_fields=rendered_fields)
+
+
+def _to_json(name: str, value: Any) -> JsonValue:
+    """Return ``value`` as plain JSON, since that is all the runtime can read."""
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError) as e:
+        raise TemplateRenderError(
+            f"Template field {name!r} rendered to a {type(value).__name__} that is not JSON-serializable: {e}"
+        ) from e

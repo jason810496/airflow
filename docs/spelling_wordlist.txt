@@ -1072,6 +1072,7 @@ liveness
 livy
 llm
 loadBalancerIP
+localfile
 localhost
 LocalObjectReference
 localstack

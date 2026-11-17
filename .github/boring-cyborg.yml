@@ -212,6 +212,9 @@ labelPRBasedOnFilePath:
   provider:keycloak:
     - providers/keycloak/**
 
+  provider:localfile:
+    - providers/localfile/**
+
   provider:microsoft-azure:
     - providers/microsoft/azure/**
 

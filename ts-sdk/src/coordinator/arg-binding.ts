@@ -27,6 +27,9 @@
 //
 // Names bind by folding on both sides, so nothing has to be declared for a
 // Python `region_code` to reach a handler's `regionCode`.
+//
+// A provider operator task gets the same bindings in `ti_context.provider_operator.kwargs`, which
+// `resolveProviderArgs` turns into the keys its implementation reads.
 
 import type { CoordinatorClient } from "./client.js";
 import type { LogChannel } from "./log-channel.js";
@@ -37,6 +40,7 @@ import type {
   XComArgBinding,
 } from "../generated/supervisor.js";
 import type { JsonValue } from "../sdk/client-types.js";
+import type { ProviderOperatorDefinition } from "../sdk/provider-operator.js";
 
 /** The key an upstream task's return value is stored under, as Python `@task` does. */
 const RETURN_VALUE_KEY = "return_value";
@@ -131,6 +135,90 @@ export async function resolveArgs(
   const entries = pullsUpstream ? await abortable(resolveAll, deps.signal) : await resolveAll();
 
   return { args: makeArgsProxy(names, byFold, new Map(entries), deps), names };
+}
+
+const NO_ARG_NAMES: ReadonlyMap<string, string> = new Map();
+
+/** The `value_schema` format of a literal that Python wrote a datetime as, an ISO 8601 string. */
+const DATE_TIME_FORMAT = "date-time";
+
+/**
+ * Resolve the arguments of a provider operator task into the keys its implementation reads.
+ *
+ * Python renders the literals of the operator's template fields first, and the results of upstream
+ * tasks are pulled as {@link resolveArgs} pulls them. A datetime literal becomes a `Date`; a
+ * duration stays the number of seconds it was written as. An argument the definition does not know
+ * is logged and left out.
+ */
+export async function resolveProviderArgs(
+  bindings: readonly TaskArgBinding[],
+  definition: ProviderOperatorDefinition,
+  deps: Omit<ArgBindingDeps, "argNames">,
+): Promise<Record<string, unknown>> {
+  const classpath = `${definition.module}.${definition.className}`;
+  const byPythonName = new Map(
+    Object.entries(definition.params).map(([key, param]) => [param.name, { key, param }]),
+  );
+  const known = bindings.filter((binding) => byPythonName.has(binding.name));
+  if (known.length < bindings.length) {
+    deps.logs.info("Ignoring arguments that the operator does not define", {
+      operator: classpath,
+      arguments: bindings.filter((binding) => !byPythonName.has(binding.name)).map((b) => b.name),
+    });
+  }
+  const given = new Set(known.map((binding) => binding.name));
+  for (const [key, param] of Object.entries(definition.params)) {
+    if (param.required && !given.has(param.name)) {
+      throw new Error(
+        `${classpath} needs the argument "${param.name}" (${key}), which the task lacks`,
+      );
+    }
+  }
+
+  const templated = new Set(definition.templateFields);
+  const toRender: Record<string, JsonValue> = {};
+  for (const binding of known) {
+    if (binding.kind === "literal" && templated.has(binding.name)) {
+      toRender[binding.name] = literalValue(binding.value);
+    }
+  }
+  const rendered =
+    Object.keys(toRender).length === 0 ? {} : await deps.client.renderTemplateFields(toRender);
+  const resolvable = known.map((binding): TaskArgBinding => {
+    if (binding.kind !== "literal" || !Object.hasOwn(toRender, binding.name)) return binding;
+    if (!Object.hasOwn(rendered, binding.name)) {
+      throw new Error(
+        `The supervisor did not render the template field "${binding.name}" of ${classpath}`,
+      );
+    }
+    return { ...binding, value: rendered[binding.name] };
+  });
+
+  const bound = (await resolveArgs(resolvable, { ...deps, argNames: NO_ARG_NAMES })).args as Record<
+    string,
+    unknown
+  >;
+  return Object.fromEntries(
+    resolvable.map((binding) => {
+      const { key, param } = byPythonName.get(binding.name)!;
+      const value = bound[binding.name];
+      const isDateTime =
+        binding.kind === "literal" &&
+        (binding.value_schema?.["format"] === DATE_TIME_FORMAT || param.encoding === "datetime");
+      return [key, isDateTime ? toDate(value, binding.name, classpath) : value];
+    }),
+  );
+}
+
+function toDate(value: unknown, name: string, classpath: string): unknown {
+  if (value === null || value === undefined) return value;
+  const date = typeof value === "string" ? new Date(value) : new Date(Number.NaN);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(
+      `Argument "${name}" of ${classpath} is not a valid date-time: ${JSON.stringify(value)}`,
+    );
+  }
+  return date;
 }
 
 /** Airflow omits `value` for a literal whose value is null. */

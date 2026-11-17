@@ -39,6 +39,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const SCHEMA_PATH = join(ROOT, "schema/supervisor-schema.json");
 const OUT_PATH = join(ROOT, "src/generated/supervisor.ts");
+const PACKAGE_PATH = join(ROOT, "package.json");
 
 const HEADER = `/*!
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -125,6 +126,12 @@ export const SUPERVISOR_API_VERSION = ${JSON.stringify(apiVersion)} as const;
 
 mkdirSync(dirname(OUT_PATH), { recursive: true });
 writeFileSync(OUT_PATH, HEADER + "\n" + ts + constants, "utf8");
+
+// The coordinator reads the version of the provider runner from the installed package, which ships
+// package.json and not the schema.
+const manifest = JSON.parse(readFileSync(PACKAGE_PATH, "utf8"));
+manifest.airflow = { ...manifest.airflow, supervisorSchemaVersion: apiVersion };
+writeFileSync(PACKAGE_PATH, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
 console.log(`wrote ${OUT_PATH}`);
 console.log(`  api_version=${apiVersion}, schemas=${Object.keys(schemas).length}`);

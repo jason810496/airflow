@@ -29,6 +29,7 @@ import {
   findSpecFiles,
   generate,
   getEncoding,
+  isImplementedInTypeScript,
   getModulePath,
   renderPackage,
   readSdkPackage,
@@ -147,6 +148,16 @@ describe("naming", () => {
     );
     expect(getEncoding({ kind: "datetime" })).toBe("datetime");
     expect(getEncoding(STRING)).toBeUndefined();
+  });
+});
+
+describe("isImplementedInTypeScript", () => {
+  it.each([
+    [undefined, false],
+    [["Go"], false],
+    [["Go", "TypeScript"], true],
+  ])("reads implemented_in %j as %s", (implementedIn, expected) => {
+    expect(isImplementedInTypeScript({ ...SPEC, implemented_in: implementedIn })).toBe(expected);
   });
 });
 
@@ -301,6 +312,26 @@ describe("generate", () => {
     expect(findSpecFiles(options.providerSourcesDir)).toEqual([
       join(options.providerSourcesDir, "demo", "mail", "_generated", "lang_sdk_operators.json"),
     ]);
+  });
+
+  it("generates no package for a provider implemented in TypeScript, and leaves its files alone", () => {
+    const implemented = { ...SPEC, provider: { ...SPEC.provider, id: "demo.files" } };
+    const providerDir = join(options.providerSourcesDir, "demo", "files");
+    mkdirSync(join(providerDir, "_generated"), { recursive: true });
+    writeFileSync(join(providerDir, "provider.yaml"), "package-name: demo-files\n");
+    writeFileSync(
+      join(providerDir, "_generated", "lang_sdk_operators.json"),
+      JSON.stringify({ ...implemented, implemented_in: ["TypeScript"] }),
+    );
+    const handWritten = join(options.providersDir, "demo-files", "src", "index.ts");
+    mkdirSync(join(options.providersDir, "demo-files", "src"), { recursive: true });
+    writeFileSync(handWritten, "// hand-written\n");
+
+    expect(generate({ ...options, check: false })).toHaveLength(6);
+
+    expect(readFileSync(handWritten, "utf8")).toBe("// hand-written\n");
+    expect(generate({ ...options, check: true })).toEqual([]);
+    expect(() => readFileSync(join(options.providersDir, "demo-files", "package.json"))).toThrow();
   });
 
   it("fails when no provider has a spec", () => {

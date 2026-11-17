@@ -49,7 +49,7 @@ import structlog
 from airflow.dag_processing.bundles.base import BundleVersionLock  # noqa: SDK002
 from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstanceState
+from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TaskInstanceState
 from airflow.sdk.bases.xcom import (
     XComCoordinate,
     build_loop_error,
@@ -61,6 +61,9 @@ from airflow.sdk.bases.xcom import (
 from airflow.sdk.configuration import conf
 from airflow.sdk.coordinators._dag_importer import find_claiming_importer
 from airflow.sdk.coordinators._xcom_backend import (
+    RenderCall,
+    RenderResult,
+    TemplateRenderError,
     XComBackendCall,
     XComBackendError,
     XComBackendProcess,
@@ -75,7 +78,10 @@ from airflow.sdk.execution_time.comms import (
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    RenderedTemplateFieldsResult,
+    RenderTemplateFields,
     RetryTask,
+    SetRenderedFields,
     SetXCom,
     TaskState,
     XComResult,
@@ -116,7 +122,7 @@ if TYPE_CHECKING:
 
     from airflow.dag_processing.bundles.base import BaseDagBundle  # noqa: SDK002
     from airflow.sdk.api.client import Client
-    from airflow.sdk.api.datamodels._generated import TaskInstance, TIRunContext
+    from airflow.sdk.api.datamodels._generated import TIRunContext
     from airflow.sdk.bases.xcom import BaseXCom, _OwnTaskInstance
     from airflow.sdk.coordinators._xcom_backend import XComBackendResult
     from airflow.sdk.execution_time.comms import SetTaskStateStore
@@ -609,6 +615,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._arm_execution_timeout()
 
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
+    _ti_context: TIRunContext | None = attrs.field(default=None, init=False)
+    _render_start_date: datetime | None = attrs.field(default=None, init=False)
+    _rendered_fields: dict[str, JsonValue] = attrs.field(factory=dict, init=False)
 
     def _prepare_ti_context(self, ti: TaskInstance, ti_context: TIRunContext) -> TIRunContext | None:
         """
@@ -618,6 +627,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         does for a Python task.
         """
         self._execution_timeout_seconds = ti_context.execution_timeout
+        # What the helper process needs to build the template context the runtime would get from Python.
+        self._ti_context = ti_context
+        self._render_start_date = ti_context.start_date or datetime.now(tz=UTC)
         for key in ti_context.xcom_keys_to_clear or ():
             self.process_log.debug("Clearing XCom with key", key=key)
             try:
@@ -695,10 +707,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         finally:
             self._stop_xcom_backend()
 
-    def _start_xcom_backend_call(
-        self, call: XComBackendCall, finish: Callable[[XComBackendResult], None]
-    ) -> None:
-        """Send ``call`` to the XCom backend process, which starts on the first call it handles."""
+    def _get_xcom_backend_process(self) -> XComBackendProcess:
+        """Return the helper process, which starts on the first XCom backend call or render it handles."""
         if self._xcom_backend is not None and not self._xcom_backend.can_run_a_call:
             self._stop_xcom_backend()
         if self._xcom_backend is None:
@@ -708,7 +718,13 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 logger=self.process_log,
                 selector=self.selector,
             )
-        self._xcom_backend.send_call(call, finish)
+        return self._xcom_backend
+
+    def _start_xcom_backend_call(
+        self, call: XComBackendCall, finish: Callable[[XComBackendResult], None]
+    ) -> None:
+        """Send ``call`` to the XCom backend process."""
+        self._get_xcom_backend_process().send_call(call, finish)
 
     def _stop_xcom_backend(self) -> None:
         """Stop the XCom backend process, so that the next call starts one that can answer it."""
@@ -771,6 +787,58 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             raise _TaskStoppedError(error)
         if error is not None:
             raise XComBackendError(error)
+
+    def _handle_render_template_fields(
+        self, msg: RenderTemplateFields, log: FilteringBoundLogger, req_id: int
+    ) -> ResponseSent:
+        """
+        Answer request ``req_id`` with the rendered values once the helper process has rendered them.
+
+        The request loop keeps servicing the task while the helper runs. The rendered values also become
+        the task's rendered fields.
+        """
+
+        def answer(resp: BaseModel | None, error: ErrorResponse | None) -> None:
+            if not send_unless_exited(self, resp, req_id, error):
+                self.process_log.warning(
+                    "The runtime exited before its render request was answered", request_id=req_id
+                )
+
+        def finish(result: RenderResult) -> None:
+            try:
+                if result.error is not None:
+                    raise TemplateRenderError(result.error)
+                self._rendered_fields.update(result.rendered_fields)
+                self._handle_set_rendered_fields(
+                    SetRenderedFields(rendered_fields=self._rendered_fields), self.process_log, req_id
+                )
+            except Exception as e:
+                self.process_log.exception("Failed to render the template fields", request_id=req_id)
+                answer(None, _build_request_error(e, ErrorType.GENERIC_ERROR))
+            else:
+                answer(RenderedTemplateFieldsResult(values=result.values), None)
+
+        if self.ti is None or self._ti_context is None or self._render_start_date is None:
+            self.send_msg(
+                None,
+                request_id=req_id,
+                error=_build_request_error(
+                    TemplateRenderError("The task has not started, so its template fields cannot render"),
+                    ErrorType.GENERIC_ERROR,
+                ),
+            )
+            return ResponseSent.ALREADY_SENT
+        self._get_xcom_backend_process().send_render(
+            RenderCall(
+                # On a worker this is the executor's TaskInstanceDTO, which the SDK model does not accept as is.
+                ti=TaskInstance.model_validate(self.ti, from_attributes=True),
+                ti_context=self._ti_context,
+                start_date=self._render_start_date,
+                values=msg.values,
+            ),
+            finish,
+        )
+        return ResponseSent.ALREADY_SENT
 
     def _is_stopped(self) -> bool:
         # kill() can fail to stop the process, so a server stop counts on its own.
@@ -879,18 +947,21 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 register_request_method(GetXCom, _handle_get_xcom),
                 register_request_method(GetXComSequenceItem, _handle_get_xcom_sequence_item),
                 register_request_method(GetXComSequenceSlice, _handle_get_xcom_sequence_slice),
+                register_request_method(RenderTemplateFields, _handle_render_template_fields),
                 register_request_method(SetXCom, _handle_set_xcom),
             ]
         ),
     }
 
 
-def _build_request_error(exc: Exception) -> ErrorResponse:
-    """Report ``exc`` to the runtime as an XCom backend failure, unless the API server rejected the request."""
+def _build_request_error(
+    exc: Exception, error_type: ErrorType = ErrorType.XCOM_BACKEND_ERROR
+) -> ErrorResponse:
+    """Report ``exc`` to the runtime as ``error_type``, unless the API server rejected the request."""
     if isinstance(exc, ServerResponseError):
         return ErrorResponse.from_server_error(exc)
     return ErrorResponse(
-        error=ErrorType.XCOM_BACKEND_ERROR,
+        error=error_type,
         detail={"status_code": None, "message": str(exc), "exception_type": type(exc).__name__},
     )
 

@@ -69,16 +69,19 @@ class TestNodeCoordinatorAttributes:
         coordinator = NodeCoordinator()
 
         assert coordinator.node_executable == "node"
+        assert coordinator.node_modules_path is None
         assert coordinator.task_startup_timeout == 10.0
 
     def test_custom_kwargs(self):
         coordinator = NodeCoordinator(
             node_executable="/opt/node/bin/node",
+            node_modules_path="/opt/airflow/node_modules",
             task_handler_bundle_name="ts-task-handlers",
             task_startup_timeout=30.0,
         )
 
         assert coordinator.node_executable == "/opt/node/bin/node"
+        assert coordinator.node_modules_path == "/opt/airflow/node_modules"
         assert coordinator.task_handler_bundle_name == "ts-task-handlers"
         assert coordinator.task_startup_timeout == 30.0
 
@@ -111,6 +114,80 @@ class TestNodeCoordinatorExecuteTaskCommand:
 
         assert command == ["/opt/node/bin/node", str(bundle)]
         assert schema_version == SCHEMA_VERSION
+
+
+class TestNodeCoordinatorProviderRunnerCommand:
+    @pytest.fixture
+    def node_modules(self, tmp_path):
+        package = tmp_path / "node_modules" / "@apache-airflow" / "ts-sdk"
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            json.dumps(
+                {"name": "@apache-airflow/ts-sdk", "airflow": {"supervisorSchemaVersion": SCHEMA_VERSION}}
+            )
+        )
+        return tmp_path / "node_modules"
+
+    def test_runs_the_provider_runner_when_no_bundle_declares_the_dag(self, tmp_path, node_modules):
+        write_bundle(tmp_path, "sales")
+        coordinator = NodeCoordinator(
+            node_executable="/opt/node/bin/node", node_modules_path=str(node_modules)
+        )
+
+        with coordinator._set_scan_roots([tmp_path]):
+            command, schema_version = coordinator._build_execute_task_command(
+                what=_make_ti(dag_id="python_dag")
+            )
+
+        assert command == [
+            "/opt/node/bin/node",
+            str(node_modules / "@apache-airflow" / "ts-sdk" / "dist" / "coordinator" / "provider-runner.js"),
+        ]
+        assert schema_version == SCHEMA_VERSION
+
+    def test_runs_the_provider_runner_when_there_is_no_bundle_at_all(self, tmp_path, node_modules):
+        coordinator = NodeCoordinator(node_modules_path=str(node_modules))
+
+        with coordinator._set_scan_roots([tmp_path]):
+            command, _ = coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
+
+        assert command[1].endswith("provider-runner.js")
+
+    def test_a_bundle_that_declares_the_dag_wins(self, tmp_path, node_modules):
+        bundle = write_bundle(tmp_path, "sales")
+        coordinator = NodeCoordinator(node_modules_path=str(node_modules))
+
+        with coordinator._set_scan_roots([tmp_path]):
+            command, _ = coordinator._build_execute_task_command(what=_make_ti(dag_id="sales"))
+
+        assert command == ["node", str(bundle)]
+
+    def test_without_a_node_modules_path_the_missing_bundle_is_an_error(self, tmp_path):
+        coordinator = NodeCoordinator()
+
+        with coordinator._set_scan_roots([tmp_path]):
+            with pytest.raises(FileNotFoundError, match="Cannot find TypeScript bundle containing"):
+                coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
+
+    @pytest.mark.parametrize(
+        "manifest",
+        [
+            pytest.param(None, id="no-package"),
+            pytest.param("not json", id="not-json"),
+            pytest.param(json.dumps({"name": "@apache-airflow/ts-sdk"}), id="no-version"),
+        ],
+    )
+    def test_an_sdk_without_a_schema_version_is_an_error(self, tmp_path, manifest):
+        node_modules = tmp_path / "node_modules"
+        if manifest is not None:
+            package = node_modules / "@apache-airflow" / "ts-sdk"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text(manifest)
+        coordinator = NodeCoordinator(node_modules_path=str(node_modules))
+
+        with coordinator._set_scan_roots([tmp_path]):
+            with pytest.raises(FileNotFoundError, match="Cannot read the supervisor schema version"):
+                coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
 
 
 @pytest.fixture

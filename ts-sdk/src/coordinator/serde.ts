@@ -274,6 +274,9 @@ function serializeTask(
         // argument bindings of a task a foreign runtime runs. The Python worker builds a real
         // operator from it, so the task is not a stub there.
         is_stub: true,
+        ...(python.implementationModule !== undefined && {
+          _operator_module: python.implementationModule,
+        }),
         ...serializePythonOperator(python),
       }
     : {

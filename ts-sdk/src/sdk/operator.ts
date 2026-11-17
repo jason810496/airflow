@@ -33,9 +33,11 @@ import type {
   RuntimeTaskState,
   StartupDetails,
 } from "../coordinator/protocol.js";
+import type { TaskArgBinding } from "../generated/supervisor.js";
 import { brand, hasBrand } from "./brand.js";
 import type { JsonValue } from "./client-types.js";
 import type { Dag, TaskRef } from "./dag.js";
+import type { ProviderOperatorDefinition } from "./provider-operator.js";
 import type { TaskContext } from "./task.js";
 
 /** What an operator may end the task with. */
@@ -46,19 +48,34 @@ export type OperatorOutcome =
   | RuntimeDeferTask
   | RuntimeAwaitInputTask;
 
-/** What the SDK hands an operator at run time. Operators only read it. */
-export interface OperatorContext {
+/**
+ * What running the implementation of a provider operator needs from the runtime. A task that no
+ * bundle declares runs with only this, since it has no Dag of its own.
+ */
+export interface ProviderRunContext {
   readonly details: StartupDetails;
-  readonly dag: Dag;
   readonly ctx: TaskContext;
   readonly client: CoordinatorClient;
   readonly logs: LogChannel;
-  /** Bind the task's declared inputs, applying the `withArgNames` renames of `argNames`. */
-  resolveArgs(argNames?: ReadonlyMap<string, string>): Promise<object>;
+  /**
+   * The arguments of the task, by the keys `definition` gives them: Python renders the templated
+   * literals, and the results of upstream tasks are pulled.
+   */
+  resolveProviderArgs(
+    bindings: readonly TaskArgBinding[],
+    definition: ProviderOperatorDefinition,
+  ): Promise<Record<string, unknown>>;
   /** Push `value` under `return_value` when it is given, then succeed. */
   succeed(value?: JsonValue): Promise<RuntimeSucceedTask>;
   /** Fail, or hand the task back for retry when it has retries left. */
   fail(message: string): RuntimeRetryTask | RuntimeTaskState;
+}
+
+/** What the SDK hands an operator at run time. Operators only read it. */
+export interface OperatorContext extends ProviderRunContext {
+  readonly dag: Dag;
+  /** Bind the task's declared inputs, applying the `withArgNames` renames of `argNames`. */
+  resolveArgs(argNames?: ReadonlyMap<string, string>): Promise<object>;
   /** Skip `taskIds`, as `SkipMixin.skip` does. */
   skip(taskIds: readonly string[]): Promise<void>;
   /** Park in `awaiting_input`. The next run calls `executeComplete`. `timeout` is in seconds. */
@@ -109,6 +126,8 @@ export interface PythonOperatorTarget {
   readonly uiColor?: string;
   readonly uiFgcolor?: string;
   readonly isSensor?: boolean;
+  /** The module that exports the implementation, when a Lang SDK implements the operator. */
+  readonly implementationModule?: string;
 }
 
 // Carries an operator's argument and result types without carrying a value, as `TaskRef` does

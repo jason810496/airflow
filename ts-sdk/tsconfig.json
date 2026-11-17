@@ -34,6 +34,7 @@
       "@apache-airflow/ts-sdk/provider": ["./src/provider/index.ts"],
       "@apache-airflow/providers-amazon/*": ["./providers/amazon/src/*"],
       "@apache-airflow/providers-common-ai/*": ["./providers/common-ai/src/*"],
+      "@apache-airflow/providers-localfile/*": ["./providers/localfile/src/*"],
       "@apache-airflow/providers-standard/*": ["./providers/standard/src/*"]
     },
 

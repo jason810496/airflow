@@ -140,6 +140,7 @@ from airflow.sdk.execution_time.comms import (
     PreviousTIResult,
     PrevSuccessfulDagRunResult,
     PutVariable,
+    RenderTemplateFields,
     RescheduleTask,
     ResendLoggingFD,
     RetryTask,
@@ -4571,7 +4572,8 @@ class TestHandleRequest:
             assert decoder.validate_python(frame.body) == client_mock.response
 
     def test_registered_message_types(self):
-        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail}
+        # Only the supervisor of a language SDK runtime renders template fields.
+        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail, RenderTemplateFields}
         assert set(ActivitySubprocess._request_handlers) == expected
         assert {type(case.message) for case in REQUEST_TEST_CASES} == expected
 

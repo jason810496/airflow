@@ -581,6 +581,15 @@ class InactiveAssetsResult(InactiveAssetsResponse):
         return cls(**inactive_assets_response.model_dump(exclude_defaults=True), type="InactiveAssetsResult")
 
 
+class RenderedTemplateFieldsResult(BaseModel):
+    """The rendered values of a task's template fields, in reply to :class:`RenderTemplateFields`."""
+
+    values: dict[str, JsonValue]
+    """The same keys as the request, rendered, as plain JSON."""
+
+    type: Literal["RenderedTemplateFieldsResult"] = "RenderedTemplateFieldsResult"
+
+
 class XComResult(XComResponse):
     """Response to ReadXCom request."""
 
@@ -908,6 +917,7 @@ ToTask = Annotated[
     | XComSequenceIndexResult
     | XComSequenceSliceResult
     | InactiveAssetsResult
+    | RenderedTemplateFieldsResult
     | CreateHITLDetailPayload
     | HITLDetailRequestResult
     | HITLDetailResponseResult
@@ -1262,6 +1272,18 @@ class ValidateInletsAndOutlets(BaseModel):
     type: Literal["ValidateInletsAndOutlets"] = "ValidateInletsAndOutlets"
 
 
+class RenderTemplateFields(BaseModel):
+    """
+    Ask the supervisor to render the template fields of the task, which a language SDK runtime cannot.
+
+    The values are the literals of the operator's template fields, as plain JSON, by their Python
+    argument name. A language SDK runtime sends it, and a Python task never does.
+    """
+
+    values: dict[str, JsonValue]
+    type: Literal["RenderTemplateFields"] = "RenderTemplateFields"
+
+
 class GetPrevSuccessfulDagRun(BaseModel):
     ti_id: UUID
     type: Literal["GetPrevSuccessfulDagRun"] = "GetPrevSuccessfulDagRun"
@@ -1387,6 +1409,7 @@ ToSupervisor = Annotated[
     | SetExecutionTimeout
     | SucceedTask
     | ValidateInletsAndOutlets
+    | RenderTemplateFields
     | TaskState
     | TriggerDagRun
     | UpdateDagRunNote

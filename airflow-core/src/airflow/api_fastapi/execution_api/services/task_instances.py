@@ -84,19 +84,23 @@ def get_provider_operator(task: SerializedOperator) -> dict[str, Any] | None:
     """
     Return the provider operator *task* declares, or ``None`` if it declares none.
 
-    A language SDK writes the operator's class and its arguments for a task that a Python worker
-    runs. The edges of the whole Dag come with them, for the worker to build the Dag around the task.
+    A language SDK, or a provider wrapper for an operator a language SDK implements, writes the
+    operator's class and its arguments for a task that a worker runs. The edges of the whole Dag come
+    with them, for the worker to build the Dag around the task.
     """
     # A task read from its Dag version always has its Dag, which the edges come from.
     if (kwargs := task.operator_kwargs) is None or (dag := task.dag) is None:
         return None
-    return {
+    operator: dict[str, Any] = {
         "classpath": f"{task._task_module}.{task.task_type}",
         "kwargs": kwargs,
         "downstream_task_ids": {
             task_id: sorted(other.downstream_task_ids) for task_id, other in dag.task_dict.items()
         },
     }
+    if (module := task.operator_module) is not None:
+        operator["module"] = module
+    return operator
 
 
 def get_execution_timeout(task: SerializedOperator) -> float | None:

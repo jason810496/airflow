@@ -384,9 +384,13 @@
           "items": { "$ref": "#/definitions/arg_binding" }
         },
         "_operator_kwargs": {
-          "$comment": "Constructor keyword arguments of the task_type class in _task_module, in parameter order. Written by a non-Python SDK for a task a Python worker runs, which builds the operator from them because it cannot import the Dag file",
+          "$comment": "Constructor keyword arguments of the task_type class in _task_module, in parameter order. Written by a non-Python SDK for a task a Python worker runs, which builds the operator from them because it cannot import the Dag file, and by a LangSdkProviderOperator for a task a language SDK runtime runs",
           "type": "array",
           "items": { "$ref": "#/definitions/arg_binding" }
+        },
+        "_operator_module": {
+          "$comment": "Module of the language SDK that implements the operator the task_type class in _task_module describes, and exports it under the class name. Written by a LangSdkProviderOperator, for a runtime that does not declare the task to import",
+          "type": "string"
         }
       },
       "dependencies": {

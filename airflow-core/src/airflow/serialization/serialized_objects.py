@@ -52,7 +52,7 @@ from airflow.exceptions import AirflowException, DeserializationError, Serializa
 from airflow.models.connection import Connection
 from airflow.models.expandinput import SchedulerMappedArgument, create_expand_input
 from airflow.models.taskinstancekey import TaskInstanceKey
-from airflow.sdk import DAG, Asset, AssetAlias, BaseOperator, XComArg
+from airflow.sdk import DAG, Asset, AssetAlias, BaseOperator, LangSdkProviderOperator, XComArg
 from airflow.sdk.bases.operator import OPERATOR_DEFAULTS  # TODO: Copy this into the scheduler?
 from airflow.sdk.definitions._internal.expandinput import MappedArgument
 from airflow.sdk.definitions._internal.loop import LoopTaskGroup  # noqa: SDK001
@@ -1004,6 +1004,11 @@ class OperatorSerialization(DAGNode, BaseSerialization):
 
     @classmethod
     def serialize_mapped_operator(cls, op: MappedOperator) -> dict[str, Any]:
+        if issubclass(op.operator_class, LangSdkProviderOperator):
+            raise SerializationError(
+                f"Task {op.task_id!r}: {op.operator_class.__name__} is implemented in a Lang SDK, "
+                "so it cannot be mapped"
+            )
         serialized_op = cls._serialize_node(op)
         # Handle expand_input and op_kwargs_expand_input.
         expansion_kwargs = op._get_specified_expand_input()
@@ -1078,7 +1083,10 @@ class OperatorSerialization(DAGNode, BaseSerialization):
             # Imported here, not at module scope: this pulls pydantic's JSON-schema machinery,
             # which only lang-SDK (non-Python) workloads ever need.
             from airflow.sdk.bases.decorator import DecoratedOperator
-            from airflow.serialization.stub_arg_bindings import build_arg_bindings
+            from airflow.serialization.stub_arg_bindings import (
+                build_arg_bindings,
+                build_provider_operator_kwargs,
+            )
 
             serialize_op["is_stub"] = True
             if (
@@ -1087,6 +1095,10 @@ class OperatorSerialization(DAGNode, BaseSerialization):
                 and (arg_bindings := build_arg_bindings(op))
             ):
                 serialize_op["_arg_bindings"] = arg_bindings
+            if isinstance(op, LangSdkProviderOperator):
+                serialize_op["_operator_kwargs"] = build_provider_operator_kwargs(op)
+                if op.implementation_module:
+                    serialize_op["_operator_module"] = op.implementation_module
 
         if op.start_trigger_args:
             serialize_op["start_trigger_args"] = _encode_start_trigger_args(op.start_trigger_args)
@@ -1202,7 +1214,13 @@ class OperatorSerialization(DAGNode, BaseSerialization):
                     raise RuntimeError("_is_sensor=False should never have been serialized!")
                 object.__setattr__(op, "deps", op.deps | {ReadyToRescheduleDep()})
                 continue
-            elif k in ("is_stub", "_arg_bindings", "_operator_kwargs", "_external_clear_target"):
+            elif k in (
+                "is_stub",
+                "_arg_bindings",
+                "_operator_kwargs",
+                "_operator_module",
+                "_external_clear_target",
+            ):
                 # All are restored unconditionally below: is_stub must fail closed rather than go
                 # through generic decoding, and the others are plain JSON, not {__type, __var}.
                 continue
@@ -1269,6 +1287,7 @@ class OperatorSerialization(DAGNode, BaseSerialization):
         setattr(op, "is_stub", encoded_op.get("is_stub") is True)
         setattr(op, "_arg_bindings", encoded_op.get("_arg_bindings"))
         setattr(op, "_operator_kwargs", encoded_op.get("_operator_kwargs"))
+        setattr(op, "_operator_module", encoded_op.get("_operator_module"))
         setattr(op, "_external_clear_target", encoded_op.get("_external_clear_target"))
 
         start_trigger_args = None

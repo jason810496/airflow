@@ -83,6 +83,51 @@ that uses them:
 pnpm -r --filter './providers/*' run build
 ```
 
+### Implementing a provider operator
+
+A provider package can implement its operators in TypeScript instead of binding to Python ones. Pass
+`execute` to `defineProviderOperator`, and type the arguments in an exported `<ClassName>Args` interface
+in the same file. `execute` gets the rendered arguments and returns the `return_value` XCom:
+
+```ts
+export const WriteFileOperator = defineProviderOperator<WriteFileOperatorArgs, WriteFileResult>({
+  module: "airflow.providers.localfile.operators.file",
+  className: "WriteFileOperator",
+  implementationModule: "@apache-airflow/providers-localfile/operators/file",
+  templateFields: ["path", "content"],
+  params: { path: { name: "path", required: true }, content: { name: "content", required: true } },
+  async execute({ path, content }, ctx) {
+    await writeFile(path, content);
+    return { path, bytes: Buffer.byteLength(content) };
+  },
+});
+```
+
+A task of the operator runs in the Node runtime when its queue is routed to the Node coordinator. A TypeScript Dag
+runs it from its bundle. For any other Dag, the coordinator runs `airflow-ts-provider-runner` from the
+`node_modules_path` it is configured with, and the runner imports the module that exports the binding under
+`className`. Export each binding as `export const <ClassName> = defineProviderOperator(...)`, and install the package
+into the same `node_modules` as `@apache-airflow/ts-sdk`, so that they share one copy of the SDK.
+`implementationModule` is the package name and the path of the source file under `src/`, which the package's
+`exports` map to its built file. The spec generator fails when it is anything else.
+
+Add an `airflow` field to the package's `package.json`, and generate the spec that the Python wrapper and
+the other SDKs read:
+
+```json
+{ "airflow": { "providerId": "localfile", "pythonPackage": "apache-airflow-providers-localfile" } }
+```
+
+```bash
+pnpm run generate:operator-spec           # writes providers/<provider>/_generated/lang_sdk_operators.json
+pnpm run generate:operator-spec -- --check
+```
+
+A param's description comes from the JSDoc of its `Args` property, and its default from a `@default` tag.
+Use a string, boolean, number, literal union, `T | null`, array, `Record<string, T>` or `JsonValue`;
+`Templated<T>` wraps exactly the `templateFields`. `tests/scripts/generate-operator-spec.test.ts` fails
+when a committed spec is out of date.
+
 ## API reference
 
 The public API reference is generated from the TypeScript sources with

@@ -22,6 +22,7 @@ import selectors
 import signal
 import socket
 import time
+from datetime import UTC, datetime
 from typing import cast
 from unittest.mock import MagicMock, call, create_autospec, patch
 
@@ -34,15 +35,29 @@ from uuid6 import uuid7
 
 from airflow.sdk import Connection
 from airflow.sdk.api.client import Client
+from airflow.sdk.api.datamodels._generated import TaskInstance
 from airflow.sdk.bases.xcom import BaseXCom, XComCoordinate
 from airflow.sdk.coordinators._xcom_backend import (
     AwaitXComBackendCall,
+    RenderCall,
+    RenderResult,
     XComBackendCall,
     XComBackendProcess,
     XComBackendResult,
     _HookRunner,
+    build_placeholder_dag,
+    render_call,
     run_xcom_backend,
     runs_in_helper,
+)
+from airflow.sdk.execution_time.comms import (
+    ErrorResponse,
+    GetXCom,
+    GetXComSequenceSlice,
+    MaskSecret,
+    RenderedTemplateFieldsResult,
+    RenderTemplateFields,
+    XComSequenceSliceResult,
 )
 from airflow.sdk.execution_time.supervisor import ProcessTracker, WatchedSubprocess
 
@@ -50,6 +65,36 @@ from tests_common.test_utils.version_compat import AIRFLOW_V_3_3_PLUS
 
 if not AIRFLOW_V_3_3_PLUS:
     pytest.skip("Coordinator is only compatible with Airflow >= 3.3.0", allow_module_level=True)
+
+
+START_DATE = datetime(2024, 12, 1, 1, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def ti() -> TaskInstance:
+    return TaskInstance(
+        id=uuid7(),
+        dag_version_id=uuid7(),
+        task_id="write",
+        dag_id="native_dag",
+        run_id="manual__1",
+        try_number=1,
+        map_index=-1,
+        queue="typescript",
+    )
+
+
+@pytest.fixture
+def make_render_call(ti, make_ti_context):
+    def make(values) -> RenderCall:
+        return RenderCall(
+            ti=ti,
+            ti_context=make_ti_context(dag_id=ti.dag_id, run_id=ti.run_id),
+            start_date=START_DATE,
+            values=values,
+        )
+
+    return make
 
 
 class _StoreXCom(BaseXCom):
@@ -215,6 +260,18 @@ def _run_call(
     return results.pop()
 
 
+def _run_render(
+    proc: XComBackendProcess, results: list[RenderResult], call: RenderCall, timeout: float = 20.0
+) -> RenderResult:
+    """Send the render *call* and service the process until it answers, as the task's request loop does."""
+    proc.send_render(call, results.append)
+    deadline = time.monotonic() + timeout
+    while not results and time.monotonic() < deadline:
+        proc._service_subprocess(max_wait_time=0.1)
+    assert results, "the XCom backend process did not answer the render"
+    return results.pop()
+
+
 def _decode_sent_call(stdin: socket.socket) -> dict:
     """Decode the body of the frame most recently sent to the helper process's ``stdin`` mock."""
     frame = cast("MagicMock", stdin).sendall.call_args.args[0]
@@ -278,6 +335,27 @@ class TestXComBackendProcess:
 
         assert stored.value == {"host": "store.example.com", "value": [12, 3402.0]}
         assert loaded.value == {"__classname__": "builtins.tuple", "__version__": 1, "__data__": [12, 3402.0]}
+        assert backend_process._exit_code == 0
+
+    def test_renders_and_runs_backend_calls_in_the_same_process(
+        self, backend_process, results, make_render_call
+    ):
+        coordinate = XComCoordinate("dag", "run", "task", uuid7())
+        render_results: list[RenderResult] = []
+
+        stored = _run_call(
+            backend_process, results, XComBackendCall.store(coordinate, -1, "return_value", [1])
+        )
+        rendered = _run_render(
+            backend_process,
+            render_results,
+            make_render_call({"path": "{{ run_id }}"}),
+        )
+        backend_process.stop()
+
+        assert stored.value == {"host": "store.example.com", "value": [1]}
+        assert rendered.error is None
+        assert rendered.values == {"path": "manual__1"}
         assert backend_process._exit_code == 0
 
     def test_reports_the_error_of_a_failed_call(self, backend_process, results):
@@ -462,3 +540,157 @@ class TestXComBackendProcessSendCall:
         on_result.assert_called_once_with(
             XComBackendResult(error="The XCom backend process exited before it was sent a call")
         )
+
+
+class TestRenderSendCall:
+    """Deterministic, non-forking tests for how ``send_render`` shares the helper with backend calls."""
+
+    @pytest.fixture
+    def backend(self):
+        stdin = MagicMock(spec=socket.socket)
+        proc = XComBackendProcess(
+            id=uuid7(),
+            pid=4242,
+            process=MagicMock(spec=ProcessTracker),
+            process_log=structlog.get_logger(logger_name="task"),
+            stdin=stdin,
+            client=create_autospec(Client, instance=True),
+        )
+        proc._open_sockets[stdin] = "requests"
+        yield proc
+        proc.selector.close()
+
+    def test_a_render_waits_until_the_process_asks_for_it(self, backend, make_render_call):
+        finished: list[RenderResult] = []
+        backend.send_render(make_render_call({"path": "x"}), finished.append)
+
+        cast("MagicMock", backend.stdin).sendall.assert_not_called()
+        backend._handle_request(AwaitXComBackendCall(), structlog.get_logger(), 7)
+
+        assert _decode_sent_call(backend.stdin)["type"] == "RenderCall"
+        result = RenderResult(values={"path": "x"}, rendered_fields={"path": "x"})
+        backend._handle_request(result, structlog.get_logger(), 8)
+        assert finished == [result]
+
+    def test_a_backend_call_waits_behind_a_running_render(self, backend, make_render_call):
+        rendered: list[RenderResult] = []
+        stored: list[XComBackendResult] = []
+        backend._call_request_id = 7
+        backend.send_render(make_render_call({"path": "x"}), rendered.append)
+        backend.send_call(XComBackendCall(hook="purge", key="return_value"), stored.append)
+
+        assert _decode_sent_call(backend.stdin)["type"] == "RenderCall"
+        backend._handle_request(RenderResult(values={"path": "x"}), structlog.get_logger(), 8)
+
+        assert rendered == [RenderResult(values={"path": "x"})]
+        assert _decode_sent_call(backend.stdin)["type"] == "XComBackendCall"
+        assert stored == []
+
+    def test_a_stopped_process_fails_each_call_with_its_own_kind_of_result(self, backend, make_render_call):
+        rendered: list[RenderResult] = []
+        stored: list[XComBackendResult] = []
+        backend.send_render(make_render_call({"path": "x"}), rendered.append)
+        backend.send_call(XComBackendCall(hook="purge", key="return_value"), stored.append)
+        backend._exit_code = 0
+
+        backend.stop()
+
+        assert rendered == [RenderResult(error="The XCom backend process was stopped")]
+        assert stored == [XComBackendResult(error="The XCom backend process was stopped")]
+
+    def test_a_render_that_cannot_be_sent_fails_rather_than_waits(self, backend, make_render_call):
+        finished: list[RenderResult] = []
+        backend._call_request_id = 7
+        cast("MagicMock", backend.stdin).sendall.side_effect = BrokenPipeError
+
+        backend.send_render(make_render_call({"path": "x"}), finished.append)
+
+        assert finished == [RenderResult(error="The XCom backend process exited before it was sent a call")]
+
+
+def test_the_helper_answers_the_requests_of_a_template_context():
+    handled = set(XComBackendProcess._request_handlers)
+
+    assert {GetXCom, MaskSecret} <= handled
+    assert RenderTemplateFields not in handled
+    assert RenderedTemplateFieldsResult not in handled
+
+
+def test_build_placeholder_dag_holds_the_task_only():
+    dag = build_placeholder_dag("native_dag", "write")
+
+    assert dag.dag_id == "native_dag"
+    assert set(dag.task_dict) == {"write"}
+
+
+class TestRenderCall:
+    def test_renders_a_template_with_the_run_context(self, make_render_call, mock_supervisor_comms):
+        result = render_call(make_render_call({"path": "/tmp/{{ run_id }}-{{ ds }}.txt"}))
+
+        assert result == RenderResult(
+            values={"path": "/tmp/manual__1-2024-12-01.txt"},
+            rendered_fields={"path": "/tmp/manual__1-2024-12-01.txt"},
+        )
+
+    def test_renders_nested_values(self, make_render_call, mock_supervisor_comms):
+        result = render_call(
+            make_render_call(
+                {
+                    "options": {
+                        "dir": "{{ ds_nodash }}",
+                        "flags": ["--run={{ run_id }}", 3, None, True],
+                        "inner": {"task": "{{ task.task_id }}"},
+                    }
+                }
+            )
+        )
+
+        assert result.error is None
+        assert result.values == {
+            "options": {
+                "dir": "20241201",
+                "flags": ["--run=manual__1", 3, None, True],
+                "inner": {"task": "write"},
+            }
+        }
+
+    def test_resolves_xcom_pull_through_the_supervisor(self, make_render_call, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = XComSequenceSliceResult(root=["sales.csv"])
+
+        result = render_call(
+            make_render_call({"content": "{{ ti.xcom_pull(task_ids='build', key='report') }}"})
+        )
+
+        assert result.error is None
+        assert result.values == {"content": "sales.csv"}
+        request = mock_supervisor_comms.send.call_args.kwargs["msg"]
+        assert request == GetXComSequenceSlice(
+            key="report",
+            dag_id="native_dag",
+            run_id="manual__1",
+            task_id="build",
+            start=None,
+            stop=None,
+            step=None,
+        )
+
+    def test_reports_a_value_it_cannot_return(self, make_render_call, mock_supervisor_comms):
+        result = render_call(make_render_call({"timeout": float("nan")}))
+
+        assert result.values == {}
+        assert result.error is not None
+        assert "is not JSON-serializable" in result.error
+
+    def test_reports_a_failed_lookup(self, make_render_call, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = ErrorResponse(error="XCOM_NOT_FOUND", detail={})
+
+        result = render_call(make_render_call({"content": "{{ ti.xcom_pull(task_ids='build') }}"}))
+
+        assert result.error is not None
+
+    @patch("airflow.sdk._shared.secrets_masker.redact", autospec=True, return_value="***")
+    def test_redacts_the_rendered_fields_only(self, mock_redact, make_render_call, mock_supervisor_comms):
+        result = render_call(make_render_call({"password": "{{ run_id }}"}))
+
+        assert result.values == {"password": "manual__1"}
+        assert result.rendered_fields == {"password": "***"}

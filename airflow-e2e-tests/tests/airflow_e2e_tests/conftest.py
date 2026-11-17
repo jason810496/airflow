@@ -879,14 +879,25 @@ def _setup_openlineage_integration(dot_env_file, tmp_dir, compose_file_names):
         compose_file_names.append("openlineage-compat-db.yml")
 
 
-def _build_ts_sdk_example_bundle(*, native=False):
+def _build_ts_sdk_example_bundle(*, native=False, provider_runner=False):
     build_commands = (
         "pnpm install --frozen-lockfile && pnpm run build"
         # The example imports the generated provider packages, which resolve to their own dist.
         " && pnpm -r --filter './providers/*' run build"
         " && cd example && pnpm install"
         " && pnpm run build && pnpm run build:ai-approval && pnpm run build:providers"
+        " && pnpm run build:localfile"
     )
+    if provider_runner:
+        # The provider runner runs from a node_modules directory. The SDK and the localfile provider are
+        # workspace packages that are not on npm, so they are installed from the tarballs pnpm packs.
+        build_commands += (
+            " && rm -rf dist/provider-packages dist/provider-runner && mkdir -p dist/provider-packages"
+            " && (cd .. && pnpm pack --pack-destination example/dist/provider-packages)"
+            " && (cd ../providers/localfile"
+            " && pnpm pack --pack-destination ../../example/dist/provider-packages)"
+            " && npm install --prefix dist/provider-runner --no-audit --no-fund dist/provider-packages/*.tgz"
+        )
     if native:
         console.print("[yellow]Building TypeScript SDK example bundle (host toolchain)...")
         subprocess.run(["bash", "-c", build_commands], cwd=TS_SDK_ROOT_PATH, check=True)
@@ -930,13 +941,15 @@ def _build_ts_sdk_example_bundle(*, native=False):
 
 def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
     """Set up the ts_sdk E2E test mode."""
-    _build_ts_sdk_example_bundle(native=LANG_SDK_NATIVE_TOOLCHAIN)
+    _build_ts_sdk_example_bundle(native=LANG_SDK_NATIVE_TOOLCHAIN, provider_runner=True)
 
     copyfile(TS_COMPOSE_PATH, tmp_dir / "ts.yml")
     # `ts_provider_operators` runs amazon S3 operators against LocalStack, and a common.ai operator,
     # which the stock image does not ship, so the in-tree provider is installed in every service.
     _copy_localstack_files(tmp_dir)
-    provider_paths = _write_providers_mount_override(tmp_dir, ["common.ai"])
+    # `python_localfile` and `ts_localfile` use the generated wrapper of the TypeScript-implemented
+    # localfile provider.
+    provider_paths = _write_providers_mount_override(tmp_dir, ["common.ai", "localfile"])
 
     # Deliberately no metadata sidecar: the coordinator must resolve the schema
     # version from the metadata airflow-ts-pack embedded in the bundle.
@@ -956,10 +969,22 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
         TS_SDK_EXAMPLE_PATH / "dist" / "providers.min.mjs",
         tmp_dir / "dags" / "typescript" / "providers.min.mjs",
     )
+    # The native Dag `ts_localfile` runs the localfile operators from this bundle. The tasks of the Python
+    # Dag `python_localfile` are in no bundle, so they run in the SDK's provider runner, from the
+    # node_modules directory the worker mounts.
+    copyfile(
+        TS_SDK_EXAMPLE_PATH / "dist" / "localfile.min.mjs",
+        tmp_dir / "dags" / "typescript" / "localfile.min.mjs",
+    )
+    copytree(TS_SDK_EXAMPLE_PATH / "dist" / "provider-runner", tmp_dir / "ts-node-modules", symlinks=True)
 
     # Both of the example bundle's Dags: one bundle.mjs provides for two dag_ids,
     # and the tests check that dispatch tells their same-named tasks apart.
-    for dag_file in ("typescript_example.py", "typescript_taskflow_example.py"):
+    for dag_file in (
+        "typescript_example.py",
+        "typescript_taskflow_example.py",
+        "typescript_localfile_example.py",
+    ):
         copyfile(TS_SDK_EXAMPLE_PATH / "dags" / dag_file, tmp_dir / "dags" / dag_file)
 
     dag_bundle_config = _build_dag_bundle_config({"ts-task-handlers": "/opt/airflow/ts-bundles"})
@@ -973,6 +998,7 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
                 "kwargs": {
                     "task_handler_bundle_name": "ts-task-handlers",
                     "node_executable": "/opt/nodejs/node",
+                    "node_modules_path": "/opt/airflow/ts-node-modules/node_modules",
                 },
             },
         }
@@ -1017,6 +1043,8 @@ def _setup_lang_sdk_xcom_object_storage_integration(dot_env_file, tmp_dir):
     ts_bundles_dir = tmp_dir / "ts-bundles"
     ts_bundles_dir.mkdir()
     copyfile(TS_SDK_EXAMPLE_PATH / "dist" / "bundle.min.mjs", ts_bundles_dir / "example.min.mjs")
+    # ts.yml mounts it into the worker. No Dag here runs a provider operator that a bundle does not declare.
+    (tmp_dir / "ts-node-modules").mkdir()
     (tmp_dir / "dags" / "typescript").mkdir()
     copyfile(
         TS_SDK_EXAMPLE_PATH / "dist" / "bundle.min.mjs", tmp_dir / "dags" / "typescript" / "example.min.mjs"

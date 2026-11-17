@@ -123,6 +123,28 @@ describe("defineProviderOperator", () => {
     });
   });
 
+  it("writes the module that implements the operator, when the binding names one", () => {
+    const implemented = defineProviderOperator<{ path: string }>({
+      module: "airflow.providers.demo.operators.file",
+      className: "ReadOperator",
+      implementationModule: "@demo/providers-demo/operators/file",
+      templateFields: [],
+      params: { path: { name: "path", required: true } },
+      execute: () => undefined,
+    });
+    const dag = new Dag("d", { queue: "typescript" });
+    dag.task("read", implemented({ path: "p" }))();
+    dag.task("notify", Notify({ subject: "s" }))();
+
+    const tasks = serializeTasks(dag);
+
+    expect(tasks.get("read")).toMatchObject({
+      is_stub: true,
+      _operator_module: "@demo/providers-demo/operators/file",
+    });
+    expect(tasks.get("notify")).not.toHaveProperty("_operator_module");
+  });
+
   it("writes the arguments in the operator's parameter order, whatever order they were given in", () => {
     const dag = new Dag("d");
     dag.task("notify", Notify({ extra: { a: 1 }, channel: "ops", subject: "s" }))();

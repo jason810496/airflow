@@ -59,6 +59,7 @@ from airflow.sdk.api.datamodels._generated import (
     TaskInstanceState,
     TIRunContext,
 )
+from airflow.sdk.bases.lang_sdk_provider_operator import LangSdkProviderOperator
 from airflow.sdk.bases.operator import BaseOperator, ExecutorSafeguard
 from airflow.sdk.bases.xcom import (
     BaseXCom,
@@ -2477,7 +2478,8 @@ class _TaskRunner:
     @detail_span("_execute_task")
     def run(cls, ti: RuntimeTaskInstance, context: Context, log: Logger):
         """Run the task specified by *ti* with *context*."""
-        if ti.task.is_stub:
+        # A provider wrapper is a stub, but only its runtime runs it. Its execute says which queue to use.
+        if ti.task.is_stub and not isinstance(ti.task, LangSdkProviderOperator):
             return cls._run_handler(ti, context, log)
         return cls._run_operator(ti, context, log)
 

@@ -506,12 +506,20 @@ class LoopContext(BaseModel):
 
 class TIProviderOperator(BaseModel):
     """
-    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
+    The provider operator a task of a language SDK Dag, or of a language SDK provider wrapper, runs.
 
-    A Python worker builds the operator from it, because it cannot import the Dag file.
+    A Python worker builds the Python operator from it, because it cannot import the Dag file. A
+    language SDK runtime imports ``module`` to run its own implementation. The Dag's edges come with it.
     """
 
     classpath: str = Field(description="Import path of the operator class.")
+    module: str | None = Field(
+        default=None,
+        description=(
+            "Module of the language SDK that implements the operator, which exports it under the class name. "
+            "Absent when no language SDK implements it."
+        ),
+    )
     kwargs: list[TaskArgBinding] = Field(
         description="Constructor keyword arguments, in the order of the operator's parameters."
     )

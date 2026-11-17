@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 from typing import TYPE_CHECKING
@@ -39,6 +40,10 @@ if TYPE_CHECKING:
     from airflow.sdk.api.datamodels._generated import TaskInstance
 
 log: FilteringBoundLogger = structlog.get_logger(logger_name="coordinators.node")
+
+
+_PROVIDER_RUNNER_PATH = pathlib.PurePosixPath("dist/coordinator/provider-runner.js")
+_SDK_PACKAGE = pathlib.PurePosixPath("@apache-airflow/ts-sdk")
 
 
 def _is_bundle(path: pathlib.Path) -> bool:
@@ -111,10 +116,19 @@ class NodeCoordinator(SubprocessCoordinator):
     :param task_handler_bundle_name: Name of the Dag bundle searched recursively for the first
         verified ``*.min.mjs`` bundle declaring the task instance's Dag. It must be registered in
         ``[dag_processor] dag_bundle_config_list``. If unset, the task's own Dag bundle is used.
+    :param node_modules_path: A ``node_modules`` directory that holds ``@apache-airflow/ts-sdk`` and the
+        provider packages that implement operators in TypeScript. A task that no bundle declares runs
+        in the SDK's provider runner from it, which imports the operator's package. If unset, such a
+        task fails because no bundle declares its Dag.
     :param task_startup_timeout: Maximum time the coordinator waits for a task
         process to start, in seconds. The default is 10 seconds.
 
     A task of a native TypeScript Dag runs the ``*.min.mjs`` bundle its Dag was parsed from.
+
+    A task of a Python Dag may be a provider operator implemented in TypeScript, such as one of
+    ``apache-airflow-providers-localfile``. When a bundle declares the task's ``dag_id``, that bundle
+    runs it, so a Dag that also has TypeScript task handlers must pack the operator's package into
+    that bundle. Otherwise ``node_modules_path`` selects the provider runner.
 
     The coordinator also parses native TypeScript Dags: every packed ``*.min.mjs`` bundle in a
     Dag bundle is run to list its Dags. With one NodeCoordinator configured, it parses the bundles
@@ -123,11 +137,31 @@ class NodeCoordinator(SubprocessCoordinator):
     """
 
     node_executable: str = "node"
+    node_modules_path: str | None = None
 
     def _build_execute_task_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
         roots = self._get_scan_roots()
-        bundle = _Bundle.find(roots, what.dag_id)
+        try:
+            bundle = _Bundle.find(roots, what.dag_id)
+        except FileNotFoundError:
+            if self.node_modules_path is None:
+                raise
+            return self._build_provider_runner_command()
         return [self.node_executable, os.fspath(bundle.path)], bundle.schema_version
+
+    def _build_provider_runner_command(self) -> tuple[list[str], str]:
+        """Return the command that runs the SDK's provider runner, and its supervisor schema version."""
+        package = pathlib.Path(self.node_modules_path or "") / _SDK_PACKAGE
+        runner = package / _PROVIDER_RUNNER_PATH
+        try:
+            manifest = json.loads((package / "package.json").read_text())
+            schema_version = manifest["airflow"]["supervisorSchemaVersion"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise FileNotFoundError(
+                f"Cannot read the supervisor schema version of {package}; install @apache-airflow/ts-sdk "
+                f"into node_modules_path {self.node_modules_path!r}: {exc}"
+            ) from exc
+        return [self.node_executable, os.fspath(runner)], schema_version
 
     def _build_bundle_command(self, path: pathlib.Path) -> tuple[list[str], str]:
         """Return the command that runs the packed bundle at *path*, and its supervisor schema version."""

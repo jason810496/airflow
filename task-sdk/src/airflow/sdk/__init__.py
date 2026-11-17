@@ -66,6 +66,7 @@ __all__ = [
     "HourWindow",
     "IdentityMapper",
     "Label",
+    "LangSdkProviderOperator",
     "LoopDecision",
     "Metadata",
     "MinimumCount",
@@ -134,6 +135,7 @@ if TYPE_CHECKING:
     from airflow.sdk.api.datamodels._generated import DagRunState, TaskInstanceState, TriggerRule, WeightRule
     from airflow.sdk.bases.branch import BaseBranchOperator, BranchMixIn
     from airflow.sdk.bases.hook import BaseHook
+    from airflow.sdk.bases.lang_sdk_provider_operator import LangSdkProviderOperator
     from airflow.sdk.bases.notifier import BaseNotifier
     from airflow.sdk.bases.operator import (
         BaseAsyncOperator,
@@ -299,6 +301,7 @@ __lazy_imports: dict[str, tuple[str, str]] = {
     "HourWindow": (".definitions.partition_mappers.window", "HourWindow"),
     "IdentityMapper": (".definitions.partition_mappers.identity", "IdentityMapper"),
     "Label": (".definitions.edges", "Label"),
+    "LangSdkProviderOperator": (".bases.lang_sdk_provider_operator", "LangSdkProviderOperator"),
     "LoopDecision": (".definitions.loop", "LoopDecision"),
     "Metadata": (".definitions.asset.metadata", "Metadata"),
     "MinimumCount": (".definitions.partition_mappers.wait_policy", "MinimumCount"),

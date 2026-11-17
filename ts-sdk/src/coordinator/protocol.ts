@@ -80,6 +80,8 @@ export type {
   TaskStateStoreResult,
   CreateHITLDetailPayload,
   HITLDetailRequestResult,
+  RenderTemplateFields,
+  RenderedTemplateFieldsResult,
 } from "../generated/supervisor.js";
 
 // -------- Frames from supervisor --------
