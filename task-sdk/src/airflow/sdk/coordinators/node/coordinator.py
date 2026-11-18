@@ -30,6 +30,7 @@ import structlog
 from airflow.sdk.coordinators._bundle_metadata import ResolvedBundle, walk_files
 from airflow.sdk.coordinators._subprocess import SubprocessCoordinator
 from airflow.sdk.coordinators.node._bundle_reader import BUNDLE_SUFFIX, read_bundle
+from airflow.sdk.execution_time.coordinator import TaskLaunchError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -117,18 +118,19 @@ class NodeCoordinator(SubprocessCoordinator):
         verified ``*.min.mjs`` bundle declaring the task instance's Dag. It must be registered in
         ``[dag_processor] dag_bundle_config_list``. If unset, the task's own Dag bundle is used.
     :param node_modules_path: A ``node_modules`` directory that holds ``@apache-airflow/ts-sdk`` and the
-        provider packages that implement operators in TypeScript. A task that no bundle declares runs
-        in the SDK's provider runner from it, which imports the operator's package. If unset, such a
-        task fails because no bundle declares its Dag.
+        provider packages that implement operators in TypeScript. A provider operator task of a Dag
+        that is not a native TypeScript Dag runs in the SDK's provider runner from it, which imports
+        the operator's package. If unset, such a task fails.
     :param task_startup_timeout: Maximum time the coordinator waits for a task
         process to start, in seconds. The default is 10 seconds.
 
     A task of a native TypeScript Dag runs the ``*.min.mjs`` bundle its Dag was parsed from.
 
     A task of a Python Dag may be a provider operator implemented in TypeScript, such as one of
-    ``apache-airflow-providers-localfile``. When a bundle declares the task's ``dag_id``, that bundle
-    runs it, so a Dag that also has TypeScript task handlers must pack the operator's package into
-    that bundle. Otherwise ``node_modules_path`` selects the provider runner.
+    ``apache-airflow-providers-localfile``. Its ``stub_kind`` is ``provider_operator``, so
+    ``node_modules_path`` selects the provider runner, whether or not a bundle declares the task's
+    ``dag_id``. Any other task of a Python Dag, such as a TypeScript task handler, runs the bundle that
+    declares its ``dag_id``.
 
     The coordinator also parses native TypeScript Dags: every packed ``*.min.mjs`` bundle in a
     Dag bundle is run to list its Dags. With one NodeCoordinator configured, it parses the bundles
@@ -140,14 +142,18 @@ class NodeCoordinator(SubprocessCoordinator):
     node_modules_path: str | None = None
 
     def _build_execute_task_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
-        roots = self._get_scan_roots()
-        try:
-            bundle = _Bundle.find(roots, what.dag_id)
-        except FileNotFoundError:
-            if self.node_modules_path is None:
-                raise
-            return self._build_provider_runner_command()
+        bundle = _Bundle.find(self._get_scan_roots(), what.dag_id)
         return [self.node_executable, os.fspath(bundle.path)], bundle.schema_version
+
+    def _build_provider_operator_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
+        if self.node_modules_path is None:
+            raise TaskLaunchError(
+                f"Task {what.task_id!r} in Dag {what.dag_id!r} is a provider operator, which the Node.js "
+                "coordinator runs from node_modules_path, and it is not set. Set it to the node_modules "
+                "directory that holds @apache-airflow/ts-sdk and the provider package.",
+                retryable=False,
+            )
+        return self._build_provider_runner_command()
 
     def _build_provider_runner_command(self) -> tuple[list[str], str]:
         """Return the command that runs the SDK's provider runner, and its supervisor schema version."""

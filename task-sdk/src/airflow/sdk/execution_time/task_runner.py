@@ -55,6 +55,7 @@ from airflow.sdk.api.datamodels._generated import (
     ExternalClearTargetPayload,
     LoopDecisionPayload,
     PreviousTIResponse,
+    StubKind,
     TaskInstance,
     TaskInstanceState,
     TIRunContext,
@@ -171,7 +172,6 @@ from airflow.sdk.execution_time.provider_operator import build_provider_operator
 from airflow.sdk.execution_time.sentry import Sentry
 from airflow.sdk.execution_time.tracing import detail_span
 from airflow.sdk.execution_time.xcom import XCom
-from airflow.sdk.importers.base import get_importer_registry
 from airflow.sdk.listener import get_listener_manager
 from airflow.sdk.observability.metrics import stats_utils
 from airflow.sdk.serde import allow_class, iter_pydantic_models
@@ -1119,17 +1119,11 @@ def _find_native_dag_importer(path: str, bundle_name: str) -> CoordinatorDagImpo
         return None
 
 
-def _can_import_dag_file(path: str, bundle_name: str) -> bool:
-    """Whether a Dag importer on this worker can import *path* itself, rather than a coordinator's runtime."""
-    importer = get_importer_registry(bundle_name).get_importer(Path(path))
-    return importer is not None and not isinstance(importer, CoordinatorDagImporter)
-
-
 def _build_provider_operator_task(what: StartupDetails, dag_path: str, log: Logger) -> BaseOperator | None:
     """
-    Build the task of *what* from the provider operator its language SDK Dag declares.
+    Build the task of *what* from the provider operator that the API server sent in its run context.
 
-    Returns ``None`` when the API server sent no provider operator, because the task is not one.
+    Returns ``None`` when the API server sent no provider operator.
     """
     if (provider_operator := what.ti_context.provider_operator) is None:
         return None
@@ -1188,12 +1182,12 @@ def parse(what: StartupDetails, log: Logger) -> RuntimeTaskInstance:
     dag_file_parse_start = time.monotonic()
     importer = _find_native_dag_importer(dag_absolute_path, bundle_info.name)
     provider_task = None
-    # A Dag written with a language SDK has no file Python can import; a provider operator it
-    # declares is built from what the API server sends instead.
-    if importer is not None or not _can_import_dag_file(dag_absolute_path, bundle_info.name):
+    # A provider operator is built from its run context, because a Dag written with a language SDK
+    # has no Python file to import.
+    if what.ti.stub_kind == StubKind.PROVIDER_OPERATOR:
         provider_task = _build_provider_operator_task(what, dag_absolute_path, log)
-        if provider_task is None and importer is not None:
-            _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
+    if provider_task is None and importer is not None:
+        _fail_lang_sdk_task(what, importer.coordinator_classpath, log)
 
     if provider_task is None:
         bag = BundleDagBag(

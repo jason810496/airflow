@@ -66,6 +66,15 @@ def test_provider_operator_schema_by_version(client, version):
     assert ("provider_operator" in context) == (version == "2027-02-28")
 
 
+@pytest.mark.parametrize("version", ["2026-10-30", "2027-02-28"])
+def test_stub_kind_schema_by_version(client, version):
+    response = client.get(f"/execution/openapi.json?version={version}")
+    assert response.status_code == 200
+    schemas = response.json()["components"]["schemas"]
+    assert ("stub_kind" in schemas["TaskInstance"]["properties"]) == (version == "2027-02-28")
+    assert ("StubKind" in schemas) == (version == "2027-02-28")
+
+
 class TestExecutionTimeoutBackwardCompat:
     def setup_method(self):
         clear_db_runs()

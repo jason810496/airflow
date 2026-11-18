@@ -88,6 +88,7 @@ TASK_KEYS_NOT_COMPARED = frozenset(
         # The stub contract every language SDK task carries, which the Python operator built here
         # has no counterpart for. Loading the SDK's output through Airflow checks them.
         "is_stub",
+        "stub_kind",
         "_arg_bindings",
     }
 )

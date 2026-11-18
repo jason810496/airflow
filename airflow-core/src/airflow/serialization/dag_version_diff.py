@@ -261,6 +261,7 @@ _DIFF_V1_PUBLIC_TASK_FIELDS = frozenset(
         "start_date",
         "start_from_trigger",
         "start_trigger_args",
+        "stub_kind",
         "task_id",
         "task_type",
         "template_ext",

@@ -1766,7 +1766,8 @@ class ActivitySubprocess(WatchedSubprocess):
         start_date = ti_context.start_date or datetime.now(tz=UTC)
 
         msg = StartupDetails.model_construct(
-            ti=ti,
+            # A worker passes the executor's TaskInstanceDTO, whose enum fields the SDK model warns about.
+            ti=TaskInstance.model_validate(ti, from_attributes=True),
             dag_rel_path=os.fspath(dag_rel_path),
             bundle_info=bundle_info,
             ti_context=ti_context,

@@ -150,6 +150,7 @@ describe("triggerDagRun", () => {
       _task_module: "airflow.sdk.coordinators.node",
       language: "typescript",
       is_stub: true,
+      stub_kind: "dag_definition",
       template_fields: [],
       _operator_name: "TriggerDagRunOperator",
       ui_color: "#ffefeb",

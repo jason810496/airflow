@@ -19,7 +19,8 @@
             "_task_module": "airflow.sdk.coordinators.node",
             "language": "typescript",
             "template_fields": [],
-            "is_stub": true
+            "is_stub": true,
+            "stub_kind": "dag_definition"
           }
         }
       ],
@@ -74,6 +75,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "owner": "data-team",
             "start_date": 1769904000,
             "end_date": 1795996800,
@@ -112,6 +114,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_extract",
@@ -189,6 +192,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "alpha",
               "beta"
@@ -204,6 +208,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_seed",
@@ -222,6 +227,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_seed",
@@ -286,7 +292,8 @@
             "_task_module": "airflow.sdk.coordinators.node",
             "language": "typescript",
             "template_fields": [],
-            "is_stub": true
+            "is_stub": true,
+            "stub_kind": "dag_definition"
           }
         }
       ],
@@ -342,6 +349,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "left",
               "right"
@@ -357,6 +365,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_root",
@@ -378,6 +387,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_root",
@@ -399,6 +409,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_right",
@@ -472,6 +483,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "staging.stage"
             ]
@@ -486,6 +498,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "staging.checks.nulls"
             ]
@@ -500,6 +513,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "_arg_bindings": [
               {
                 "name": "from_staging.stage",
@@ -521,6 +535,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "load"
             ]
@@ -535,6 +550,7 @@
             "language": "typescript",
             "template_fields": [],
             "is_stub": true,
+            "stub_kind": "dag_definition",
             "downstream_task_ids": [
               "notify"
             ]
@@ -548,7 +564,8 @@
             "_task_module": "airflow.sdk.coordinators.node",
             "language": "typescript",
             "template_fields": [],
-            "is_stub": true
+            "is_stub": true,
+            "stub_kind": "dag_definition"
           }
         }
       ],

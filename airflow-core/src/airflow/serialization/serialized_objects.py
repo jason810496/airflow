@@ -120,6 +120,7 @@ from airflow.triggers.base import StartTriggerArgs
 from airflow.utils.code_utils import get_python_source
 from airflow.utils.db import LazySelectSequence
 from airflow.utils.sqlalchemy import deserialize_pod_dict
+from airflow.utils.types import StubKind
 
 if TYPE_CHECKING:
     from kubernetes.client import models as k8s  # noqa: TC004
@@ -1089,6 +1090,7 @@ class OperatorSerialization(DAGNode, BaseSerialization):
             )
 
             serialize_op["is_stub"] = True
+            serialize_op["stub_kind"] = StubKind.TASK_HANDLER.value
             if (
                 not op.is_mapped
                 and isinstance(op, DecoratedOperator)
@@ -1096,6 +1098,7 @@ class OperatorSerialization(DAGNode, BaseSerialization):
             ):
                 serialize_op["_arg_bindings"] = arg_bindings
             if isinstance(op, LangSdkProviderOperator):
+                serialize_op["stub_kind"] = StubKind.PROVIDER_OPERATOR.value
                 serialize_op["_operator_kwargs"] = build_provider_operator_kwargs(op)
                 if op.implementation_module:
                     serialize_op["_operator_module"] = op.implementation_module
@@ -1216,13 +1219,14 @@ class OperatorSerialization(DAGNode, BaseSerialization):
                 continue
             elif k in (
                 "is_stub",
+                "stub_kind",
                 "_arg_bindings",
                 "_operator_kwargs",
                 "_operator_module",
                 "_external_clear_target",
             ):
-                # All are restored unconditionally below: is_stub must fail closed rather than go
-                # through generic decoding, and the others are plain JSON, not {__type, __var}.
+                # All are restored unconditionally below: is_stub and stub_kind must fail closed rather
+                # than go through generic decoding, and the others are plain JSON, not {__type, __var}.
                 continue
             elif (
                 k in cls._decorated_fields
@@ -1285,6 +1289,7 @@ class OperatorSerialization(DAGNode, BaseSerialization):
         # Fails closed like the Dag-level flag: a non-Python producer's blob is never schema-validated
         # on this path, so anything that is not JSON ``true`` means "not a stub".
         setattr(op, "is_stub", encoded_op.get("is_stub") is True)
+        setattr(op, "stub_kind", cls._deserialize_stub_kind(encoded_op.get("stub_kind")))
         setattr(op, "_arg_bindings", encoded_op.get("_arg_bindings"))
         setattr(op, "_operator_kwargs", encoded_op.get("_operator_kwargs"))
         setattr(op, "_operator_module", encoded_op.get("_operator_module"))
@@ -1652,6 +1657,14 @@ class OperatorSerialization(DAGNode, BaseSerialization):
             client_defaults[k] = serialized_value
 
         return client_defaults
+
+    @staticmethod
+    def _deserialize_stub_kind(value: Any) -> StubKind | None:
+        """Fail closed like ``is_stub``: anything that is not a known kind means no kind."""
+        try:
+            return StubKind(value)
+        except ValueError:
+            return None
 
     @classmethod
     def _deserialize_field_value(cls, field_name: str, value: Any) -> Any:

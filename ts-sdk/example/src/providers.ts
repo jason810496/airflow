@@ -43,6 +43,8 @@ import { ApprovalOperator } from "@apache-airflow/providers-standard/operators/h
 
 /** The queue the deployment's `[sdk] queue_to_coordinator` routes to the Node coordinator. */
 const QUEUE = "typescript";
+/** A queue that Python workers serve, for the provider tasks that a Python worker runs. */
+const PYTHON_QUEUE = "default";
 const BUCKET = "ts-provider-operators";
 /** Rendered by the Python worker, as it renders a Python Dag's templates. */
 const REPORT_KEY = "runs/{{ run_id }}/report.json";
@@ -65,11 +67,12 @@ const report = dag.task("build_report", async (): Promise<string> =>
   JSON.stringify({ orders: 3, total: 120 }),
 )();
 
-// 2. Python stores it in S3 and waits until it is there. A provider task does not take the Dag's
-// queue, so these run on a Python worker.
+// 2. Python stores it in S3 and waits until it is there. A provider task takes the Dag's queue
+// like any other task, so each of these names a queue that a Python worker serves.
 const bucket = dag.task(
   "create_bucket",
   S3CreateBucketOperator({ bucketName: BUCKET, awsConnId: AWS_CONN_ID }),
+  { queue: PYTHON_QUEUE },
 )();
 const written = dag.task(
   "write_report",
@@ -81,6 +84,7 @@ const written = dag.task(
     replace: true,
     awsConnId: AWS_CONN_ID,
   }),
+  { queue: PYTHON_QUEUE },
 )();
 written.after(bucket);
 const landed = dag.task(
@@ -92,6 +96,7 @@ const landed = dag.task(
     pokeInterval: 5,
     timeout: 120,
   }),
+  { queue: PYTHON_QUEUE },
 )();
 landed.after(written);
 
@@ -104,6 +109,7 @@ const summary = dag.task(
     llmConnId: LLM_CONN_ID,
     modelId: "test",
   }),
+  { queue: PYTHON_QUEUE },
 )();
 summary.after(landed);
 
@@ -111,6 +117,7 @@ summary.after(landed);
 const decision = dag.task(
   "review",
   ApprovalOperator({ subject: "Publish the report summary?", body: summary }),
+  { queue: PYTHON_QUEUE },
 )();
 
 // 5. TypeScript publishes what was approved.

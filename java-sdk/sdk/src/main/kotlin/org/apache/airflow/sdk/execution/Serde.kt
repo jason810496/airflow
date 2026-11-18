@@ -152,6 +152,8 @@ private fun serializeTask(
   // resolves per instance for a runtime outside Python, as `@task.stub` does on
   // the Python side. `get_arg_bindings` reads nothing without it.
   data["is_stub"] = true
+  // A task of a Dag written in a language SDK, as opposed to a task handler or a provider operator.
+  data["stub_kind"] = "dag_definition"
   // Lets NotPreviouslySkippedDep re-skip a cleared downstream, as Python's SkipMixin does.
   if (def.decider != null) data["_can_skip_downstream"] = true
   // The worker picks a runtime by queue, so a trigger task takes the Dag's queue too.

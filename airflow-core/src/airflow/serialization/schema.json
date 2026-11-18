@@ -391,6 +391,10 @@
         "_operator_module": {
           "$comment": "Module of the language SDK that implements the operator the task_type class in _task_module describes, and exports it under the class name. Written by a LangSdkProviderOperator, for a runtime that does not declare the task to import",
           "type": "string"
+        },
+        "stub_kind": {
+          "$comment": "What the worker runs for a stub task. Set exactly when is_stub is true",
+          "enum": ["task_handler", "dag_definition", "provider_operator"]
         }
       },
       "dependencies": {

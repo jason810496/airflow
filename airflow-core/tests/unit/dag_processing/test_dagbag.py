@@ -65,6 +65,7 @@ from airflow.sdk.importers import (
 from airflow.serialization.definitions.baseoperator import SerializedBaseOperator
 from airflow.serialization.definitions.dag import SerializedDAG
 from airflow.serialization.serialized_objects import DagSerialization, LazyDeserializedDAG
+from airflow.utils.types import StubKind
 
 from tests_common.pytest_plugin import AIRFLOW_ROOT_PATH
 from tests_common.test_utils import db
@@ -1667,6 +1668,7 @@ def test_recorded_runtime_payloads_mark_their_tasks_as_stubs(data):
     dag = DagSerialization.from_dict(data)
     for task_id, task in dag.task_dict.items():
         assert task.is_stub, task_id
+        assert task.stub_kind == StubKind.DAG_DEFINITION, task_id
 
 
 def _serialize_native_dag(dag_id: str, fileloc: str, relative_fileloc: str) -> dict:

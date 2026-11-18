@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import enum
 import inspect
 import json
 import logging
@@ -29,6 +30,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -50,6 +52,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import get_current_span
+from pydantic import BaseModel
 from pytest_unordered import unordered
 from structlog.typing import FilteringBoundLogger
 from task_sdk import FAKE_BUNDLE, make_client
@@ -73,6 +76,7 @@ from airflow.sdk.api.datamodels._generated import (
     HITLUser,
     LoopDecisionPayload,
     PreviousTIResponse,
+    StubKind,
     TaskInstance,
     TaskInstanceState,
     TIRunContext,
@@ -948,6 +952,52 @@ class TestWatchedSubprocess:
         msg = startup_calls[0].args[1]
         expected_start_date = start_date or fallback_now
         assert msg.start_date == expected_start_date
+
+    def test_startup_message_carries_the_stub_kind_of_an_executor_task_instance(
+        self, mocker, make_ti_context
+    ):
+        """A worker passes the executor's own task instance model, whose enum is not the SDK's."""
+
+        class ExecutorStubKind(str, enum.Enum):
+            PROVIDER_OPERATOR = "provider_operator"
+
+        class ExecutorTaskInstance(BaseModel):
+            id: UUID
+            task_id: str
+            dag_id: str
+            run_id: str
+            try_number: int
+            dag_version_id: UUID
+            queue: str
+            stub_kind: ExecutorStubKind
+
+        mock_client = MagicMock(spec=sdk_client.Client)
+        mock_client.task_instances.start.return_value = make_ti_context()
+        mock_send = mocker.patch.object(ActivitySubprocess, "send_msg", autospec=True)
+        proc = ActivitySubprocess.start(
+            dag_rel_path=os.devnull,
+            bundle_info=FAKE_BUNDLE,
+            what=ExecutorTaskInstance(
+                id=uuid7(),
+                task_id="b",
+                dag_id="c",
+                run_id="d",
+                try_number=1,
+                dag_version_id=uuid7(),
+                queue="default",
+                stub_kind=ExecutorStubKind.PROVIDER_OPERATOR,
+            ),
+            client=mock_client,
+            target=lambda: None,
+        )
+        assert proc.wait() == 0
+
+        (msg,) = [c.args[1] for c in mock_send.call_args_list if len(c.args) > 1 and hasattr(c.args[1], "ti")]
+        assert isinstance(msg.ti, TaskInstance)
+        assert msg.ti.stub_kind is StubKind.PROVIDER_OPERATOR
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert msg.model_dump()["ti"]["stub_kind"] is StubKind.PROVIDER_OPERATOR
 
     def test_regular_heartbeat(self, spy_agency: kgb.SpyAgency, monkeypatch, mocker, make_ti_context):
         """Test that the WatchedSubprocess class regularly sends heartbeat requests, up to a certain frequency"""

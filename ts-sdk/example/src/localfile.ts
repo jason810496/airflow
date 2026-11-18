@@ -47,21 +47,18 @@ const REPORT_PATH = "/tmp/airflow-localfile/ts_localfile/{{ run_id }}/report.txt
 
 const dag = new Dag("ts_localfile", { queue: QUEUE, tags: ["typescript", "providers", "localfile"] });
 
-// The TypeScript tasks take the Dag's queue. A provider task does not, so each one names its own.
+// Every task takes the Dag's queue, the provider tasks included.
 const buildContent = dag.task(
   "build_content",
   async (): Promise<string> => "localfile report\nnaïve café, 3 orders\n",
 )();
-const create = dag.task("create", CreateFileOperator({ path: REPORT_PATH }), { queue: QUEUE })();
-const write = dag.task("write", WriteFileOperator({ path: REPORT_PATH, content: buildContent }), {
-  queue: QUEUE,
-})();
-const hasFile = dag.task("has_file", HasFileOperator({ path: REPORT_PATH }), { queue: QUEUE })();
-const remove = dag.task("delete", DeleteFileOperator({ path: REPORT_PATH }), { queue: QUEUE })();
+const create = dag.task("create", CreateFileOperator({ path: REPORT_PATH }))();
+const write = dag.task("write", WriteFileOperator({ path: REPORT_PATH, content: buildContent }))();
+const hasFile = dag.task("has_file", HasFileOperator({ path: REPORT_PATH }))();
+const remove = dag.task("delete", DeleteFileOperator({ path: REPORT_PATH }))();
 const hasAfterDelete = dag.task(
   "has_after_delete",
   HasFileOperator({ path: REPORT_PATH, skipDownstreamIfMissing: true }),
-  { queue: QUEUE },
 )();
 const afterSkip = dag.task("after_skip", async (): Promise<string> => "unreachable")();
 

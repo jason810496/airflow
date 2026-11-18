@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from airflow.task.trigger_rule import TriggerRule
     from airflow.ti_deps.deps.base_ti_dep import BaseTIDep
     from airflow.triggers.base import StartTriggerArgs
+    from airflow.utils.types import StubKind
 
     Operator: TypeAlias = "SerializedBaseOperator | SerializedMappedOperator"
 
@@ -107,6 +108,7 @@ class SerializedMappedOperator(DAGNode):
     _can_skip_downstream: bool = attrs.field(alias="can_skip_downstream")
     _is_sensor: bool = attrs.field(alias="is_sensor", default=False)
     is_stub: bool = attrs.field(init=False, default=False)
+    stub_kind: StubKind | None = attrs.field(init=False, default=None)
     _arg_bindings: list[dict[str, Any]] | None = attrs.field(alias="arg_bindings", init=False, default=None)
     _operator_kwargs: list[dict[str, Any]] | None = attrs.field(
         alias="operator_kwargs", init=False, default=None

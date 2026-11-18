@@ -121,7 +121,7 @@ from airflow.ti_deps.deps.trigger_rule_dep import TriggerRuleDep, _UpstreamTISta
 from airflow.timetables.simple import PartitionedAtRuntime
 from airflow.utils.session import create_session, provide_session
 from airflow.utils.state import DagRunState, State, TaskInstanceState
-from airflow.utils.types import DagRunTriggeredByType, DagRunType
+from airflow.utils.types import DagRunTriggeredByType, DagRunType, StubKind
 
 from tests_common.test_utils import db
 from tests_common.test_utils.asserts import assert_queries_count, capture_orm_selects
@@ -2921,6 +2921,7 @@ class TestTaskInstance:
             "operator": "some_custom_operator",
             "custom_operator_name": "some_custom_operator",
             "is_stub": False,
+            "stub_kind": "task_handler",
             "queued_dttm": run_date + datetime.timedelta(hours=1),
             "scheduled_dttm": run_date + datetime.timedelta(hours=1),
             "rendered_map_index": None,
@@ -5265,13 +5266,26 @@ def test_refresh_from_task_copies_is_stub(is_stub):
     assert ti.is_stub is is_stub
 
 
+@pytest.mark.parametrize("stub_kind", [None, *StubKind])
+def test_refresh_from_task_copies_stub_kind(stub_kind):
+    ser_task = create_scheduler_operator(EmptyOperator(task_id="empty"))
+    ser_task.stub_kind = stub_kind
+
+    ti = TI(ser_task, run_id=None, dag_version_id=mock.MagicMock())
+
+    assert ti.stub_kind == stub_kind
+
+
 @pytest.mark.db_test
 @pytest.mark.parametrize(
-    ("decorator", "expected"),
-    [pytest.param(task.stub, True, id="stub"), pytest.param(task, False, id="regular")],
+    ("decorator", "expected", "expected_kind"),
+    [
+        pytest.param(task.stub, True, StubKind.TASK_HANDLER, id="stub"),
+        pytest.param(task, False, None, id="regular"),
+    ],
 )
-def test_scheduled_task_instances_carry_is_stub(dag_maker, decorator, expected):
-    """A scheduled row carries the flag, whichever of the two write paths filled it in."""
+def test_scheduled_task_instances_carry_is_stub(dag_maker, decorator, expected, expected_kind):
+    """A scheduled row carries the flag and its kind, whichever of the two write paths filled it in."""
     with dag_maker("test_scheduled_is_stub", serialized=True):
 
         @decorator
@@ -5282,18 +5296,20 @@ def test_scheduled_task_instances_carry_is_stub(dag_maker, decorator, expected):
     (ti,) = dag_maker.create_dagrun().get_task_instances()
 
     assert ti.is_stub is expected
+    assert ti.stub_kind == expected_kind
 
 
 @pytest.mark.db_test
-@pytest.mark.parametrize("is_stub", [True, False])
-def test_insert_mapping_carries_is_stub(dag_maker, session, is_stub):
-    """The scheduler bulk-inserts rows from this mapping, so the flag has to be in it."""
+@pytest.mark.parametrize(("is_stub", "stub_kind"), [(True, StubKind.PROVIDER_OPERATOR), (False, None)])
+def test_insert_mapping_carries_is_stub(dag_maker, session, is_stub, stub_kind):
+    """The scheduler bulk-inserts rows from this mapping, so the flag and its kind have to be in it."""
     with dag_maker("test_insert_mapping_is_stub"):
         EmptyOperator(task_id="t1")
     session.flush()
 
     op = create_scheduler_operator(dag_maker.dag.get_task("t1"))
     op.is_stub = is_stub
+    op.stub_kind = stub_kind
     dag_run = mock.MagicMock()
     dag_run.context_carrier = new_dagrun_trace_carrier()
 
@@ -5306,6 +5322,7 @@ def test_insert_mapping_carries_is_stub(dag_maker, session, is_stub):
     )
 
     assert mapping["is_stub"] is is_stub
+    assert mapping["stub_kind"] == stub_kind
 
 
 @pytest.mark.db_test

@@ -65,6 +65,14 @@ class DagRunTriggeredByType(enum.Enum):
     BACKFILL = "backfill"
 
 
+class StubKind(str, enum.Enum):
+    """What a worker runs for a stub task, one whose definition the API server sends in the run context."""
+
+    TASK_HANDLER = "task_handler"
+    DAG_DEFINITION = "dag_definition"
+    PROVIDER_OPERATOR = "provider_operator"
+
+
 add_deprecated_classes(
     {
         __name__: {

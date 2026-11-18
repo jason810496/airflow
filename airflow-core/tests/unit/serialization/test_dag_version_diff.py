@@ -3423,7 +3423,12 @@ def test_build_diff_classifies_a_mapped_task_partial_kwarg_per_field(
 @pytest.mark.parametrize("include_values", [False, True])
 @pytest.mark.parametrize(
     ("field", "shape"),
-    [("_can_skip_downstream", "branch"), ("_is_empty", "empty"), ("is_stub", "stub")],
+    [
+        ("_can_skip_downstream", "branch"),
+        ("_is_empty", "empty"),
+        ("is_stub", "stub"),
+        ("stub_kind", "stub"),
+    ],
 )
 def test_build_diff_names_operator_flag_fields(field, shape, include_values):
     base = _build_operator_flag_payload(shape)

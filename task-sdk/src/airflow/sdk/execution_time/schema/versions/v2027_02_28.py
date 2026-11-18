@@ -38,7 +38,12 @@ from cadwyn import (
     schema,
 )
 
-from airflow.sdk.api.datamodels._generated import TIRunContext, TISuccessStatePayload, VariableResponse
+from airflow.sdk.api.datamodels._generated import (
+    TaskInstance,
+    TIRunContext,
+    TISuccessStatePayload,
+    VariableResponse,
+)
 from airflow.sdk.exceptions import ErrorType
 from airflow.sdk.execution_time.comms import ErrorResponse, PutVariable
 
@@ -71,6 +76,19 @@ class AddProviderOperatorToSupervisorTIRunContext(VersionChange):
     instructions_to_migrate_to_previous_version = (
         schema(TIRunContext).field("provider_operator").didnt_exist,
     )
+
+
+class AddStubKindToSupervisorTaskInstance(VersionChange):
+    """
+    Add the ``stub_kind`` field of the task instance, what a runtime runs for a stub task.
+
+    The supervisor-schema mirror of the execution API's ``AddStubKindToTaskInstance``,
+    named apart so the two migrations are not confused.
+    """
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (schema(TaskInstance).field("stub_kind").didnt_exist,)
 
 
 class AddExternalClearTargetToSucceedTask(VersionChange):

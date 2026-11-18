@@ -63,6 +63,7 @@ from airflow.sdk import (
     BaseOperatorLink,
     Connection,
     ExternalClearTarget,
+    LangSdkProviderOperator,
     dag as dag_decorator,
     get_current_context,
     task as task_decorator,
@@ -79,6 +80,7 @@ from airflow.sdk.api.datamodels._generated import (
     DagRunState,
     ExternalClearTargetPayload,
     PreviousTIResponse,
+    StubKind,
     TaskInstance,
     TaskInstanceState,
     TIProviderOperator,
@@ -189,7 +191,6 @@ from airflow.sdk.execution_time.task_runner import (
     RuntimeTaskInstance,
     TaskRunnerMarker,
     _axcom_push,
-    _can_import_dag_file,
     _defer_task,
     _find_native_dag_importer,
     _make_task_span,
@@ -1074,6 +1075,7 @@ def native_dag_startup(tmp_path: Path, make_ti_context):
                 try_number=1,
                 dag_version_id=uuid7(),
                 queue="default",
+                stub_kind=StubKind.DAG_DEFINITION,
             ),
             dag_rel_path="dag.native",
             bundle_info=BundleInfo(name="my-bundle", version=None),
@@ -1179,6 +1181,7 @@ def test_check_xcom_backend_supports_loops_rejects_legacy_backend_in_loop_dag(mo
 def test_parse_builds_a_provider_operator_of_a_native_dag(
     mock_bag, native_dag_startup, mock_supervisor_comms
 ):
+    native_dag_startup.ti.stub_kind = StubKind.PROVIDER_OPERATOR
     native_dag_startup.ti_context.provider_operator = NATIVE_PROVIDER_OPERATOR
     log = mock.Mock()
 
@@ -1202,18 +1205,19 @@ def test_parse_builds_a_provider_operator_of_a_native_dag(
 
 
 @pytest.mark.parametrize(
-    ("provider_operator", "builds"),
+    ("stub_kind", "builds"),
     [
-        pytest.param(NATIVE_PROVIDER_OPERATOR, True, id="provider-operator"),
-        pytest.param(None, False, id="stub-reads-the-file"),
+        pytest.param(StubKind.PROVIDER_OPERATOR, True, id="provider-operator"),
+        pytest.param(StubKind.DAG_DEFINITION, False, id="dag-definition-reads-the-file"),
     ],
 )
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
 def test_parse_builds_the_provider_operator_of_a_file_no_importer_here_claims(
-    mock_bag, native_dag_startup, provider_operator, builds
+    mock_bag, native_dag_startup, stub_kind, builds
 ):
     """A worker with no coordinator configured cannot import the native file itself either."""
-    native_dag_startup.ti_context.provider_operator = provider_operator
+    native_dag_startup.ti.stub_kind = stub_kind
+    native_dag_startup.ti_context.provider_operator = NATIVE_PROVIDER_OPERATOR
     mock_bag.return_value.dags = {}
 
     with conf_vars({("sdk", "coordinators"): "{}"}):
@@ -1227,13 +1231,69 @@ def test_parse_builds_the_provider_operator_of_a_file_no_importer_here_claims(
     assert mock_bag.called is not builds
 
 
-@pytest.mark.usefixtures("native_dag_startup")
-@pytest.mark.parametrize(
-    ("file_name", "expected"),
-    [("dag.py", True), ("dag.native", False), ("dag.unknown", False)],
-)
-def test_can_import_dag_file(file_name, expected):
-    assert _can_import_dag_file(f"/bundle/{file_name}", "my-bundle") is expected
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_parse_builds_the_provider_operator_of_a_python_dag_file_from_its_run_context(
+    mock_bag, native_dag_startup, mock_supervisor_comms
+):
+    native_dag_startup.dag_rel_path = "dag.py"
+    native_dag_startup.ti.stub_kind = StubKind.PROVIDER_OPERATOR
+    native_dag_startup.ti_context.provider_operator = NATIVE_PROVIDER_OPERATOR
+
+    ti = parse(native_dag_startup, mock.Mock())
+
+    mock_bag.assert_not_called()
+    mock_supervisor_comms.send.assert_not_called()
+    assert isinstance(ti.task, ProviderOperator)
+    assert ti.task.dag.fileloc.endswith("dag.py")
+
+
+@pytest.mark.parametrize("stub_kind", [None, StubKind.TASK_HANDLER])
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_parse_reads_the_python_dag_file_of_a_task_that_is_not_a_provider_operator(
+    mock_bag, native_dag_startup, stub_kind
+):
+    native_dag_startup.dag_rel_path = "dag.py"
+    native_dag_startup.ti.stub_kind = stub_kind
+    native_dag_startup.ti_context.provider_operator = NATIVE_PROVIDER_OPERATOR
+    mock_bag.return_value.dags = {}
+
+    with pytest.raises(AirflowRescheduleException):
+        parse(native_dag_startup, mock.Mock())
+
+    mock_bag.assert_called_once()
+
+
+class MisroutedWrapperOperator(LangSdkProviderOperator):
+    """The wrapper of a provider operator that a language SDK implements, used in a Python Dag."""
+
+    operator_params = ("message",)
+    implemented_in = ("TypeScript",)
+
+    def __init__(self, *, message: str, **kwargs):
+        super().__init__(**kwargs)
+        self.message = message
+
+
+@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
+def test_a_wrapper_of_a_python_dag_that_lands_on_a_python_worker_fails_naming_the_queue(
+    mock_bag, native_dag_startup, mock_supervisor_comms
+):
+    native_dag_startup.dag_rel_path = "dag.py"
+    native_dag_startup.ti.stub_kind = StubKind.PROVIDER_OPERATOR
+    native_dag_startup.ti_context.provider_operator = TIProviderOperator.model_validate(
+        {
+            "classpath": f"{__name__}.MisroutedWrapperOperator",
+            "kwargs": [{"name": "message", "kind": "literal", "value": "hi"}],
+            "downstream_task_ids": {"a": []},
+        }
+    )
+
+    ti = parse(native_dag_startup, mock.Mock())
+
+    mock_bag.assert_not_called()
+    assert isinstance(ti.task, MisroutedWrapperOperator)
+    with pytest.raises(AirflowFailException, match="queue_to_coordinator"):
+        ti.task.execute({})
 
 
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)

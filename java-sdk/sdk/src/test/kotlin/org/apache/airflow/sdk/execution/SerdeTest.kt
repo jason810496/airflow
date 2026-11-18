@@ -316,6 +316,7 @@ internal class SerdeTest {
       taskData(serialized, 1)["_arg_bindings"],
     )
     assertEquals(true, taskData(serialized, 1)["is_stub"])
+    assertEquals("dag_definition", taskData(serialized, 1)["stub_kind"])
   }
 
   @Test
@@ -342,6 +343,7 @@ internal class SerdeTest {
 
     assertFalse("_arg_bindings" in taskData(serialized, 0))
     assertEquals(true, taskData(serialized, 0)["is_stub"])
+    assertEquals("dag_definition", taskData(serialized, 0)["stub_kind"])
   }
 
   @Test

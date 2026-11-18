@@ -170,6 +170,7 @@ internal class TriggerDagRunTest {
     assertEquals(false, data["skip_when_already_exists"])
     // The Java runtime runs a trigger task too, so it carries the stub marker.
     assertEquals(true, data["is_stub"])
+    assertEquals("dag_definition", data["stub_kind"])
     // `language` marks a task the Java runtime runs a body for, which this is not.
     assertFalse("language" in data)
     assertFalse("reset_dag_run" in data)

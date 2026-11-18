@@ -274,6 +274,7 @@ function serializeTask(
         // argument bindings of a task a foreign runtime runs. The Python worker builds a real
         // operator from it, so the task is not a stub there.
         is_stub: true,
+        stub_kind: "provider_operator",
         ...(python.implementationModule !== undefined && {
           _operator_module: python.implementationModule,
         }),
@@ -294,6 +295,7 @@ function serializeTask(
         // runtime, as `@task.stub` does on the Python side. `get_arg_bindings` reads
         // nothing without it.
         is_stub: true,
+        stub_kind: "dag_definition",
       };
   if (record.operator) {
     // Names the provider operator a TypeScript operator mirrors, so the UI labels it as one. A
@@ -307,9 +309,7 @@ function serializeTask(
   if (bindings) data["_arg_bindings"] = bindings;
   // Lets `NotPreviouslySkippedDep` re-skip a cleared downstream, as Python's SkipMixin does.
   if (record.canSkipDownstream) data["_can_skip_downstream"] = true;
-  // A Python worker runs a Python operator, so the queue that routes the Dag's own tasks to
-  // the Node coordinator is not its queue.
-  const spec = python ? record.spec : withDagQueue(record.spec, dagQueue);
+  const spec = withDagQueue(record.spec, dagQueue);
   applySchemaFields(data, spec, TASK_FIELD_RULES, label);
   if (python) {
     data[OPERATOR_KWARGS_KEY] = [

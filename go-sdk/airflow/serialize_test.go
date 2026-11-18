@@ -109,6 +109,7 @@ var goTaskFields = []string{
 	"language",
 	"template_fields",
 	"is_stub",
+	"stub_kind",
 }
 
 func TestSerializeWritesTheWholeDag(t *testing.T) {
@@ -130,7 +131,8 @@ func TestSerializeWritesTheWholeDag(t *testing.T) {
 				"_task_module": "airflow.sdk.coordinators.executable",
 				"language": "go",
 				"template_fields": [],
-				"is_stub": true
+				"is_stub": true,
+				"stub_kind": "dag_definition"
 			}}],
 			"dag_dependencies": [],
 			"task_group": {
@@ -643,6 +645,7 @@ func TestSerializeWritesInputsAsArgBindings(t *testing.T) {
 	// A task that takes no Inputs gets no arguments when it runs, but is still a stub task.
 	assert.NotContains(t, serializedTask(t, got, "readRows"), "_arg_bindings")
 	assert.Equal(t, true, serializedTask(t, got, "readRows")["is_stub"])
+	assert.Equal(t, "dag_definition", serializedTask(t, got, "readRows")["stub_kind"])
 }
 
 func TestSerializeWritesTheTasksInTheOrderTheyWereAdded(t *testing.T) {
@@ -956,6 +959,7 @@ func TestSerializeWritesATriggerDagRunAsATriggerDagRunOperator(t *testing.T) {
 		"task_id": "trigger",
 		"task_type": "TriggerDagRunOperator",
 		"is_stub": true,
+		"stub_kind": "dag_definition",
 		"_task_module": "airflow.providers.standard.operators.trigger_dagrun",
 		"ui_color": "#ffefeb",
 		"template_fields": [
@@ -1043,7 +1047,7 @@ func TestSerializeWritesOnlyTheTriggerDagRunOptionsThatAreSet(t *testing.T) {
 		"skip_when_already_exists": false
 	}`, withoutKeys(serializedTask(t, got, "trigger"),
 		"task_id", "task_type", "_task_module", "ui_color", "template_fields",
-		"template_fields_renderers", "_operator_extra_links", "is_stub",
+		"template_fields_renderers", "_operator_extra_links", "is_stub", "stub_kind",
 	))
 	// An empty FailedStates means that no Dag run state fails the task.
 	assertJSON(t, `[]`, serializedTask(t, got, "trigger_never_fails")["failed_states"])

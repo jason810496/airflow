@@ -603,6 +603,18 @@ class TestRealBundleArgBindingsDowngrade:
             assert ti["region_index"] == 7
 
     @pytest.mark.parametrize("version", ["2026-06-16", "2026-10-30", "2027-02-28"])
+    def test_stub_kind_follows_supervisor_version(self, real_migrator, startup_details, version):
+        from airflow.sdk.api.datamodels._generated import StubKind
+
+        startup_details.ti.stub_kind = StubKind.PROVIDER_OPERATOR
+        ti = real_migrator.downgrade(startup_details, version).model_dump()["ti"]
+
+        if version == "2027-02-28":
+            assert ti["stub_kind"] == StubKind.PROVIDER_OPERATOR
+        else:
+            assert "stub_kind" not in ti
+
+    @pytest.mark.parametrize("version", ["2026-06-16", "2026-10-30", "2027-02-28"])
     def test_execution_timeout_follows_supervisor_version(self, real_migrator, startup_details, version):
         startup_details.ti_context.execution_timeout = 90.0
         context = real_migrator.downgrade(startup_details, version).model_dump()["ti_context"]

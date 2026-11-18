@@ -4193,6 +4193,16 @@
       "title": "StartupDetails",
       "type": "object"
     },
+    "StubKind": {
+      "description": "What a worker runs for a stub task, one whose definition the API server sends in the run context.",
+      "enum": [
+        "task_handler",
+        "dag_definition",
+        "provider_operator"
+      ],
+      "title": "StubKind",
+      "type": "string"
+    },
     "SucceedTask": {
       "additionalProperties": false,
       "description": "Update a task's state to success. Includes task_outlets and outlet_events for registering asset events.",
@@ -5700,6 +5710,17 @@
           "default": "default",
           "title": "Queue",
           "type": "string"
+        },
+        "stub_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StubKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

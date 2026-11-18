@@ -28,7 +28,11 @@ from cadwyn import (
     schema,
 )
 
-from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRunContext, TISuccessStatePayload
+from airflow.api_fastapi.execution_api.datamodels.taskinstance import (
+    TaskInstance,
+    TIRunContext,
+    TISuccessStatePayload,
+)
 from airflow.api_fastapi.execution_api.datamodels.variable import VariablePostBody, VariableResponse
 
 
@@ -70,6 +74,14 @@ class AddProviderOperatorToTIRunContext(VersionChangeWithSideEffects):
     def remove_provider_operator_field(response: ResponseInfo) -> None:
         """Strip ``provider_operator`` from the run context for older clients."""
         response.body.pop("provider_operator", None)
+
+
+class AddStubKindToTaskInstance(VersionChange):
+    """Add the `stub_kind` field to the TaskInstance model, what a worker runs for a stub task."""
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (schema(TaskInstance).field("stub_kind").didnt_exist,)
 
 
 class AddExecutionTimeoutToTIRunContext(VersionChange):

@@ -1171,6 +1171,10 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
     # to a new Dag version without being refreshed from its task keeps the value it was created with,
     # which fails closed: a task that has become a stub loses its arg_bindings rather than running wrong.
     is_stub: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # What the worker runs for a stub task, copied from the task like is_stub. Null for any other task.
+    # TODO: The real implementation must backfill it for existing task instances from their serialized
+    # Dags, and plan the deprecation of is_stub and its column.
+    stub_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     queued_dttm: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     scheduled_dttm: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     queued_by_job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1419,6 +1423,7 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
             "operator": task.task_type,
             "custom_operator_name": getattr(task, "operator_name", None),
             "is_stub": task.is_stub,
+            "stub_kind": task.stub_kind,
             "region_index": region_index,
             "region_id": region_id,
             "_task_display_property_value": task.task_display_name,
@@ -1616,6 +1621,8 @@ class TaskInstance(Base, LoggingMixin, BaseWorkload):
         op_name = getattr(task, "operator_name", None)
         self.custom_operator_name = op_name if isinstance(op_name, str) else ""
         self.is_stub = task.is_stub
+        # A non-serialized operator has no stub_kind.
+        self.stub_kind = getattr(task, "stub_kind", None)
         # Re-apply cluster policy here so that task default do not overload previous data
         task_instance_mutation_hook(self, dag_run=dag_run)
 

@@ -114,7 +114,7 @@ from airflow.ti_deps.deps.ready_to_reschedule import ReadyToRescheduleDep
 from airflow.timetables.simple import NullTimetable, OnceTimetable, PartitionedAtRuntime
 from airflow.timetables.trigger import CronPartitionTimetable
 from airflow.triggers.base import StartTriggerArgs
-from airflow.utils.types import DagRunType
+from airflow.utils.types import DagRunType, StubKind
 
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_marker, skip_if_not_on_main
@@ -3688,6 +3688,7 @@ def test_stub_task_args_round_trip():
 
     encoded_tasks = {t[Encoding.VAR]["task_id"]: t[Encoding.VAR] for t in ser_dag["dag"]["tasks"]}
     assert "_arg_bindings" not in encoded_tasks["extract"], "argless stubs must not serialize a spec"
+    assert {task["stub_kind"] for task in encoded_tasks.values()} == {"task_handler"}
     # validate_schema above never reaches task objects: schema.json's `tasks` array hangs the
     # operator sub-schema off `additionalProperties`, which JSON Schema ignores for arrays. Assert
     # the `arg_binding` definition directly so it stays honest about the wire form.
@@ -3719,6 +3720,7 @@ def test_stub_task_args_round_trip():
 
     round_tripped = DagSerialization.from_dict(ser_dag)
     assert round_tripped.task_dict["transform"].is_stub is True
+    assert round_tripped.task_dict["transform"].stub_kind is StubKind.TASK_HANDLER
     assert round_tripped.task_dict["transform"].arg_bindings == [
         {"name": "country", "kind": "literal", "value_schema": {"type": "string"}, "value": "uk"},
         {
@@ -3782,6 +3784,7 @@ def test_operator_kwargs_round_trip():
     notify = next(t[Encoding.VAR] for t in ser_dag["dag"]["tasks"] if t[Encoding.VAR]["task_id"] == "notify")
     notify["_operator_kwargs"] = operator_kwargs
     notify["_operator_module"] = "@scope/provider/operators/notify"
+    notify["stub_kind"] = "provider_operator"
     jsonschema.validate(
         notify["_operator_kwargs"],
         {
@@ -3795,6 +3798,7 @@ def test_operator_kwargs_round_trip():
 
     assert round_tripped.task_dict["notify"].operator_kwargs == operator_kwargs
     assert round_tripped.task_dict["notify"].operator_module == "@scope/provider/operators/notify"
+    assert round_tripped.task_dict["notify"].stub_kind is StubKind.PROVIDER_OPERATOR
     assert round_tripped.task_dict["extract"].operator_kwargs is None
     assert round_tripped.task_dict["extract"].operator_module is None
 
@@ -3809,6 +3813,55 @@ def test_task_is_stub_fails_closed_on_non_boolean(raw):
     ser_dag["dag"]["tasks"][0][Encoding.VAR]["is_stub"] = raw
 
     assert DagSerialization.from_dict(ser_dag).task_dict["simple_task"].is_stub is False
+
+
+@pytest.mark.parametrize("raw", ["unknown", "", True, 1, None, [], {"a": 1}])
+def test_task_stub_kind_fails_closed_on_unknown_value(raw):
+    """A task field from a non-Python producer is never schema-validated, so an unknown kind means no kind."""
+    with DAG(dag_id="test_task_stub_kind_unknown_value", schedule=None) as dag:
+        BaseOperator(task_id="simple_task", start_date=datetime(2019, 8, 1))
+
+    ser_dag = DagSerialization.to_dict(dag)
+    ser_dag["dag"]["tasks"][0][Encoding.VAR]["stub_kind"] = raw
+
+    assert DagSerialization.from_dict(ser_dag).task_dict["simple_task"].stub_kind is None
+
+
+def test_task_without_a_stub_flag_has_no_stub_kind():
+    with DAG(dag_id="test_task_stub_kind_not_a_stub", schedule=None) as dag:
+        BaseOperator(task_id="simple_task", start_date=datetime(2019, 8, 1))
+
+    ser_dag = DagSerialization.to_dict(dag)
+
+    assert "stub_kind" not in ser_dag["dag"]["tasks"][0][Encoding.VAR]
+    assert DagSerialization.from_dict(ser_dag).task_dict["simple_task"].stub_kind is None
+
+
+def test_mapped_stub_task_serializes_its_stub_kind():
+    from airflow.sdk import task
+
+    with DAG(dag_id="test_mapped_stub_kind", schedule=None) as dag:
+
+        @task.stub
+        def extract(region: str): ...
+
+        extract.expand(region=["eu", "us"])
+
+    ser_dag = DagSerialization.to_dict(dag)
+    DagSerialization.validate_schema(ser_dag)
+
+    encoded = ser_dag["dag"]["tasks"][0][Encoding.VAR]
+    assert encoded["_is_mapped"] is True
+    assert (encoded["is_stub"], encoded["stub_kind"]) == (True, "task_handler")
+    round_tripped = DagSerialization.from_dict(ser_dag).task_dict["extract"]
+    assert round_tripped.is_mapped
+    assert round_tripped.stub_kind is StubKind.TASK_HANDLER
+
+
+def test_schema_lists_every_stub_kind():
+    properties = load_dag_schema_dict()["definitions"]["operator"]["properties"]
+
+    assert properties["stub_kind"]["enum"] == [kind.value for kind in StubKind]
 
 
 class _WriteFileOperator(LangSdkProviderOperator):
@@ -3858,6 +3911,7 @@ def test_lang_sdk_provider_operator_serializes_its_arguments_as_bindings():
     assert write["task_type"] == "_WriteFileOperator"
     assert write["_task_module"] == _WriteFileOperator.__module__
     assert write["is_stub"] is True
+    assert write["stub_kind"] == "provider_operator"
     assert write["_operator_module"] == "@scope/provider/operators/file"
     assert write["_operator_kwargs"] == [
         {"name": "path", "kind": "literal", "value": "/tmp/{{ run_id }}.txt"},
@@ -3867,6 +3921,7 @@ def test_lang_sdk_provider_operator_serializes_its_arguments_as_bindings():
     assert encoded_tasks["build"]["downstream_task_ids"] == ["write"]
     assert "_operator_kwargs" not in encoded_tasks["build"]
     assert "_operator_module" not in encoded_tasks["build"]
+    assert "stub_kind" not in encoded_tasks["build"]
 
 
 def test_lang_sdk_provider_operator_writes_temporal_values_as_plain_json():

@@ -50,7 +50,7 @@ from airflow.utils.state import (
     TaskInstanceState as TIState,
     TerminalTIState,
 )
-from airflow.utils.types import DagRunType
+from airflow.utils.types import DagRunType, StubKind
 
 if TYPE_CHECKING:
     from airflow.models.taskinstance import TaskInstance as TaskInstanceModel
@@ -342,6 +342,8 @@ class TaskInstance(OmitsMissingRegion, BaseModel):
     # hand-built instances (tests, dry runs) valid; the executor workload
     # always sends the real value.
     queue: str = "default"
+    # What a stub task runs. Unset for any other task.
+    stub_kind: StubKind | None = None
 
 
 _RuntimeTI = TypeVar("_RuntimeTI", bound=TaskInstance)

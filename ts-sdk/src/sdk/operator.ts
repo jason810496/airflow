@@ -169,8 +169,8 @@ export interface Operator<TArgs extends object | void = void, TResult = unknown>
   getDagDependencies?(): readonly OperatorDagDependency[];
   /**
    * @internal Set when a Python worker runs the task as this class. The task is then serialized
-   * with the arguments the API server sends the worker to build the operator from, does not take
-   * the Dag's queue, and `execute` only runs when its queue is misrouted.
+   * with the arguments the API server sends the worker to build the operator from, and `execute`
+   * only runs when its queue is misrouted.
    */
   readonly pythonOperator?: PythonOperatorTarget;
   /** @internal The tasks whose results the operator's own arguments take. */

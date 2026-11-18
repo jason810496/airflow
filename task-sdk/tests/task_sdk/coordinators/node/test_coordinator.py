@@ -33,7 +33,7 @@ from task_sdk.coordinators.node._bundle_test_utils import (
 )
 from uuid6 import uuid7
 
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance
+from airflow.sdk.api.datamodels._generated import BundleInfo, StubKind, TaskInstance
 from airflow.sdk.coordinators._subprocess import _PopenActivitySubprocess
 from airflow.sdk.coordinators.node import _bundle_reader as _reader
 from airflow.sdk.coordinators.node._bundle_reader import _digest_cache
@@ -51,7 +51,7 @@ def clear_digest_cache():
     _digest_cache.clear()
 
 
-def _make_ti(dag_id: str = "test_dag", queue: str = "ts") -> TaskInstance:
+def _make_ti(dag_id: str = "test_dag", queue: str = "ts", stub_kind: StubKind | None = None) -> TaskInstance:
     return TaskInstance(
         id=uuid7(),
         dag_version_id=uuid7(),
@@ -61,7 +61,18 @@ def _make_ti(dag_id: str = "test_dag", queue: str = "ts") -> TaskInstance:
         try_number=1,
         map_index=-1,
         queue=queue,
+        stub_kind=stub_kind,
     )
+
+
+@pytest.fixture
+def node_modules(tmp_path):
+    package = tmp_path / "node_modules" / "@apache-airflow" / "ts-sdk"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(
+        json.dumps({"name": "@apache-airflow/ts-sdk", "airflow": {"supervisorSchemaVersion": SCHEMA_VERSION}})
+    )
+    return tmp_path / "node_modules"
 
 
 class TestNodeCoordinatorAttributes:
@@ -116,28 +127,18 @@ class TestNodeCoordinatorExecuteTaskCommand:
         assert schema_version == SCHEMA_VERSION
 
 
-class TestNodeCoordinatorProviderRunnerCommand:
-    @pytest.fixture
-    def node_modules(self, tmp_path):
-        package = tmp_path / "node_modules" / "@apache-airflow" / "ts-sdk"
-        package.mkdir(parents=True)
-        (package / "package.json").write_text(
-            json.dumps(
-                {"name": "@apache-airflow/ts-sdk", "airflow": {"supervisorSchemaVersion": SCHEMA_VERSION}}
-            )
+class TestNodeCoordinatorProviderOperatorCommand:
+    def _build(self, coordinator: NodeCoordinator):
+        return coordinator._build_provider_operator_command(
+            what=_make_ti(dag_id="python_dag", stub_kind=StubKind.PROVIDER_OPERATOR)
         )
-        return tmp_path / "node_modules"
 
-    def test_runs_the_provider_runner_when_no_bundle_declares_the_dag(self, tmp_path, node_modules):
-        write_bundle(tmp_path, "sales")
+    def test_runs_the_provider_runner_without_reading_a_bundle(self, node_modules):
         coordinator = NodeCoordinator(
             node_executable="/opt/node/bin/node", node_modules_path=str(node_modules)
         )
 
-        with coordinator._set_scan_roots([tmp_path]):
-            command, schema_version = coordinator._build_execute_task_command(
-                what=_make_ti(dag_id="python_dag")
-            )
+        command, schema_version = self._build(coordinator)
 
         assert command == [
             "/opt/node/bin/node",
@@ -145,29 +146,16 @@ class TestNodeCoordinatorProviderRunnerCommand:
         ]
         assert schema_version == SCHEMA_VERSION
 
-    def test_runs_the_provider_runner_when_there_is_no_bundle_at_all(self, tmp_path, node_modules):
-        coordinator = NodeCoordinator(node_modules_path=str(node_modules))
+    def test_without_a_node_modules_path_it_fails_without_a_retry(self):
+        with pytest.raises(TaskLaunchError) as raised:
+            self._build(NodeCoordinator())
 
-        with coordinator._set_scan_roots([tmp_path]):
-            command, _ = coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
-
-        assert command[1].endswith("provider-runner.js")
-
-    def test_a_bundle_that_declares_the_dag_wins(self, tmp_path, node_modules):
-        bundle = write_bundle(tmp_path, "sales")
-        coordinator = NodeCoordinator(node_modules_path=str(node_modules))
-
-        with coordinator._set_scan_roots([tmp_path]):
-            command, _ = coordinator._build_execute_task_command(what=_make_ti(dag_id="sales"))
-
-        assert command == ["node", str(bundle)]
-
-    def test_without_a_node_modules_path_the_missing_bundle_is_an_error(self, tmp_path):
-        coordinator = NodeCoordinator()
-
-        with coordinator._set_scan_roots([tmp_path]):
-            with pytest.raises(FileNotFoundError, match="Cannot find TypeScript bundle containing"):
-                coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
+        assert raised.value.retryable is False
+        assert str(raised.value) == (
+            "Task 'test_task' in Dag 'python_dag' is a provider operator, which the Node.js coordinator "
+            "runs from node_modules_path, and it is not set. Set it to the node_modules directory that "
+            "holds @apache-airflow/ts-sdk and the provider package."
+        )
 
     @pytest.mark.parametrize(
         "manifest",
@@ -183,10 +171,18 @@ class TestNodeCoordinatorProviderRunnerCommand:
             package = node_modules / "@apache-airflow" / "ts-sdk"
             package.mkdir(parents=True)
             (package / "package.json").write_text(manifest)
+
+        with pytest.raises(FileNotFoundError, match="Cannot read the supervisor schema version"):
+            self._build(NodeCoordinator(node_modules_path=str(node_modules)))
+
+    def test_a_task_that_no_bundle_declares_is_an_error_even_with_a_node_modules_path(
+        self, tmp_path, node_modules
+    ):
+        write_bundle(tmp_path, "sales")
         coordinator = NodeCoordinator(node_modules_path=str(node_modules))
 
         with coordinator._set_scan_roots([tmp_path]):
-            with pytest.raises(FileNotFoundError, match="Cannot read the supervisor schema version"):
+            with pytest.raises(FileNotFoundError, match="Cannot find usable TypeScript bundle containing"):
                 coordinator._build_execute_task_command(what=_make_ti(dag_id="python_dag"))
 
 
@@ -222,9 +218,9 @@ class TestNodeCoordinatorExecuteNativeDag:
             mock_start.return_value.wait.return_value = 0
             yield mock_start
 
-    def _execute(self, rel_path: str, client):
-        return NodeCoordinator().execute_task(
-            what=_make_ti(dag_id="sales"),
+    def _execute(self, rel_path: str, client, *, stub_kind=None, node_modules_path=None):
+        return NodeCoordinator(node_modules_path=node_modules_path).execute_task(
+            what=_make_ti(dag_id="sales", stub_kind=stub_kind),
             dag_rel_path=rel_path,
             bundle_info=BundleInfo(name="dags-folder", version="v1"),
             client=client,
@@ -238,6 +234,37 @@ class TestNodeCoordinatorExecuteNativeDag:
 
         assert mock_start.call_args.kwargs["command"] == ["node", str(tmp_path / "b.min.mjs")]
         assert mock_start.call_args.kwargs["subprocess_schema_version"] == "2026-10-30"
+
+    @pytest.mark.parametrize("stub_kind", [None, StubKind.TASK_HANDLER])
+    def test_runs_the_bundle_that_declares_the_dag_of_any_task_that_is_not_a_provider_operator(
+        self, mock_start, mock_client, tmp_path, node_modules, stub_kind
+    ):
+        self._execute("dag.py", mock_client, stub_kind=stub_kind, node_modules_path=str(node_modules))
+
+        assert mock_start.call_args.kwargs["command"] == ["node", str(tmp_path / "a.min.mjs")]
+
+    def test_runs_the_provider_runner_for_a_provider_operator_even_when_a_bundle_declares_the_dag(
+        self, mock_start, mock_client, node_modules
+    ):
+        self._execute(
+            "dag.py",
+            mock_client,
+            stub_kind=StubKind.PROVIDER_OPERATOR,
+            node_modules_path=str(node_modules),
+        )
+
+        assert mock_start.call_args.kwargs["command"] == [
+            "node",
+            str(node_modules / "@apache-airflow" / "ts-sdk" / "dist" / "coordinator" / "provider-runner.js"),
+        ]
+        assert mock_start.call_args.kwargs["subprocess_schema_version"] == SCHEMA_VERSION
+
+    def test_fails_a_provider_operator_without_a_node_modules_path(self, mock_start, mock_client):
+        with pytest.raises(TaskLaunchError, match="node_modules_path, and it is not set") as raised:
+            self._execute("dag.py", mock_client, stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert raised.value.retryable is False
+        mock_start.assert_not_called()
 
     def test_fails_without_starting_node_for_a_bundle_that_fails_its_integrity_check(
         self, mock_start, mock_client, tmp_path

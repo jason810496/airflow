@@ -23,9 +23,9 @@ The operators and sensors of `apache-airflow-providers-standard` 1.22.0, for a D
 [`@apache-airflow/ts-sdk`](https://www.npmjs.com/package/@apache-airflow/ts-sdk).
 
 A binding has no task body. It records the Python operator class and its arguments in the
-Dag, and a Python worker that has the provider installed runs the operator. Such a task does
-not take the Dag's queue: give it one in its task options when the default queue is not
-served by Python workers.
+Dag, and a Python worker that has the provider installed runs the operator. Such a task takes
+the Dag's queue like any other task: give it one in its task options when the Dag's queue is
+not served by Python workers.
 
 ```ts
 import { Dag } from "@apache-airflow/ts-sdk";

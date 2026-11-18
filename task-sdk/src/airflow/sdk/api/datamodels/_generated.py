@@ -573,6 +573,16 @@ class ProcessorWorkClaimBody(BaseModel):
     limit: Annotated[int | None, Field(ge=1, le=100, title="Limit")] = 20
 
 
+class StubKind(str, Enum):
+    """
+    What a worker runs for a stub task, one whose definition the API server sends in the run context.
+    """
+
+    TASK_HANDLER = "task_handler"
+    DAG_DEFINITION = "dag_definition"
+    PROVIDER_OPERATOR = "provider_operator"
+
+
 class TIAwaitingInputStatePayload(BaseModel):
     """
     Schema for parking a TaskInstance in an awaiting_input state (Human-in-the-loop, no trigger).
@@ -725,6 +735,7 @@ class TaskInstance(BaseModel):
     hostname: Annotated[str | None, Field(title="Hostname")] = None
     context_carrier: Annotated[dict[str, Any] | None, Field(title="Context Carrier")] = None
     queue: Annotated[str | None, Field(title="Queue")] = "default"
+    stub_kind: StubKind | None = None
 
 
 class TaskInstanceState(str, Enum):

@@ -54,6 +54,7 @@ from airflow.sdk.definitions._internal.loop import create_loop
 from airflow.utils.log.file_task_handler import FileTaskHandler
 from airflow.utils.log.task_log_address import TaskLogContext, prepare_task_log_contexts
 from airflow.utils.state import CallbackState, TaskInstanceState
+from airflow.utils.types import StubKind
 
 from tests_common.test_utils.asserts import assert_queries_count
 
@@ -346,6 +347,44 @@ def test_workload_ti_round_trips_through_sdk_generated_model(coordinates):
     assert not hasattr(received, "pool_slots")
 
 
+@pytest.mark.parametrize("stub_kind", [None, *StubKind])
+def test_workload_ti_carries_stub_kind_to_the_sdk_generated_model(stub_kind):
+    ti = TaskInstanceDTO(
+        id=uuid4(),
+        dag_version_id=uuid4(),
+        task_id="test_task",
+        dag_id="test_dag",
+        run_id="test_run",
+        try_number=1,
+        pool_slots=1,
+        priority_weight=1,
+        stub_kind=stub_kind,
+    )
+
+    received = GeneratedTaskInstance.model_validate(ti.model_dump(mode="json"))
+
+    assert received.stub_kind == stub_kind
+
+
+@pytest.mark.db_test
+def test_execute_task_carries_the_stub_kind_of_the_row(dag_maker, session):
+    with dag_maker():
+        EmptyOperator(task_id="task")
+    ti = dag_maker.create_dagrun().task_instances[0]
+    ti.stub_kind = StubKind.PROVIDER_OPERATOR.value
+    session.flush()
+
+    workload = ExecuteTask.make(
+        ti,
+        dag_rel_path=PurePosixPath("dag.py"),
+        bundle_info=BundleInfo(name="dags-folder", version=None),
+    )
+    received = GeneratedTaskInstance.model_validate_json(workload.ti.model_dump_json())
+
+    assert workload.ti.stub_kind is StubKind.PROVIDER_OPERATOR
+    assert received.stub_kind == StubKind.PROVIDER_OPERATOR
+
+
 @pytest.mark.db_test
 @pytest.mark.parametrize("map_index", [-1, 3])
 def test_execute_task_carries_persisted_legacy_coordinates(dag_maker, session, map_index):
@@ -442,6 +481,7 @@ class TestExecuteTaskMakeVersionData:
         ti.region_index = -1
         ti.pool_slots = 1
         ti.queue = "default"
+        ti.stub_kind = None
         ti.priority_weight = 1
         ti.executor_config = None
         ti.parent_context_carrier = None

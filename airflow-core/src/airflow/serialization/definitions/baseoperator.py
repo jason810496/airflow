@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from airflow.task.trigger_rule import TriggerRule
     from airflow.ti_deps.deps.base_ti_dep import BaseTIDep
     from airflow.triggers.base import StartTriggerArgs
+    from airflow.utils.types import StubKind
 
 DEFAULT_OPERATOR_DEPS: frozenset[BaseTIDep] = frozenset(
     (
@@ -141,6 +142,8 @@ class SerializedBaseOperator(DAGNode):
 
     start_from_trigger: bool = False
     start_trigger_args: StartTriggerArgs | None = None
+
+    stub_kind: StubKind | None = None
 
     task_type: str = "BaseOperator"
     template_ext: Sequence[str] = []

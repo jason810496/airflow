@@ -75,7 +75,14 @@ PYTHON = build_serialized(
 SDK = build_serialized(
     "/bundles/app/bundle.mjs",
     [
-        {"task_id": "extract", "retries": 2, "pool_slots": 1.0, "task_type": "Task", "is_stub": True},
+        {
+            "task_id": "extract",
+            "retries": 2,
+            "pool_slots": 1.0,
+            "task_type": "Task",
+            "is_stub": True,
+            "stub_kind": "dag_definition",
+        },
         {"task_id": "load", "task_type": "Task", "language": "typescript", "_arg_bindings": []},
     ],
 )

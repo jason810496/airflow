@@ -423,8 +423,9 @@ Python argument in camel case. Pass the binding to ``dag.task`` in place of a ha
 
 A binding has no task body. The SDK writes the Python operator class and its arguments into the serialized Dag,
 and a Python worker builds the operator from there and runs it, so the worker needs the provider installed. Such
-a task does not take the Dag's ``queue``, which routes the Dag's own tasks to the Node.js coordinator: it runs on
-the default queue, or on the ``queue`` its task options name.
+a task takes the Dag's ``queue`` like any other task, and that queue routes it to the Node.js coordinator, which
+cannot run a Python operator. Name a ``queue`` that a Python worker serves, such as ``default``, in its task
+options.
 
 * A templated argument takes a Jinja template, which the Python worker renders, or another task's result, which
   also makes that task an upstream. Any other argument takes a value.
@@ -900,12 +901,10 @@ Then give the directory to the coordinator with ``node_modules_path``:
     }
     queue_to_coordinator = {"typescript": "ts"}
 
-When no bundle declares the task's ``dag_id``, the coordinator runs the SDK's provider runner from that directory.
-The runner imports the operator's package and runs the operator.
+The coordinator runs the SDK's provider runner from that directory for each provider operator task, whether or
+not a bundle declares the Dag's ``dag_id``. The runner imports the operator's package and runs the operator.
 
-A Python Dag whose ``dag_id`` a bundle declares, for example because it also has stub tasks, runs in that bundle
-instead of the provider runner. The bundle then has to resolve the operator's package, and share its copy of the
-SDK, for the operator to run.
+Another task of the Python Dag, such as a stub task, runs in the bundle that declares the ``dag_id``.
 
 Where the configuration is needed
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -944,8 +943,8 @@ The ``kwargs`` of a ``coordinators`` entry are passed to
    * - ``node_modules_path``
      - *(unset)*
      - A ``node_modules`` directory that holds ``@apache-airflow/ts-sdk`` and the provider packages that
-       implement operators in TypeScript. A task that no bundle declares runs in the SDK's provider runner from
-       it. When unset, such a task fails.
+       implement operators in TypeScript. A provider operator task of a Python Dag runs in the SDK's provider
+       runner from it. When unset, such a task fails.
    * - ``task_startup_timeout``
      - ``10.0``
      - Seconds to wait for a task's bundle to start. Increase it if your bundle starts slowly, for example on

@@ -28,6 +28,7 @@
                 "_task_module": "org.apache.airflow.sdk.execution",
                 "language": "java",
                 "is_stub": true,
+                "stub_kind": "dag_definition",
                 "template_fields": [],
                 "retries": 2,
                 "queue": "java",
@@ -46,6 +47,7 @@
                 "_task_module": "org.apache.airflow.sdk.execution",
                 "language": "java",
                 "is_stub": true,
+                "stub_kind": "dag_definition",
                 "template_fields": [],
                 "queue": "java",
                 "trigger_rule": "all_done"
@@ -115,6 +117,7 @@
                 "_task_module": "org.apache.airflow.sdk.execution",
                 "language": "java",
                 "is_stub": true,
+                "stub_kind": "dag_definition",
                 "template_fields": []
               }
             }

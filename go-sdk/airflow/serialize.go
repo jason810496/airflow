@@ -453,6 +453,8 @@ func (d *DagRef) serializeTaskLocked(task *TaskRef) map[string]any {
 	// them is a stub. is_stub makes the API server send the task its arguments from _arg_bindings when
 	// the task runs, as it does for a @task.stub task of a Python Dag.
 	data["is_stub"] = true
+	// A task of a Dag written in a language SDK, as opposed to a task handler or a provider operator.
+	data["stub_kind"] = "dag_definition"
 	// The worker picks a runtime by queue, so a task from TriggerDagRun takes the queue of the Dag too.
 	if spec.Queue == "" {
 		spec.Queue = d.spec.Queue

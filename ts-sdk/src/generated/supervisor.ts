@@ -197,6 +197,13 @@ export type ContextCarrier = {
   [k: string]: unknown;
 } | null;
 export type Queue = string;
+/**
+ * What a worker runs for a stub task, one whose definition the API server sends in the run context.
+ *
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "StubKind".
+ */
+export type StubKind = "task_handler" | "dag_definition" | "provider_operator";
 export type IsFailureCallback = boolean | null;
 export type Type12 = "DagCallbackRequest";
 export type File = string;
@@ -1041,6 +1048,7 @@ export interface TaskInstance {
   hostname?: Hostname;
   context_carrier?: ContextCarrier;
   queue?: Queue;
+  stub_kind?: StubKind | null;
 }
 /**
  * Request for DAG File Parsing.

@@ -130,6 +130,7 @@ export const UNEXPRESSIBLE_TASK_FIELDS = {
   inlets: "an array of assets, which the SDK does not model yet",
   outlets: "an array of assets, which the SDK does not model yet",
   start_trigger_args: "an object; deferrable-operator machinery",
+  stub_kind: "an enum with no type; the SDK's serializer writes it, the author never sets it",
 };
 
 /**

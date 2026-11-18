@@ -156,6 +156,7 @@ describe("serializeDag", () => {
       language: "typescript",
       template_fields: [],
       is_stub: true,
+      stub_kind: "dag_definition",
     });
   });
 
@@ -216,6 +217,7 @@ describe("serializeDag", () => {
 
       expect(taskMap(serializeDag(dag, "", ".") as Json).get("transform")).toMatchObject({
         is_stub: true,
+        stub_kind: "dag_definition",
         _arg_bindings: [{ name: "extracted", kind: "xcom", task_id: "extract" }],
       });
     });

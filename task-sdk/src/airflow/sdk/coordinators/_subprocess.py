@@ -49,7 +49,7 @@ import structlog
 from airflow.dag_processing.bundles.base import BundleVersionLock  # noqa: SDK002
 from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TaskInstanceState
+from airflow.sdk.api.datamodels._generated import BundleInfo, StubKind, TaskInstance, TaskInstanceState
 from airflow.sdk.bases.xcom import (
     XComCoordinate,
     build_loop_error,
@@ -1046,7 +1046,8 @@ class SubprocessCoordinator(BaseCoordinator):
     Abstract base for coordinators that launch a subprocess and IPC over TCP sockets.
 
     Subclasses provide the per-task subprocess command and the supervisor
-    wire-schema version via :meth:`_build_execute_task_command`. The rest of
+    wire-schema version via :meth:`_build_execute_task_command`, and may also provide the command
+    for a provider operator via :meth:`_build_provider_operator_command`. The rest of
     the socket lifecycle — listening, spawning the child, accepting
     connections, draining startup output, and tearing everything down on
     failure — is handled here.
@@ -1110,6 +1111,23 @@ class SubprocessCoordinator(BaseCoordinator):
         retryability guessed from its type.
         """
         raise NotImplementedError
+
+    def _build_provider_operator_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
+        """
+        Build the command that runs the provider operator of *what*, and resolve its wire-schema version.
+
+        A coordinator whose runtime can run a provider operator it was not built with overrides this to
+        start a runtime that loads the operator from the run context. Unlike
+        :meth:`_build_execute_task_command`, it runs with no scan roots, because it reads no Dag bundle.
+        The contract is otherwise that of :meth:`_build_execute_task_command`.
+
+        :raises TaskLaunchError: always, by default, because the coordinator cannot run provider operators.
+        """
+        raise TaskLaunchError(
+            f"{type(self).__name__} cannot run provider operators. Route the task's queue to a coordinator "
+            "that can in [sdk] queue_to_coordinator.",
+            retryable=False,
+        )
 
     def _build_dag_file_command(
         self, *, what: TaskInstance, path: pathlib.Path
@@ -1263,13 +1281,15 @@ class SubprocessCoordinator(BaseCoordinator):
 
         A task of a native Dag runs its own Dag file, *dag_rel_path* in the Dag bundle of
         *bundle_info* at the version of the run, and never another Dag file. Its runtime may still
-        read other files of the bundle, such as the JARs on a Java classpath. Any other task runs the
-        artifact found by scanning the bundle that holds the artifacts.
+        read other files of the bundle, such as the JARs on a Java classpath. Any other task whose
+        ``stub_kind`` is ``provider_operator`` runs the runtime that
+        :meth:`_build_provider_operator_command` starts, which reads no Dag bundle. Every other task
+        runs the artifact found by scanning the bundle that holds the artifacts.
 
-        :raises TaskLaunchError: when the runtime cannot start: a native Dag file cannot run, the
-            artifact of any other task cannot be found or run, the artifact needs a supervisor schema
-            version that this worker's Task SDK does not support, or the runtime exits or times out
-            before it connects.
+        :raises TaskLaunchError: when the runtime cannot start: a native Dag file cannot run, this
+            coordinator cannot run the provider operator of the task, the artifact of any other task
+            cannot be found or run, the artifact needs a supervisor schema version that this worker's
+            Task SDK does not support, or the runtime exits or times out before it connects.
         """
         task_logger = logger or log
         rel_path = os.fspath(dag_rel_path)
@@ -1278,21 +1298,26 @@ class SubprocessCoordinator(BaseCoordinator):
                 f"Cannot prepare the runtime of task {what.task_id!r} in Dag {what.dag_id!r}"
             ):
                 is_native = self._is_native_dag_file(rel_path, bundle_info.name)
-                if is_native:
-                    bundle = _resolve_bundle(bundle_info, task_logger)
+                if not is_native and what.stub_kind == StubKind.PROVIDER_OPERATOR:
+                    command, subprocess_schema_version = self._build_provider_operator_command(what=what)
                 else:
-                    bundle = self._resolve_artifact_bundle(bundle_info, task_logger)
-                # Hold the version lock across start()/wait() so bundle cleanup cannot
-                # rmtree a version this task is still reading from, mirroring
-                # task_runner.main() for the Python task path.
-                stack.enter_context(BundleVersionLock(bundle_name=bundle.name, bundle_version=bundle.version))
-                stack.enter_context(self._set_scan_roots([bundle.path]))
-                if is_native:
-                    command, subprocess_schema_version = self._build_native_task_command(
-                        what=what, bundle=bundle, rel_path=rel_path
+                    if is_native:
+                        bundle = _resolve_bundle(bundle_info, task_logger)
+                    else:
+                        bundle = self._resolve_artifact_bundle(bundle_info, task_logger)
+                    # Hold the version lock across start()/wait() so bundle cleanup cannot
+                    # rmtree a version this task is still reading from, mirroring
+                    # task_runner.main() for the Python task path.
+                    stack.enter_context(
+                        BundleVersionLock(bundle_name=bundle.name, bundle_version=bundle.version)
                     )
-                else:
-                    command, subprocess_schema_version = self._build_execute_task_command(what=what)
+                    stack.enter_context(self._set_scan_roots([bundle.path]))
+                    if is_native:
+                        command, subprocess_schema_version = self._build_native_task_command(
+                            what=what, bundle=bundle, rel_path=rel_path
+                        )
+                    else:
+                        command, subprocess_schema_version = self._build_execute_task_command(what=what)
                 if subprocess_schema_version is not None:
                     _require_supported_schema_version(subprocess_schema_version)
             process = _PopenActivitySubprocess.start(

@@ -71,7 +71,7 @@ function serializeTasks(dag: Dag): Map<string, Json> {
 
 describe("defineProviderOperator", () => {
   it("serializes the task as the Python operator class with its constructor arguments", () => {
-    const dag = new Dag("d", { queue: "typescript" });
+    const dag = new Dag("d");
     dag.task(
       "notify",
       Notify({
@@ -90,6 +90,7 @@ describe("defineProviderOperator", () => {
       _task_module: "airflow.providers.demo.operators.notify",
       language: "typescript",
       is_stub: true,
+      stub_kind: "provider_operator",
       template_fields: ["subject", "recipients"],
       retries: 2,
       retry_delay: 30,
@@ -140,6 +141,7 @@ describe("defineProviderOperator", () => {
 
     expect(tasks.get("read")).toMatchObject({
       is_stub: true,
+      stub_kind: "provider_operator",
       _operator_module: "@demo/providers-demo/operators/file",
     });
     expect(tasks.get("notify")).not.toHaveProperty("_operator_module");
@@ -191,7 +193,7 @@ describe("defineProviderOperator", () => {
     ]);
   });
 
-  it("keeps the Dag's queue for TypeScript tasks only, unless the task names its own", () => {
+  it("gives a provider task the Dag's queue like any other task, unless it names its own", () => {
     const dag = new Dag("d", { queue: "typescript" });
     dag.task("native", async () => 1)();
     dag.task("python", Notify({ subject: "s" }))();
@@ -199,7 +201,7 @@ describe("defineProviderOperator", () => {
 
     const tasks = serializeTasks(dag);
     expect(tasks.get("native")!["queue"]).toBe("typescript");
-    expect(tasks.get("python")).not.toHaveProperty("queue");
+    expect(tasks.get("python")!["queue"]).toBe("typescript");
     expect(tasks.get("python")!["is_stub"]).toBe(true);
     expect(tasks.get("routed")!["queue"]).toBe("python-gpu");
     expect(tasks.get("routed")!["_operator_kwargs"]).toContainEqual({
@@ -207,6 +209,16 @@ describe("defineProviderOperator", () => {
       kind: "literal",
       value: "python-gpu",
     });
+  });
+
+  it("marks a task that a TypeScript handler runs as a Dag definition and a provider task as a provider operator", () => {
+    const dag = new Dag("d");
+    dag.task("native", async () => 1)();
+    dag.task("python", Notify({ subject: "s" }))();
+
+    const tasks = serializeTasks(dag);
+    expect(tasks.get("native")!["stub_kind"]).toBe("dag_definition");
+    expect(tasks.get("python")!["stub_kind"]).toBe("provider_operator");
   });
 
   it("writes what the operator class fixes: sensor, skip, colours, templates and display name", () => {

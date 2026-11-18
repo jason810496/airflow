@@ -45,7 +45,13 @@ from uuid6 import uuid7
 
 from airflow.dag_processing.bundles.base import BaseDagBundle, BundleVersion
 from airflow.sdk.api.client import Client, TaskInstanceOperations
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TaskInstanceState, TIRunContext
+from airflow.sdk.api.datamodels._generated import (
+    BundleInfo,
+    StubKind,
+    TaskInstance,
+    TaskInstanceState,
+    TIRunContext,
+)
 from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
 from airflow.sdk.coordinators._subprocess import (
@@ -97,7 +103,12 @@ if not AIRFLOW_V_3_3_PLUS:
     pytest.skip("Coordinator is only compatible with Airflow >= 3.3.0", allow_module_level=True)
 
 
-def _make_ti(dag_id: str = "tutorial_dag", queue: str = "socket", map_index: int = -1) -> TaskInstance:
+def _make_ti(
+    dag_id: str = "tutorial_dag",
+    queue: str = "socket",
+    map_index: int = -1,
+    stub_kind: StubKind | None = None,
+) -> TaskInstance:
     return TaskInstance(
         id=uuid7(),
         dag_version_id=uuid7(),
@@ -107,6 +118,7 @@ def _make_ti(dag_id: str = "tutorial_dag", queue: str = "socket", map_index: int
         try_number=1,
         map_index=map_index,
         queue=queue,
+        stub_kind=stub_kind,
     )
 
 
@@ -717,6 +729,19 @@ class TestSubprocessCoordinatorAttributes:
 
         with pytest.raises(NotImplementedError):
             _Plain()._build_execute_task_command(what=_make_ti())
+
+    def test_build_provider_operator_command_default_raises_without_a_retry(self):
+        class _Plain(SubprocessCoordinator):
+            pass
+
+        with pytest.raises(TaskLaunchError) as raised:
+            _Plain()._build_provider_operator_command(what=_make_ti(stub_kind=StubKind.PROVIDER_OPERATOR))
+
+        assert raised.value.retryable is False
+        assert str(raised.value) == (
+            "_Plain cannot run provider operators. Route the task's queue to a coordinator that can in "
+            "[sdk] queue_to_coordinator."
+        )
 
     def test_build_dag_file_command_default_raises(self, tmp_path):
         class _Plain(SubprocessCoordinator):
@@ -2628,6 +2653,18 @@ class _NativeStubCoordinator(_StubSubprocessCoordinator):
 
 
 @attrs.define(kw_only=True)
+class _ProviderStubCoordinator(_NativeStubCoordinator):
+    """Runs provider operators, recording the tasks its command builder is given."""
+
+    provider_schema_version: str | None = None
+    recorded_provider_tasks: list[TaskInstance] = attrs.field(init=False, factory=list)
+
+    def _build_provider_operator_command(self, *, what):
+        self.recorded_provider_tasks.append(what)
+        return [*self.command, "--provider"], self.provider_schema_version
+
+
+@attrs.define(kw_only=True)
 class _BrokenNativeCoordinator(_NativeStubCoordinator):
     error: Exception
 
@@ -2711,9 +2748,11 @@ class TestExecuteTaskNativeDagFile:
             mock_start.return_value.wait.return_value = 0
             yield mock_start
 
-    def _execute(self, coordinator, client, *, rel_path="sub/dag.native", bundle_info=BUNDLE_INFO):
+    def _execute(
+        self, coordinator, client, *, rel_path="sub/dag.native", bundle_info=BUNDLE_INFO, stub_kind=None
+    ):
         return coordinator.execute_task(
-            what=_make_ti(),
+            what=_make_ti(stub_kind=stub_kind),
             dag_rel_path=rel_path,
             bundle_info=bundle_info,
             client=client,
@@ -2968,15 +3007,68 @@ class TestExecuteTaskNativeDagFile:
 
     @pytest.mark.usefixtures("mock_lock", "artifact_bundle")
     @pytest.mark.parametrize("rel_path", ["dag.py", "sub/dag.native.py", "sub/dag"])
-    def test_a_file_that_is_not_native_scans_the_bundle(self, mock_start, mock_client, rel_path):
-        coordinator = _NativeStubCoordinator(command=["/runtime"])
+    @pytest.mark.parametrize("stub_kind", [None, StubKind.TASK_HANDLER, StubKind.DAG_DEFINITION])
+    def test_a_file_that_is_not_native_scans_the_bundle(self, mock_start, mock_client, rel_path, stub_kind):
+        coordinator = _ProviderStubCoordinator(command=["/runtime"])
 
         with _native_dag_files("native"):
-            self._execute(coordinator, mock_client, rel_path=rel_path)
+            self._execute(coordinator, mock_client, rel_path=rel_path, stub_kind=stub_kind)
 
         assert coordinator.scans == 1
         assert coordinator.recorded_dag_files == []
+        assert coordinator.recorded_provider_tasks == []
         assert mock_start.call_args.kwargs["command"] == ["/runtime"]
+
+    @pytest.mark.usefixtures("artifact_bundle")
+    def test_a_provider_operator_runs_the_provider_command_without_reading_a_bundle(
+        self, mock_start, mock_lock, mock_initialize, mock_client
+    ):
+        coordinator = _ProviderStubCoordinator(command=["/runtime"], provider_schema_version="2026-06-16")
+
+        with _native_dag_files("native"):
+            self._execute(coordinator, mock_client, rel_path="dag.py", stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert [ti.task_id for ti in coordinator.recorded_provider_tasks] == ["task_1"]
+        assert coordinator.scans == 0
+        assert coordinator.recorded_roots == []
+        assert coordinator.recorded_dag_files == []
+        mock_initialize.assert_not_called()
+        mock_lock.assert_not_called()
+        assert mock_start.call_args.kwargs["command"] == ["/runtime", "--provider"]
+        assert mock_start.call_args.kwargs["subprocess_schema_version"] == "2026-06-16"
+
+    @pytest.mark.usefixtures("mock_start", "mock_lock", "mock_initialize")
+    def test_a_provider_operator_of_a_native_dag_file_runs_the_dag_file(self, mock_client, tmp_path):
+        coordinator = _ProviderStubCoordinator(command=["/runtime"])
+
+        with _native_dag_files("native"):
+            self._execute(coordinator, mock_client, stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert coordinator.recorded_dag_files == [tmp_path / "sub" / "dag.native"]
+        assert coordinator.recorded_provider_tasks == []
+
+    @pytest.mark.usefixtures("mock_start", "mock_lock", "mock_initialize")
+    def test_a_provider_operator_fails_without_a_retry_on_a_coordinator_that_cannot_run_it(self, mock_client):
+        coordinator = _NativeStubCoordinator(command=["/runtime"])
+
+        with _native_dag_files("native"), pytest.raises(TaskLaunchError) as raised:
+            self._execute(coordinator, mock_client, rel_path="dag.py", stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert raised.value.retryable is False
+        assert str(raised.value).startswith("_NativeStubCoordinator cannot run provider operators.")
+        assert coordinator.scans == 0
+
+    @pytest.mark.usefixtures("mock_start", "mock_lock", "mock_initialize")
+    def test_a_provider_operator_fails_without_a_retry_for_a_schema_version_the_worker_does_not_support(
+        self, mock_client
+    ):
+        coordinator = _ProviderStubCoordinator(command=["/runtime"], provider_schema_version="1999-01-01")
+
+        with _native_dag_files("native"), pytest.raises(TaskLaunchError) as raised:
+            self._execute(coordinator, mock_client, rel_path="dag.py", stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert raised.value.retryable is False
+        assert "supervisor schema version '1999-01-01'" in str(raised.value)
 
 
 class TestIsFileInBundle:
