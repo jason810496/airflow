@@ -328,6 +328,28 @@ It validates the container against `TIProviderOperator` and fails the call with 
 | Who builds the operator | Python task runner, from the class path | Lang SDK runtime, from its bundle or `_operator_module` |
 | Templates | Rendered by the task runner | Rendered by the supervisor's helper process |
 
+## Releasing wrapper packages
+
+A provider release produces the spec, and a wrapper release turns the spec into one package per SDK. The release manager (RM) of a provider wave runs the spec generator, and the spec is committed with the provider's source. Who releases the wrapper packages from it is open, with two options:
+
+```mermaid
+flowchart TD
+    src["New amazon provider<br/>implemented in Python"] --> gen["Provider RM runs<br/>generate_operator_specs.py"]
+    gen --> spec["providers/amazon/_generated/lang_sdk_operators.json<br/>committed in the provider wave"]
+    spec -- "Option A" --> rmA["Same provider RM,<br/>same provider wave"]
+    spec -- "Option B" --> rmB["A Lang SDK RM,<br/>separate wrapper wave"]
+    rmA --> gen2["Each SDK's generator<br/>reads the spec"]
+    rmB --> gen2
+    gen2 --> pkg["@apache-airflow/providers-amazon on npm,<br/>Go module, Java artifact"]
+```
+
+- **Option A: same wave.** The provider RM also generates and publishes every wrapper package in the provider wave. Wrappers never lag behind their provider, but the provider RM needs the Node, Go and Java toolchains and publishing access to every package registry, and each wave republishes wrappers even when no operator signature changed.
+- **Option B: separate wrapper waves.** The provider RM only regenerates and commits the spec, which a prek hook already keeps current. A Lang SDK RM releases wrapper packages from the committed specs on its own cadence, such as one wrapper wave every two or three provider waves, or an ad-hoc wave when a provider adds an operator users are waiting for. The provider release process stays as it is, and spec changes from several waves ship together. It would amend ADR-0009's decision 8, which ships wrappers on the provider's own release cadence.
+
+Either way a wrapper package is versioned as the provider it was generated from, as [ADR-0009](0009-provider-operators-as-generated-dsl.md) decides, and the SDK's own version stays separate. A provider's major version bump does not force a wrapper upgrade: the wrapper only describes constructor signatures, so users upgrade it when the signature of an operator they use changes. Skew between the wrapper in the Dag and the provider installed on the worker warns and does not block.
+
+The same choice applies in the other direction. For a provider implemented in a Lang SDK, the spec comes from the implementation's release, and the Python wrapper is the package released from it.
+
 ## Dynamic loading in Go and Java
 
 The TypeScript SDK can load an operator it was not built with because Node imports modules at run time. Go and Java need the same three pieces, each in their own way:
