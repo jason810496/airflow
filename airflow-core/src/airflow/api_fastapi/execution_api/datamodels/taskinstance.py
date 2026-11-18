@@ -504,6 +504,22 @@ class LoopContext(BaseModel):
     """The first iteration ``region_id`` holds. Absent for the original region, which holds them from 1."""
 
 
+class TIProviderOperator(BaseModel):
+    """
+    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
+
+    A Python worker builds the operator from it, because it cannot import the Dag file.
+    """
+
+    classpath: str = Field(description="Import path of the operator class.")
+    kwargs: list[TaskArgBinding] = Field(
+        description="Constructor keyword arguments, in the order of the operator's parameters."
+    )
+    downstream_task_ids: dict[str, list[str]] = Field(
+        description="The direct downstream task ids of every task in the Dag, keyed by task id."
+    )
+
+
 class TIRunContext(BaseModel):
     """Response schema for TaskInstance run context."""
 
@@ -578,6 +594,13 @@ class TIRunContext(BaseModel):
         ),
     )
 
+    provider_operator: TIProviderOperator | None = None
+    """
+    The Python operator a task of a language SDK Dag runs, for a Python worker to build.
+
+    ``None`` for a task that is not a provider operator.
+    """
+
     multi_team: bool = False
     """
     Whether the deployment runs in multi-team mode.
@@ -626,22 +649,6 @@ class TaskBreadcrumbsResponse(BaseModel):
     """Response for task breadcrumbs."""
 
     breadcrumbs: Iterable[dict[str, Any]]
-
-
-class TIProviderOperatorResponse(BaseModel):
-    """
-    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
-
-    A Python worker builds the operator from it, because it cannot import the Dag file.
-    """
-
-    classpath: str = Field(description="Import path of the operator class.")
-    kwargs: dict[str, Any] = Field(
-        description="Constructor keyword arguments, each in the type encoding of the serialized Dag."
-    )
-    downstream_task_ids: dict[str, list[str]] = Field(
-        description="The direct downstream task ids of every task in the Dag, keyed by task id."
-    )
 
 
 class InactiveAssetsResponse(BaseModel):

@@ -21,6 +21,7 @@ from cadwyn import (
     RequestInfo,
     ResponseInfo,
     VersionChange,
+    VersionChangeWithSideEffects,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
     endpoint,
@@ -49,14 +50,21 @@ class AddDagProcessorJobEndpoints(VersionChange):
     )
 
 
-class AddTaskInstanceProviderOperatorEndpoint(VersionChange):
-    """Add the endpoint a worker reads a language SDK Dag's provider operator from, to run it."""
+class AddProviderOperatorToTIRunContext(VersionChangeWithSideEffects):
+    """Add ``provider_operator``, the Python operator a task of a language SDK Dag runs."""
 
     description = __doc__
 
+    # A side-effect change, like AddArgBindingsToTIRunContext, so ti_run can skip reading the
+    # operator for clients older than this version, which never receive the field.
     instructions_to_migrate_to_previous_version = (
-        endpoint("/task-instances/{task_instance_id}/provider-operator", ["GET"]).didnt_exist,
+        schema(TIRunContext).field("provider_operator").didnt_exist,
     )
+
+    @convert_response_to_previous_version_for(TIRunContext)  # type: ignore[arg-type]
+    def remove_provider_operator_field(response: ResponseInfo) -> None:
+        """Strip ``provider_operator`` from the run context for older clients."""
+        response.body.pop("provider_operator", None)
 
 
 class AddExecutionTimeoutToTIRunContext(VersionChange):

@@ -90,7 +90,6 @@ from airflow.sdk.api.datamodels._generated import (
     TaskStateStoreResponse,
     TIAwaitingInputStatePayload,
     TIDeferredStatePayload,
-    TIProviderOperatorResponse,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
@@ -582,12 +581,6 @@ class InactiveAssetsResult(InactiveAssetsResponse):
         return cls(**inactive_assets_response.model_dump(exclude_defaults=True), type="InactiveAssetsResult")
 
 
-class ProviderOperatorResult(TIProviderOperatorResponse):
-    """The provider operator of the running task instance, in reply to :class:`GetProviderOperator`."""
-
-    type: Literal["ProviderOperatorResult"] = "ProviderOperatorResult"
-
-
 class XComResult(XComResponse):
     """Response to ReadXCom request."""
 
@@ -915,7 +908,6 @@ ToTask = Annotated[
     | XComSequenceIndexResult
     | XComSequenceSliceResult
     | InactiveAssetsResult
-    | ProviderOperatorResult
     | CreateHITLDetailPayload
     | HITLDetailRequestResult
     | HITLDetailResponseResult
@@ -1270,13 +1262,6 @@ class ValidateInletsAndOutlets(BaseModel):
     type: Literal["ValidateInletsAndOutlets"] = "ValidateInletsAndOutlets"
 
 
-class GetProviderOperator(BaseModel):
-    """Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported."""
-
-    ti_id: UUID
-    type: Literal["GetProviderOperator"] = "GetProviderOperator"
-
-
 class GetPrevSuccessfulDagRun(BaseModel):
     ti_id: UUID
     type: Literal["GetPrevSuccessfulDagRun"] = "GetPrevSuccessfulDagRun"
@@ -1402,7 +1387,6 @@ ToSupervisor = Annotated[
     | SetExecutionTimeout
     | SucceedTask
     | ValidateInletsAndOutlets
-    | GetProviderOperator
     | TaskState
     | TriggerDagRun
     | UpdateDagRunNote

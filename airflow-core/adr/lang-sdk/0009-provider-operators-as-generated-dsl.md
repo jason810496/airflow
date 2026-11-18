@@ -98,18 +98,22 @@ not implemented yet.
   writes one `@apache-airflow/providers-<provider-id>` package per spec, versioned as the provider.
   A TypeScript SDK unit test fails when the committed packages are not what the specs generate.
 - **The serialized task is the Python operator.** A binding writes the class as `task_type` and
-  `_task_module`, its arguments under `_operator_kwargs` in the type encoding of
-  `BaseSerialization.serialize()`, and the class attributes the scheduler reads, such as
-  `template_fields`, `_is_sensor` and `_can_skip_downstream`. It is not a stub, so it gets no
-  argument bindings. A task's result given to a templated argument is written as an `xcomref` and
-  drawn as an upstream edge.
-- **The worker builds the operator from what the API server sends.** When a worker cannot import the
-  Dag file, because a coordinator's importer claims it or no importer does, the task runner asks the
-  Execution API for the task's operator (`GET /task-instances/{id}/provider-operator`). The API server
-  reads it from the serialized Dag of the task instance's Dag version and returns only the class path,
-  the `_operator_kwargs` and the Dag's edges. The worker builds the class
-  with the arguments, inside a Dag whose other tasks are placeholders with the same ids and edges.
-  That is what an operator reads of its Dag, such as `ApprovalOperator` choosing what to skip.
-  When the task has no `_operator_kwargs`, the API server answers 404 and the task fails as before.
+  `_task_module`, and the class attributes the scheduler reads, such as `template_fields`,
+  `_is_sensor` and `_can_skip_downstream`. The arguments go under `_operator_kwargs`, a list of
+  argument bindings ([ADR-0007](0007-taskflow-across-language-boundary.md)) in parameter order with
+  plain JSON values. A datetime is an ISO 8601 string and a timedelta is a number of seconds, each
+  with a `value_schema` format (`date-time` or `duration-seconds`). A set or a tuple is a list.
+  A task's result given to a templated argument is an `xcom` binding and an upstream edge. It must be
+  the whole argument: a result inside a list or a dict fails when the Dag is serialized. Unset
+  optional arguments are left out. The task is marked `is_stub`, which makes the API server read it
+  when the task starts.
+- **The worker builds the operator from the run context.** When a worker cannot import the Dag file,
+  because a coordinator's importer claims it or no importer does, the task runner reads
+  `TIRunContext.provider_operator`. The API server fills it from the serialized Dag of the task
+  instance's Dag version, with the class path, the `_operator_kwargs` and the Dag's edges. The worker
+  converts each literal back by its `value_schema` and builds the class inside a Dag whose other
+  tasks are placeholders with the same ids and edges. That is what an operator reads of its Dag, such
+  as `ApprovalOperator` choosing what to skip. When the run context has no `provider_operator`, the
+  task fails as before.
 - **Limitations.** A placeholder Dag has no task groups, so a branch operator that names a group
   does not resolve it. A provider task cannot be mapped.

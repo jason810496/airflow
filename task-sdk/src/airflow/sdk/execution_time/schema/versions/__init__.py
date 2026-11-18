@@ -49,6 +49,7 @@ def get_bundle() -> VersionBundle:
     from airflow.sdk.execution_time.schema.versions.v2027_02_28 import (
         AddExecutionTimeoutToSupervisorTIRunContext,
         AddExternalClearTargetToSucceedTask,
+        AddProviderOperatorToSupervisorTIRunContext,
         AddXComBackendErrorType,
         MakeSupervisorVariableValueNonNullable,
     )
@@ -59,6 +60,7 @@ def get_bundle() -> VersionBundle:
             "2027-02-28",
             AddExecutionTimeoutToSupervisorTIRunContext,
             AddExternalClearTargetToSucceedTask,
+            AddProviderOperatorToSupervisorTIRunContext,
             MakeSupervisorVariableValueNonNullable,
             AddXComBackendErrorType,
         ),

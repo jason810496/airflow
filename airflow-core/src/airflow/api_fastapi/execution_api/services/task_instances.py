@@ -45,6 +45,19 @@ def client_supports_arg_bindings() -> bool:
     return AddArgBindingsToTIRunContext.is_applied
 
 
+def client_supports_provider_operator() -> bool:
+    """
+    Whether the request's negotiated API version can receive ``provider_operator``.
+
+    Clients on older versions never see the field (the version migration strips it from
+    the response), so the derivation must not run for them.
+    """
+    # Imported locally for the same circular-import reason as in client_supports_arg_bindings.
+    from airflow.api_fastapi.execution_api.versions.v2027_02_28 import AddProviderOperatorToTIRunContext
+
+    return AddProviderOperatorToTIRunContext.is_applied
+
+
 def get_task(dag_bag: DBDagBag, ti: Any, *, session: Session) -> SerializedOperator | None:
     """Return the task of *ti* from its Dag version, or ``None`` if it cannot be found."""
     if ti.dag_version_id is None:
@@ -65,6 +78,25 @@ def get_arg_bindings(task: SerializedOperator) -> list | None:
     if not task.is_stub:
         return None
     return task.arg_bindings
+
+
+def get_provider_operator(task: SerializedOperator) -> dict[str, Any] | None:
+    """
+    Return the provider operator *task* declares, or ``None`` if it declares none.
+
+    A language SDK writes the operator's class and its arguments for a task that a Python worker
+    runs. The edges of the whole Dag come with them, for the worker to build the Dag around the task.
+    """
+    # A task read from its Dag version always has its Dag, which the edges come from.
+    if (kwargs := task.operator_kwargs) is None or (dag := task.dag) is None:
+        return None
+    return {
+        "classpath": f"{task._task_module}.{task.task_type}",
+        "kwargs": kwargs,
+        "downstream_task_ids": {
+            task_id: sorted(other.downstream_task_ids) for task_id, other in dag.task_dict.items()
+        },
+    }
 
 
 def get_execution_timeout(task: SerializedOperator) -> float | None:

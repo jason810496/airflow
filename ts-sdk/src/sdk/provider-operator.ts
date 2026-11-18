@@ -84,24 +84,25 @@ export function defineProviderOperator<TArgs extends object, TResult = unknown>(
     if (!isPlainRecord(given)) {
       throw new Error(`${className}(...) takes an object of its arguments`);
     }
-    const kwargs = new Map<string, PythonOperatorArgument>();
-    const upstream = new Set<TaskRef>();
-    for (const [key, value] of Object.entries(given)) {
-      const param = Object.hasOwn(definition.params, key) ? definition.params[key] : undefined;
-      if (param === undefined) {
+    for (const key of Object.keys(given)) {
+      if (!Object.hasOwn(definition.params, key)) {
         throw new Error(`Unknown argument "${key}" for ${className}(...)`);
       }
-      if (value === undefined) continue;
+    }
+    // In the order the operator declares its parameters, whatever order the caller named them in.
+    const kwargs = new Map<string, PythonOperatorArgument>();
+    const upstream = new Set<TaskRef>();
+    for (const [key, param] of Object.entries(definition.params)) {
+      const value = given[key];
+      if (value === undefined) {
+        if (param.required) throw new Error(`${className}(...) needs the argument "${key}"`);
+        continue;
+      }
       const label = `Argument "${key}" of ${className}(...)`;
       kwargs.set(param.name, {
         value: copyArgument(value, param, label, templated.has(param.name), upstream),
         ...(param.encoding !== undefined && { encoding: param.encoding }),
       });
-    }
-    for (const [key, param] of Object.entries(definition.params)) {
-      if (param.required && !kwargs.has(param.name)) {
-        throw new Error(`${className}(...) needs the argument "${key}"`);
-      }
     }
     const upstreamTasks = Object.freeze([...upstream]);
     const operator: Operator<void, TResult> = {
@@ -140,7 +141,8 @@ export function defineProviderOperator<TArgs extends object, TResult = unknown>(
  * Copy one argument, so that a later change to what the author passed does not change the Dag.
  *
  * A task reference is kept as it is and added to `upstream`. Only a templated argument can take
- * one: the worker resolves a reference when it renders templates, and nothing else would.
+ * one: the worker resolves a reference when it renders templates, and nothing else would. It has
+ * to be the whole argument, which the serializer checks when it writes the Dag.
  */
 function copyArgument(
   value: unknown,

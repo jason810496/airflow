@@ -20,17 +20,19 @@ import datetime
 
 import pytest
 
-from airflow.sdk.api.datamodels._generated import TIProviderOperatorResponse
+from airflow.sdk.api.datamodels._generated import TaskArgBinding, TIProviderOperator
 from airflow.sdk.bases.operator import BaseOperator
 from airflow.sdk.definitions.dag import DAG
 from airflow.sdk.definitions.xcom_arg import PlainXComArg
 from airflow.sdk.execution_time.provider_operator import (
     ProviderOperatorError,
     build_provider_operator,
-    decode_value,
+    resolve_binding,
 )
 
 FILELOC = "/bundles/app/dag.min.mjs"
+DATE_TIME = {"type": "string", "format": "date-time"}
+DURATION_SECONDS = {"type": "number", "format": "duration-seconds"}
 
 
 class RecordingOperator(BaseOperator):
@@ -49,11 +51,21 @@ class RecordingOperator(BaseOperator):
         return self.message
 
 
+def literal(name, value, value_schema=None):
+    return {"name": name, "kind": "literal", "value": value, "value_schema": value_schema}
+
+
+def xcom(name, task_id):
+    return {"name": name, "kind": "xcom", "task_id": task_id}
+
+
 def provider_operator(kwargs, *, classpath=f"{__name__}.RecordingOperator", downstream_task_ids=None):
-    return TIProviderOperatorResponse(
-        classpath=classpath,
-        kwargs=kwargs,
-        downstream_task_ids=downstream_task_ids or {"notify": []},
+    return TIProviderOperator.model_validate(
+        {
+            "classpath": classpath,
+            "kwargs": kwargs,
+            "downstream_task_ids": downstream_task_ids or {"notify": []},
+        }
     )
 
 
@@ -62,58 +74,85 @@ def build(operator):
 
 
 @pytest.mark.parametrize(
-    ("encoded", "expected"),
+    ("binding", "expected"),
     [
-        (None, None),
-        ("text", "text"),
-        (3, 3),
-        ([1, "a"], [1, "a"]),
-        ({"__type": "dict", "__var": {"a": {"__type": "dict", "__var": {"b": 1}}}}, {"a": {"b": 1}}),
-        ({"__type": "timedelta", "__var": 90}, datetime.timedelta(seconds=90)),
-        (
-            {"__type": "datetime", "__var": 1767323045},
-            datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC),
+        pytest.param(literal("a", None), None, id="null"),
+        pytest.param(literal("a", "text"), "text", id="string"),
+        pytest.param(literal("a", 3), 3, id="number"),
+        pytest.param(literal("a", {"tags": ["a", 1]}), {"tags": ["a", 1]}, id="json"),
+        pytest.param(literal("a", "10:00", {"type": "string"}), "10:00", id="schema-without-format"),
+        pytest.param(literal("a", None, DATE_TIME), None, id="null-date-time"),
+        pytest.param(literal("a", None, DURATION_SECONDS), None, id="null-duration"),
+        pytest.param(literal("a", 90, DURATION_SECONDS), datetime.timedelta(seconds=90), id="duration"),
+        pytest.param(
+            literal("a", 1.5, DURATION_SECONDS), datetime.timedelta(seconds=1.5), id="fractional-duration"
         ),
-        ({"__type": "set", "__var": ["a", "b"]}, {"a", "b"}),
-        ({"__type": "tuple", "__var": [1, 2]}, (1, 2)),
+        pytest.param(
+            literal("a", "2026-01-02T03:04:05.000Z", DATE_TIME),
+            datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC),
+            id="utc-date-time",
+        ),
+        pytest.param(
+            literal("a", "2026-01-02T03:04:05+02:00", DATE_TIME),
+            datetime.datetime(2026, 1, 2, 1, 4, 5, tzinfo=datetime.UTC),
+            id="offset-date-time",
+        ),
+        pytest.param(
+            literal("a", "2026-01-02T03:04:05", DATE_TIME),
+            datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC),
+            id="date-time-without-offset-is-utc",
+        ),
     ],
 )
-def test_decode_value(encoded, expected):
-    assert decode_value(encoded, DAG("d", schedule=None)) == expected
+def test_resolve_binding_reads_a_literal_as_the_type_its_schema_names(binding, expected):
+    resolved = resolve_binding(TaskArgBinding.model_validate(binding), DAG("d", schedule=None))
 
-
-def test_decode_value_turns_a_reference_into_the_xcom_arg_of_that_task():
-    with DAG("d", schedule=None) as dag:
-        upstream = RecordingOperator(task_id="extract")
-
-    decoded = decode_value({"__type": "xcomref", "__var": {"task_id": "extract", "key": "rows"}}, dag)
-
-    assert isinstance(decoded, PlainXComArg)
-    assert decoded.operator is upstream
-    assert decoded.key == "rows"
+    assert resolved == expected
+    assert type(resolved) is type(expected)
+    if isinstance(resolved, datetime.datetime):
+        assert resolved.tzinfo is not None
 
 
 @pytest.mark.parametrize(
-    ("encoded", "message"),
+    ("value", "value_schema"),
     [
-        ({"a": 1}, "it is not a type-encoded value"),
-        ({"__type": "pod", "__var": {}}, "Cannot decode a value of type 'pod'"),
-        ({"__type": "xcomref", "__var": {"task_id": "missing", "key": "x"}}, "unknown task 'missing'"),
+        pytest.param("tomorrow", DATE_TIME, id="date-time-not-a-date"),
+        pytest.param(5, DATE_TIME, id="date-time-not-a-string"),
+        pytest.param("a minute", DURATION_SECONDS, id="duration-not-a-number"),
     ],
 )
-def test_decode_value_rejects_what_it_cannot_decode(encoded, message):
-    with pytest.raises(ProviderOperatorError, match=message):
-        decode_value(encoded, DAG("d", schedule=None))
+def test_resolve_binding_rejects_a_literal_its_schema_does_not_fit(value, value_schema):
+    binding = TaskArgBinding.model_validate(literal("when", value, value_schema))
+
+    with pytest.raises(ProviderOperatorError, match=f"Argument 'when' is not a valid .*: {value!r}"):
+        resolve_binding(binding, DAG("d", schedule=None))
+
+
+def test_resolve_binding_turns_an_xcom_binding_into_the_xcom_arg_of_that_task():
+    with DAG("d", schedule=None) as dag:
+        upstream = RecordingOperator(task_id="extract")
+
+    resolved = resolve_binding(TaskArgBinding.model_validate(xcom("message", "extract")), dag)
+
+    assert isinstance(resolved, PlainXComArg)
+    assert resolved.operator is upstream
+    assert resolved.key == "return_value"
+
+
+def test_resolve_binding_rejects_an_xcom_binding_of_an_unknown_task():
+    with pytest.raises(ProviderOperatorError, match="unknown task 'missing'"):
+        resolve_binding(TaskArgBinding.model_validate(xcom("message", "missing")), DAG("d", schedule=None))
 
 
 def test_build_provider_operator_builds_the_operator_with_its_dag_around_it():
     operator = provider_operator(
-        {
-            "message": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "return_value"}},
-            "timeout": {"__type": "timedelta", "__var": 30},
-            "extra": {"__type": "dict", "__var": {"tags": ["a"]}},
-            "retries": 2,
-        },
+        [
+            xcom("message", "extract"),
+            literal("timeout", 30, DURATION_SECONDS),
+            literal("not_before", "2026-01-02T03:04:05.000Z", DATE_TIME),
+            literal("extra", {"tags": ["a"]}),
+            literal("retries", 2),
+        ],
         downstream_task_ids={
             "extract": ["notify"],
             "notify": ["report", "cleanup"],
@@ -129,6 +168,7 @@ def test_build_provider_operator_builds_the_operator_with_its_dag_around_it():
     assert task.dag.fileloc == FILELOC
     assert task.retries == 2
     assert task.timeout == datetime.timedelta(seconds=30)
+    assert task.not_before == datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.UTC)
     assert task.extra == {"tags": ["a"]}
     assert isinstance(task.message, PlainXComArg)
     assert task.message.operator.task_id == "extract"
@@ -137,8 +177,12 @@ def test_build_provider_operator_builds_the_operator_with_its_dag_around_it():
     assert set(task.dag.task_dict) == {"extract", "notify", "report", "cleanup"}
 
 
+def test_the_built_operator_is_not_a_stub_so_the_task_runner_executes_it():
+    assert build(provider_operator([literal("message", "hi")])).is_stub is False
+
+
 def test_a_placeholder_task_does_not_run():
-    operator = provider_operator({}, downstream_task_ids={"extract": ["notify"], "notify": []})
+    operator = provider_operator([], downstream_task_ids={"extract": ["notify"], "notify": []})
     placeholder = build(operator).dag.task_dict["extract"]
 
     with pytest.raises(RuntimeError, match="'extract' is a placeholder"):
@@ -154,4 +198,4 @@ def test_a_placeholder_task_does_not_run():
 )
 def test_build_provider_operator_rejects_a_class_it_cannot_build(classpath, message):
     with pytest.raises(ProviderOperatorError, match=message):
-        build(provider_operator({}, classpath=classpath))
+        build(provider_operator([], classpath=classpath))

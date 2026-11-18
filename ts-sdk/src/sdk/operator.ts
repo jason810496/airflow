@@ -87,7 +87,7 @@ export interface OperatorDagDependency {
 
 /** One constructor argument of a Python operator, before the serializer encodes it. */
 export interface PythonOperatorArgument {
-  /** Plain JSON, with a `TaskRef` wherever an upstream task's result goes. */
+  /** Plain JSON, or a `TaskRef` when the whole argument is an upstream task's result. */
   readonly value: unknown;
   /** Set for a value JSON has no type for: a number of seconds, or a `Date`. */
   readonly encoding?: "timedelta" | "datetime";
@@ -149,8 +149,9 @@ export interface Operator<TArgs extends object | void = void, TResult = unknown>
   /** @internal The Dags this task depends on. */
   getDagDependencies?(): readonly OperatorDagDependency[];
   /**
-   * @internal Set when a Python worker runs the task as this class. The task is then not a stub,
-   * does not take the Dag's queue, and `execute` only runs when its queue is misrouted.
+   * @internal Set when a Python worker runs the task as this class. The task is then serialized
+   * with the arguments the API server sends the worker to build the operator from, does not take
+   * the Dag's queue, and `execute` only runs when its queue is misrouted.
    */
   readonly pythonOperator?: PythonOperatorTarget;
   /** @internal The tasks whose results the operator's own arguments take. */

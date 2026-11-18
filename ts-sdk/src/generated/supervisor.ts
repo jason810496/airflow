@@ -274,6 +274,14 @@ export type FromDefault = boolean;
  * The execution_timeout in seconds set on a task a language SDK runs, from its serialized Dag. Unset when the task sets none. Zero means no timeout and a negative value has already elapsed, as for a Python task. A Python task runs its own timer in the task runner instead, and gets no value here.
  */
 export type ExecutionTimeout = number | null;
+/**
+ * Import path of the operator class.
+ */
+export type Classpath = string;
+/**
+ * Constructor keyword arguments, in the order of the operator's parameters.
+ */
+export type Kwargs = TaskArgBinding[];
 export type MultiTeam = boolean;
 export type Type13 = "TaskCallbackRequest";
 export type Filepath2 = string;
@@ -328,7 +336,7 @@ export type TeamName1 = string | null;
 export type Type18 = "DagRunResult";
 export type Type19 = "DagRunStateResult";
 export type State2 = "deferred";
-export type Classpath = string;
+export type Classpath1 = string;
 export type TriggerKwargs =
   | {
       [k: string]: JsonValue | null;
@@ -464,8 +472,6 @@ export type TaskId4 = string;
 export type LogicalDate5 = string | null;
 export type MapIndex2 = number;
 export type Type42 = "GetPreviousTI";
-export type TiId5 = string;
-export type Type43 = "GetProviderOperator";
 export type DagId14 = string;
 export type MapIndex3 = number | null;
 export type TaskIds = string[] | null;
@@ -473,29 +479,29 @@ export type TaskGroupId = string | null;
 export type LogicalDates1 = string[] | null;
 export type RunIds1 = string[] | null;
 export type States1 = string[] | null;
-export type Type44 = "GetTICount";
+export type Type43 = "GetTICount";
 export type DagId15 = string;
 export type RunId8 = string;
-export type Type45 = "GetTaskBreadcrumbs";
-export type TiId6 = string;
+export type Type44 = "GetTaskBreadcrumbs";
+export type TiId5 = string;
 export type TryNumber1 = number;
-export type Type46 = "GetTaskRescheduleStartDate";
-export type TiId7 = string;
+export type Type45 = "GetTaskRescheduleStartDate";
+export type TiId6 = string;
 export type Key8 = string;
-export type Type47 = "GetTaskStateStore";
+export type Type46 = "GetTaskStateStore";
 export type DagId16 = string;
 export type MapIndex4 = number | null;
 export type TaskIds1 = string[] | null;
 export type TaskGroupId1 = string | null;
 export type LogicalDates2 = string[] | null;
 export type RunIds2 = string[] | null;
-export type Type48 = "GetTaskStates";
+export type Type47 = "GetTaskStates";
 export type Key9 = string;
-export type Type49 = "GetVariable";
+export type Type48 = "GetVariable";
 export type Prefix = string | null;
 export type Limit2 = number;
 export type Offset = number;
-export type Type50 = "GetVariableKeys";
+export type Type49 = "GetVariableKeys";
 export type PreviousIteration = boolean;
 export type Key10 = string;
 export type DagId17 = string;
@@ -503,20 +509,20 @@ export type RunId9 = string;
 export type TaskId5 = string;
 export type MapIndex5 = number | null;
 export type IncludePriorDates = boolean;
-export type Type51 = "GetXCom";
+export type Type50 = "GetXCom";
 export type PreviousIteration1 = boolean;
 export type Key11 = string;
 export type DagId18 = string;
 export type RunId10 = string;
 export type TaskId6 = string;
-export type Type52 = "GetXComCount";
+export type Type51 = "GetXComCount";
 export type PreviousIteration2 = boolean;
 export type Key12 = string;
 export type DagId19 = string;
 export type RunId11 = string;
 export type TaskId7 = string;
 export type Offset1 = number;
-export type Type53 = "GetXComSequenceItem";
+export type Type52 = "GetXComSequenceItem";
 export type PreviousIteration3 = boolean;
 export type Key13 = string;
 export type DagId20 = string;
@@ -526,8 +532,8 @@ export type Start = number | null;
 export type Stop = number | null;
 export type Step = number | null;
 export type IncludePriorDates1 = boolean;
-export type Type54 = "GetXComSequenceSlice";
-export type TiId8 = string;
+export type Type53 = "GetXComSequenceSlice";
+export type TiId7 = string;
 /**
  * @minItems 1
  */
@@ -540,28 +546,28 @@ export type Params1 = {
   [k: string]: unknown;
 } | null;
 export type AssignedUsers1 = HITLUser[] | null;
-export type Type55 = "HITLDetailRequestResult";
+export type Type54 = "HITLDetailRequestResult";
 export type ResponseReceived = boolean;
 export type RespondedAt = string | null;
 export type ChosenOptions = string[] | null;
 export type ParamsInput = {
   [k: string]: unknown;
 } | null;
-export type Type56 = "HITLDetailResponseResult";
+export type Type55 = "HITLDetailResponseResult";
 export type InactiveAssets = AssetProfile[] | null;
-export type Type57 = "InactiveAssetsResult";
+export type Type56 = "InactiveAssetsResult";
 export type Stop1 = boolean;
 export type Reason = string | null;
 export type Name14 = string | null;
-export type Type58 = "MaskSecret";
+export type Type57 = "MaskSecret";
 export type Ok = boolean;
-export type Type59 = "OKResponse";
+export type Type58 = "OKResponse";
 export type DataIntervalStart3 = string | null;
 export type DataIntervalEnd3 = string | null;
 export type StartDate4 = string | null;
 export type EndDate3 = string | null;
-export type Type60 = "PrevSuccessfulDagRunResult";
-export type Type61 = "PreviousDagRunResult";
+export type Type59 = "PrevSuccessfulDagRunResult";
+export type Type60 = "PreviousDagRunResult";
 export type TaskId9 = string;
 export type DagId21 = string;
 export type RunId13 = string;
@@ -574,44 +580,39 @@ export type MapIndex6 = number | null;
 export type RegionId2 = string | null;
 export type RegionIndex1 = number | null;
 export type Duration = number | null;
-export type Type62 = "PreviousTIResult";
-/**
- * Import path of the operator class.
- */
-export type Classpath1 = string;
-export type Type63 = "ProviderOperatorResult";
+export type Type61 = "PreviousTIResult";
 export type Key14 = string;
 export type Value1 = string;
 export type Description = string | null;
-export type Type64 = "PutVariable";
+export type Type62 = "PutVariable";
 export type State5 = "up_for_reschedule";
 export type RescheduleDate = string;
 export type EndDate5 = string;
-export type Type65 = "RescheduleTask";
-export type Type66 = "ResendLoggingFD";
+export type Type63 = "RescheduleTask";
+export type Type64 = "ResendLoggingFD";
 export type State6 = "up_for_retry";
 export type EndDate6 = string;
 export type RenderedMapIndex2 = string | null;
 export type RetryDelaySeconds = number | null;
 export type RetryReason = string | null;
-export type Type67 = "RetryTask";
-export type Type68 = "SentFDs";
+export type Type65 = "RetryTask";
+export type Type66 = "SentFDs";
 export type Fds = number[];
 export type Name15 = string;
 export type Key15 = string;
-export type Type69 = "SetAssetStateStoreByName";
+export type Type67 = "SetAssetStateStoreByName";
 export type Uri9 = string;
 export type Key16 = string;
-export type Type70 = "SetAssetStateStoreByUri";
+export type Type68 = "SetAssetStateStoreByUri";
 export type TimeoutSeconds = number;
-export type Type71 = "SetExecutionTimeout";
-export type Type72 = "SetRenderedFields";
+export type Type69 = "SetExecutionTimeout";
+export type Type70 = "SetRenderedFields";
 export type RenderedMapIndex3 = string;
-export type Type73 = "SetRenderedMapIndex";
-export type TiId9 = string;
+export type Type71 = "SetRenderedMapIndex";
+export type TiId8 = string;
 export type Key17 = string;
 export type ExpiresAt = string | null;
-export type Type74 = "SetTaskStateStore";
+export type Type72 = "SetTaskStateStore";
 export type Key18 = string;
 export type DagId22 = string;
 export type RunId14 = string;
@@ -619,13 +620,13 @@ export type TaskId10 = string;
 export type MapIndex7 = number | null;
 export type DagResult1 = boolean;
 export type MappedLength = number | null;
-export type Type75 = "SetXCom";
+export type Type73 = "SetXCom";
 export type Tasks = (string | [unknown, unknown])[];
-export type Type76 = "SkipDownstreamTasks";
+export type Type74 = "SkipDownstreamTasks";
 export type DagRelPath = string;
 export type StartDate6 = string;
 export type SentryIntegration = string;
-export type Type77 = "StartupDetails";
+export type Type75 = "StartupDetails";
 export type State7 = "success";
 export type EndDate7 = string;
 export type TaskOutlets = AssetProfile[] | null;
@@ -635,22 +636,22 @@ export type OutletEvents =
     }[]
   | null;
 export type RenderedMapIndex4 = string | null;
-export type Type78 = "SucceedTask";
+export type Type76 = "SucceedTask";
 export type Count1 = number;
-export type Type79 = "TICount";
+export type Type77 = "TICount";
 export type Breadcrumbs = {
   [k: string]: unknown;
 }[];
-export type Type80 = "TaskBreadcrumbsResult";
+export type Type78 = "TaskBreadcrumbsResult";
 export type StartDate7 = string | null;
-export type Type81 = "TaskRescheduleStartDate";
+export type Type79 = "TaskRescheduleStartDate";
 export type State8 = "failed" | "skipped" | "removed";
 export type EndDate8 = string | null;
-export type Type82 = "TaskState";
+export type Type80 = "TaskState";
 export type RenderedMapIndex5 = string | null;
 export type RetryReason1 = string | null;
-export type Type83 = "TaskStateStoreResult";
-export type Type84 = "TaskStatesResult";
+export type Type81 = "TaskStateStoreResult";
+export type Type82 = "TaskStatesResult";
 export type LogicalDate7 = string | null;
 export type RunAfter2 = string | null;
 export type Conf2 = {
@@ -661,11 +662,11 @@ export type PartitionKey7 = string | null;
 export type Note2 = string | null;
 export type DagId23 = string;
 export type DagRunId = string;
-export type Type85 = "TriggerDagRun";
-export type TiId10 = string;
+export type Type83 = "TriggerDagRun";
+export type TiId9 = string;
 export type Note3 = string | null;
-export type Type86 = "UpdateDagRunNote";
-export type TiId11 = string;
+export type Type84 = "UpdateDagRunNote";
+export type TiId10 = string;
 /**
  * @minItems 1
  */
@@ -673,22 +674,22 @@ export type ChosenOptions1 = [string, ...string[]];
 export type ParamsInput1 = {
   [k: string]: unknown;
 } | null;
-export type Type87 = "UpdateHITLDetail";
-export type TiId12 = string;
-export type Type88 = "ValidateInletsAndOutlets";
+export type Type85 = "UpdateHITLDetail";
+export type TiId11 = string;
+export type Type86 = "ValidateInletsAndOutlets";
 export type Keys = string[];
 export type TotalEntries = number;
-export type Type89 = "VariableKeysResult";
+export type Type87 = "VariableKeysResult";
 export type Key19 = string;
 export type Value2 = string;
-export type Type90 = "VariableResult";
+export type Type88 = "VariableResult";
 export type Len = number;
-export type Type91 = "XComCountResponse";
+export type Type89 = "XComCountResponse";
 export type Key20 = string;
-export type Type92 = "XComResult";
-export type Type93 = "XComSequenceIndexResult";
+export type Type90 = "XComResult";
+export type Type91 = "XComSequenceIndexResult";
 export type Root = JsonValue[];
-export type Type94 = "XComSequenceSliceResult";
+export type Type92 = "XComSequenceSliceResult";
 
 export interface SupervisorWireSchema {}
 /**
@@ -1093,6 +1094,7 @@ export interface TIRunContext {
   start_date?: StartDate2;
   arg_bindings?: ArgBindings;
   execution_timeout?: ExecutionTimeout;
+  provider_operator?: TIProviderOperator | null;
   multi_team?: MultiTeam;
 }
 /**
@@ -1153,6 +1155,25 @@ export interface LiteralArgBinding {
   kind: Kind1;
   value?: JsonValue | null;
   from_default?: FromDefault;
+}
+/**
+ * The Python operator a task of a language SDK Dag runs, and the Dag's edges.
+ *
+ * A Python worker builds the operator from it, because it cannot import the Dag file.
+ *
+ * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
+ * via the `definition` "TIProviderOperator".
+ */
+export interface TIProviderOperator {
+  classpath: Classpath;
+  kwargs: Kwargs;
+  downstream_task_ids: DownstreamTaskIds;
+}
+/**
+ * The direct downstream task ids of every task in the Dag, keyed by task id.
+ */
+export interface DownstreamTaskIds {
+  [k: string]: string[];
 }
 /**
  * Email notification request for task failures/retries.
@@ -1274,7 +1295,7 @@ export interface DagRunStateResult {
  */
 export interface DeferTask {
   state?: State2;
-  classpath: Classpath;
+  classpath: Classpath1;
   trigger_kwargs?: TriggerKwargs;
   trigger_timeout?: TriggerTimeout;
   queue?: Queue1;
@@ -1512,16 +1533,6 @@ export interface GetPreviousTI {
   type?: Type42;
 }
 /**
- * Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported.
- *
- * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "GetProviderOperator".
- */
-export interface GetProviderOperator {
-  ti_id: TiId5;
-  type?: Type43;
-}
-/**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "GetTICount".
  */
@@ -1533,7 +1544,7 @@ export interface GetTICount {
   logical_dates?: LogicalDates1;
   run_ids?: RunIds1;
   states?: States1;
-  type?: Type44;
+  type?: Type43;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1542,25 +1553,25 @@ export interface GetTICount {
 export interface GetTaskBreadcrumbs {
   dag_id: DagId15;
   run_id: RunId8;
-  type?: Type45;
+  type?: Type44;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "GetTaskRescheduleStartDate".
  */
 export interface GetTaskRescheduleStartDate {
-  ti_id: TiId6;
+  ti_id: TiId5;
   try_number?: TryNumber1;
-  type?: Type46;
+  type?: Type45;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "GetTaskStateStore".
  */
 export interface GetTaskStateStore {
-  ti_id: TiId7;
+  ti_id: TiId6;
   key: Key8;
-  type?: Type47;
+  type?: Type46;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1573,7 +1584,7 @@ export interface GetTaskStates {
   task_group_id?: TaskGroupId1;
   logical_dates?: LogicalDates2;
   run_ids?: RunIds2;
-  type?: Type48;
+  type?: Type47;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1581,7 +1592,7 @@ export interface GetTaskStates {
  */
 export interface GetVariable {
   key: Key9;
-  type?: Type49;
+  type?: Type48;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1591,7 +1602,7 @@ export interface GetVariableKeys {
   prefix?: Prefix;
   limit?: Limit2;
   offset?: Offset;
-  type?: Type50;
+  type?: Type49;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1605,7 +1616,7 @@ export interface GetXCom {
   task_id: TaskId5;
   map_index?: MapIndex5;
   include_prior_dates?: IncludePriorDates;
-  type?: Type51;
+  type?: Type50;
 }
 /**
  * Get the number of (mapped) XCom values available.
@@ -1619,7 +1630,7 @@ export interface GetXComCount {
   dag_id: DagId18;
   run_id: RunId10;
   task_id: TaskId6;
-  type?: Type52;
+  type?: Type51;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1632,7 +1643,7 @@ export interface GetXComSequenceItem {
   run_id: RunId11;
   task_id: TaskId7;
   offset: Offset1;
-  type?: Type53;
+  type?: Type52;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1648,7 +1659,7 @@ export interface GetXComSequenceSlice {
   stop: Stop;
   step: Step;
   include_prior_dates?: IncludePriorDates1;
-  type?: Type54;
+  type?: Type53;
 }
 /**
  * Response to CreateHITLDetailPayload request.
@@ -1657,7 +1668,7 @@ export interface GetXComSequenceSlice {
  * via the `definition` "HITLDetailRequestResult".
  */
 export interface HITLDetailRequestResult {
-  ti_id: TiId8;
+  ti_id: TiId7;
   options: Options1;
   subject: Subject1;
   body?: Body1;
@@ -1665,7 +1676,7 @@ export interface HITLDetailRequestResult {
   multiple?: Multiple1;
   params?: Params1;
   assigned_users?: AssignedUsers1;
-  type?: Type55;
+  type?: Type54;
 }
 /**
  * Response to GetHITLDetailResponse request.
@@ -1679,7 +1690,7 @@ export interface HITLDetailResponseResult {
   responded_at: RespondedAt;
   chosen_options: ChosenOptions;
   params_input?: ParamsInput;
-  type?: Type56;
+  type?: Type55;
 }
 /**
  * Response of InactiveAssets requests.
@@ -1689,7 +1700,7 @@ export interface HITLDetailResponseResult {
  */
 export interface InactiveAssetsResult {
   inactive_assets?: InactiveAssets;
-  type?: Type57;
+  type?: Type56;
 }
 /**
  * A loop gate's evaluation of its ``until`` callable.
@@ -1710,7 +1721,7 @@ export interface LoopDecisionPayload {
 export interface MaskSecret {
   value: JsonValue;
   name?: Name14;
-  type?: Type58;
+  type?: Type57;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1718,7 +1729,7 @@ export interface MaskSecret {
  */
 export interface OKResponse {
   ok: Ok;
-  type?: Type59;
+  type?: Type58;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1729,7 +1740,7 @@ export interface PrevSuccessfulDagRunResult {
   data_interval_end?: DataIntervalEnd3;
   start_date?: StartDate4;
   end_date?: EndDate3;
-  type?: Type60;
+  type?: Type59;
 }
 /**
  * Response containing previous Dag run information.
@@ -1739,7 +1750,7 @@ export interface PrevSuccessfulDagRunResult {
  */
 export interface PreviousDagRunResult {
   dag_run?: DagRun | null;
-  type?: Type61;
+  type?: Type60;
 }
 /**
  * Schema for response with previous TaskInstance information.
@@ -1769,31 +1780,7 @@ export interface PreviousTIResponse {
  */
 export interface PreviousTIResult {
   task_instance?: PreviousTIResponse | null;
-  type?: Type62;
-}
-/**
- * The provider operator of the running task instance, in reply to :class:`GetProviderOperator`.
- *
- * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
- * via the `definition` "ProviderOperatorResult".
- */
-export interface ProviderOperatorResult {
-  classpath: Classpath1;
-  kwargs: Kwargs;
-  downstream_task_ids: DownstreamTaskIds;
-  type?: Type63;
-}
-/**
- * Constructor keyword arguments, each in the type encoding of the serialized Dag.
- */
-export interface Kwargs {
-  [k: string]: unknown;
-}
-/**
- * The direct downstream task ids of every task in the Dag, keyed by task id.
- */
-export interface DownstreamTaskIds {
-  [k: string]: string[];
+  type?: Type61;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1803,7 +1790,7 @@ export interface PutVariable {
   key: Key14;
   value: Value1;
   description: Description;
-  type?: Type64;
+  type?: Type62;
 }
 /**
  * Update a task instance state to reschedule/up_for_reschedule.
@@ -1815,14 +1802,14 @@ export interface RescheduleTask {
   state?: State5;
   reschedule_date: RescheduleDate;
   end_date: EndDate5;
-  type?: Type65;
+  type?: Type63;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "ResendLoggingFD".
  */
 export interface ResendLoggingFD {
-  type?: Type66;
+  type?: Type64;
 }
 /**
  * Update a task instance state to up_for_retry.
@@ -1836,14 +1823,14 @@ export interface RetryTask {
   rendered_map_index?: RenderedMapIndex2;
   retry_delay_seconds?: RetryDelaySeconds;
   retry_reason?: RetryReason;
-  type?: Type67;
+  type?: Type65;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "SentFDs".
  */
 export interface SentFDs {
-  type?: Type68;
+  type?: Type66;
   fds: Fds;
 }
 /**
@@ -1854,7 +1841,7 @@ export interface SetAssetStateStoreByName {
   name: Name15;
   key: Key15;
   value: JsonValue;
-  type?: Type69;
+  type?: Type67;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1864,7 +1851,7 @@ export interface SetAssetStateStoreByUri {
   uri: Uri9;
   key: Key16;
   value: JsonValue;
-  type?: Type70;
+  type?: Type68;
 }
 /**
  * Tell the supervisor the task's ``execution_timeout`` so it can enforce it from outside the task process.
@@ -1874,7 +1861,7 @@ export interface SetAssetStateStoreByUri {
  */
 export interface SetExecutionTimeout {
   timeout_seconds: TimeoutSeconds;
-  type?: Type71;
+  type?: Type69;
 }
 /**
  * Payload for setting RTIF for a task instance.
@@ -1884,7 +1871,7 @@ export interface SetExecutionTimeout {
  */
 export interface SetRenderedFields {
   rendered_fields: RenderedFields;
-  type?: Type72;
+  type?: Type70;
 }
 export interface RenderedFields {
   [k: string]: JsonValue;
@@ -1897,18 +1884,18 @@ export interface RenderedFields {
  */
 export interface SetRenderedMapIndex {
   rendered_map_index: RenderedMapIndex3;
-  type?: Type73;
+  type?: Type71;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "SetTaskStateStore".
  */
 export interface SetTaskStateStore {
-  ti_id: TiId9;
+  ti_id: TiId8;
   key: Key17;
   value: JsonValue;
   expires_at: ExpiresAt;
-  type?: Type74;
+  type?: Type72;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1923,7 +1910,7 @@ export interface SetXCom {
   map_index?: MapIndex7;
   dag_result?: DagResult1;
   mapped_length?: MappedLength;
-  type?: Type75;
+  type?: Type73;
 }
 /**
  * Update state of downstream tasks within a task instance to 'skipped', while updating current task to success state.
@@ -1933,7 +1920,7 @@ export interface SetXCom {
  */
 export interface SkipDownstreamTasks {
   tasks: Tasks;
-  type?: Type76;
+  type?: Type74;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1946,7 +1933,7 @@ export interface StartupDetails {
   start_date: StartDate6;
   ti_context: TIRunContext;
   sentry_integration: SentryIntegration;
-  type?: Type77;
+  type?: Type75;
 }
 /**
  * Update a task's state to success. Includes task_outlets and outlet_events for registering asset events.
@@ -1962,7 +1949,7 @@ export interface SucceedTask {
   rendered_map_index?: RenderedMapIndex4;
   loop_decision?: LoopDecisionPayload | null;
   external_clear_target?: ExternalClearTargetPayload | null;
-  type?: Type78;
+  type?: Type76;
 }
 /**
  * Response containing count of Task Instances matching certain filters.
@@ -1972,7 +1959,7 @@ export interface SucceedTask {
  */
 export interface TICount {
   count: Count1;
-  type?: Type79;
+  type?: Type77;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -1980,7 +1967,7 @@ export interface TICount {
  */
 export interface TaskBreadcrumbsResult {
   breadcrumbs: Breadcrumbs;
-  type?: Type80;
+  type?: Type78;
 }
 /**
  * Response containing the first reschedule date for a task instance.
@@ -1990,7 +1977,7 @@ export interface TaskBreadcrumbsResult {
  */
 export interface TaskRescheduleStartDate {
   start_date: StartDate7;
-  type?: Type81;
+  type?: Type79;
 }
 /**
  * Update a task's state.
@@ -2005,7 +1992,7 @@ export interface TaskRescheduleStartDate {
 export interface TaskState {
   state: State8;
   end_date?: EndDate8;
-  type?: Type82;
+  type?: Type80;
   rendered_map_index?: RenderedMapIndex5;
   retry_reason?: RetryReason1;
   loop_decision?: LoopDecisionPayload | null;
@@ -2018,7 +2005,7 @@ export interface TaskState {
  */
 export interface TaskStateStoreResult {
   value: JsonValue | null;
-  type?: Type83;
+  type?: Type81;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2026,7 +2013,7 @@ export interface TaskStateStoreResult {
  */
 export interface TaskStatesResult {
   task_states: TaskStates;
-  type?: Type84;
+  type?: Type82;
 }
 export interface TaskStates {
   [k: string]: unknown;
@@ -2044,16 +2031,16 @@ export interface TriggerDagRun {
   note?: Note2;
   dag_id: DagId23;
   run_id: DagRunId;
-  type?: Type85;
+  type?: Type83;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "UpdateDagRunNote".
  */
 export interface UpdateDagRunNote {
-  ti_id: TiId10;
+  ti_id: TiId9;
   note: Note3;
-  type?: Type86;
+  type?: Type84;
 }
 /**
  * Update the response content part of an existing Human-in-the-loop response.
@@ -2062,18 +2049,18 @@ export interface UpdateDagRunNote {
  * via the `definition` "UpdateHITLDetail".
  */
 export interface UpdateHITLDetail {
-  ti_id: TiId11;
+  ti_id: TiId10;
   chosen_options: ChosenOptions1;
   params_input?: ParamsInput1;
-  type?: Type87;
+  type?: Type85;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
  * via the `definition` "ValidateInletsAndOutlets".
  */
 export interface ValidateInletsAndOutlets {
-  ti_id: TiId12;
-  type?: Type88;
+  ti_id: TiId11;
+  type?: Type86;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2082,7 +2069,7 @@ export interface ValidateInletsAndOutlets {
 export interface VariableKeysResult {
   keys: Keys;
   total_entries: TotalEntries;
-  type?: Type89;
+  type?: Type87;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2091,7 +2078,7 @@ export interface VariableKeysResult {
 export interface VariableResult {
   key: Key19;
   value: Value2;
-  type?: Type90;
+  type?: Type88;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2099,7 +2086,7 @@ export interface VariableResult {
  */
 export interface XComCountResponse {
   len: Len;
-  type?: Type91;
+  type?: Type89;
 }
 /**
  * Response to ReadXCom request.
@@ -2110,7 +2097,7 @@ export interface XComCountResponse {
 export interface XComResult {
   key: Key20;
   value: JsonValue | null;
-  type?: Type92;
+  type?: Type90;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2118,7 +2105,7 @@ export interface XComResult {
  */
 export interface XComSequenceIndexResult {
   root: JsonValue;
-  type?: Type93;
+  type?: Type91;
 }
 /**
  * This interface was referenced by `SupervisorWireSchema`'s JSON-Schema
@@ -2126,7 +2113,7 @@ export interface XComSequenceIndexResult {
  */
 export interface XComSequenceSliceResult {
   root: Root;
-  type?: Type94;
+  type?: Type92;
 }
 
 /** Cadwyn schema version this SDK was generated against.

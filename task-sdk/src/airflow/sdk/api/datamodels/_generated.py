@@ -633,30 +633,6 @@ class TIHeartbeatInfo(BaseModel):
     pid: Annotated[int, Field(title="Pid")]
 
 
-class TIProviderOperatorResponse(BaseModel):
-    """
-    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
-
-    A Python worker builds the operator from it, because it cannot import the Dag file.
-    """
-
-    classpath: Annotated[str, Field(description="Import path of the operator class.", title="Classpath")]
-    kwargs: Annotated[
-        dict[str, Any],
-        Field(
-            description="Constructor keyword arguments, each in the type encoding of the serialized Dag.",
-            title="Kwargs",
-        ),
-    ]
-    downstream_task_ids: Annotated[
-        dict[str, list[str]],
-        Field(
-            description="The direct downstream task ids of every task in the Dag, keyed by task id.",
-            title="Downstream Task Ids",
-        ),
-    ]
-
-
 class TIRescheduleStatePayload(BaseModel):
     """
     Schema for updating TaskInstance to a up_for_reschedule state.
@@ -1272,6 +1248,30 @@ class DagCallbackRequest(BaseModel):
     type: Annotated[Literal["DagCallbackRequest"] | None, Field(title="Type")] = "DagCallbackRequest"
 
 
+class TIProviderOperator(BaseModel):
+    """
+    The Python operator a task of a language SDK Dag runs, and the Dag's edges.
+
+    A Python worker builds the operator from it, because it cannot import the Dag file.
+    """
+
+    classpath: Annotated[str, Field(description="Import path of the operator class.", title="Classpath")]
+    kwargs: Annotated[
+        list[TaskArgBinding],
+        Field(
+            description="Constructor keyword arguments, in the order of the operator's parameters.",
+            title="Kwargs",
+        ),
+    ]
+    downstream_task_ids: Annotated[
+        dict[str, list[str]],
+        Field(
+            description="The direct downstream task ids of every task in the Dag, keyed by task id.",
+            title="Downstream Task Ids",
+        ),
+    ]
+
+
 class TIRunContext(BaseModel):
     """
     Response schema for TaskInstance run context.
@@ -1300,6 +1300,7 @@ class TIRunContext(BaseModel):
             title="Execution Timeout",
         ),
     ] = None
+    provider_operator: TIProviderOperator | None = None
     multi_team: Annotated[bool | None, Field(title="Multi Team")] = False
 
 

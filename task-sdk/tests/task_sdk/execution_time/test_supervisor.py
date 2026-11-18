@@ -120,7 +120,6 @@ from airflow.sdk.execution_time.comms import (
     GetPreviousDagRun,
     GetPreviousTI,
     GetPrevSuccessfulDagRun,
-    GetProviderOperator,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -140,7 +139,6 @@ from airflow.sdk.execution_time.comms import (
     PreviousDagRunResult,
     PreviousTIResult,
     PrevSuccessfulDagRunResult,
-    ProviderOperatorResult,
     PutVariable,
     RescheduleTask,
     ResendLoggingFD,
@@ -3378,25 +3376,6 @@ REQUEST_TEST_CASES = [
             ),
         ),
         test_id="validate_inlets_and_outlets",
-    ),
-    RequestTestCase(
-        message=GetProviderOperator(ti_id=TI_ID),
-        expected_body={
-            "classpath": "airflow.providers.standard.operators.empty.EmptyOperator",
-            "kwargs": {"retries": 1},
-            "downstream_task_ids": {"a": []},
-            "type": "ProviderOperatorResult",
-        },
-        client_mock=ClientMock(
-            method_path="task_instances.get_provider_operator",
-            args=(TI_ID,),
-            response=ProviderOperatorResult(
-                classpath="airflow.providers.standard.operators.empty.EmptyOperator",
-                kwargs={"retries": 1},
-                downstream_task_ids={"a": []},
-            ),
-        ),
-        test_id="get_provider_operator",
     ),
     RequestTestCase(
         message=GetPrevSuccessfulDagRun(ti_id=uuid7()),

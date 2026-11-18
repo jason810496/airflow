@@ -81,6 +81,7 @@ from airflow.sdk.api.datamodels._generated import (
     PreviousTIResponse,
     TaskInstance,
     TaskInstanceState,
+    TIProviderOperator,
     TIRunContext,
 )
 from airflow.sdk.bases.operator import ExecutorSafeguard
@@ -138,7 +139,6 @@ from airflow.sdk.execution_time.comms import (
     GetDRCount,
     GetPreviousDagRun,
     GetPreviousTI,
-    GetProviderOperator,
     GetTaskStates,
     GetTaskStateStore,
     GetTICount,
@@ -151,7 +151,6 @@ from airflow.sdk.execution_time.comms import (
     PreviousDagRunResult,
     PreviousTIResult,
     PrevSuccessfulDagRunResult,
-    ProviderOperatorResult,
     RescheduleTask,
     RetryTask,
     SetAssetStateStoreByName,
@@ -1098,29 +1097,16 @@ class ProviderOperator(BaseOperator):
 
 
 # Task ``a`` of a native Dag, upstream of a task its own runtime runs.
-NATIVE_PROVIDER_OPERATOR = ProviderOperatorResult(
-    classpath=f"{__name__}.ProviderOperator",
-    kwargs={"message": "hello {{ ds }}", "retries": 3},
-    downstream_task_ids={"a": ["b"], "b": []},
+NATIVE_PROVIDER_OPERATOR = TIProviderOperator.model_validate(
+    {
+        "classpath": f"{__name__}.ProviderOperator",
+        "kwargs": [
+            {"name": "message", "kind": "literal", "value": "hello {{ ds }}"},
+            {"name": "retries", "kind": "literal", "value": 3},
+        ],
+        "downstream_task_ids": {"a": ["b"], "b": []},
+    }
 )
-NOT_A_PROVIDER_OPERATOR = AirflowRuntimeError(
-    ErrorResponse(
-        error=ErrorType.API_SERVER_ERROR,
-        detail={"status_code": 404, "detail": {"reason": "not_a_provider_operator"}},
-    )
-)
-
-
-def _answer_provider_operator(mock_supervisor_comms, answer, *, other=None) -> None:
-    """Answer ``GetProviderOperator`` with *answer*, and any other message with *other*."""
-
-    def send(msg):
-        response = answer if isinstance(msg, GetProviderOperator) else other
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    mock_supervisor_comms.send.side_effect = send
 
 
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
@@ -1130,7 +1116,6 @@ def test_parse_fails_a_task_of_a_native_dag_without_retries(
     instant = timezone.datetime(2024, 11, 22)
     time_machine.move_to(instant, tick=False)
     log = mock.Mock()
-    _answer_provider_operator(mock_supervisor_comms, NOT_A_PROVIDER_OPERATOR)
 
     with pytest.raises(SystemExit) as ctx:
         parse(native_dag_startup, log)
@@ -1138,7 +1123,6 @@ def test_parse_fails_a_task_of_a_native_dag_without_retries(
     assert ctx.value.code == 0
     mock_bag.assert_not_called()
     assert mock_supervisor_comms.send.mock_calls == [
-        call(GetProviderOperator(ti_id=native_dag_startup.ti.id)),
         call(TaskState(state=TaskInstanceState.FAILED, end_date=instant)),
     ]
     log.error.assert_called_once_with(
@@ -1195,13 +1179,15 @@ def test_check_xcom_backend_supports_loops_rejects_legacy_backend_in_loop_dag(mo
 def test_parse_builds_a_provider_operator_of_a_native_dag(
     mock_bag, native_dag_startup, mock_supervisor_comms
 ):
-    _answer_provider_operator(mock_supervisor_comms, NATIVE_PROVIDER_OPERATOR)
+    native_dag_startup.ti_context.provider_operator = NATIVE_PROVIDER_OPERATOR
     log = mock.Mock()
 
     ti = parse(native_dag_startup, log)
 
     mock_bag.assert_not_called()
+    mock_supervisor_comms.send.assert_not_called()
     assert isinstance(ti.task, ProviderOperator)
+    assert ti.task.is_stub is False
     assert ti.task.message == "hello {{ ds }}"
     assert ti.task.retries == 3
     assert ti.task.dag.dag_id == "native_dag"
@@ -1215,36 +1201,19 @@ def test_parse_builds_a_provider_operator_of_a_native_dag(
     )
 
 
-@patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
-def test_parse_fails_a_task_of_a_native_dag_when_it_is_not_a_provider_operator(
-    mock_bag, native_dag_startup, mock_supervisor_comms
-):
-    mock_supervisor_comms.send.side_effect = [NOT_A_PROVIDER_OPERATOR, None]
-    log = mock.Mock()
-
-    with pytest.raises(SystemExit):
-        parse(native_dag_startup, log)
-
-    mock_bag.assert_not_called()
-    log.warning.assert_called_once_with(
-        "Cannot read the provider operator of the task", error=str(NOT_A_PROVIDER_OPERATOR)
-    )
-    assert log.error.call_args.args[1] == "NativeCoordinator"
-
-
 @pytest.mark.parametrize(
-    ("answer", "builds"),
+    ("provider_operator", "builds"),
     [
         pytest.param(NATIVE_PROVIDER_OPERATOR, True, id="provider-operator"),
-        pytest.param(NOT_A_PROVIDER_OPERATOR, False, id="stub-reads-the-file"),
+        pytest.param(None, False, id="stub-reads-the-file"),
     ],
 )
 @patch("airflow.dag_processing.dagbag.BundleDagBag", autospec=True)
-def test_parse_reads_the_provider_operator_of_a_file_no_importer_here_claims(
-    mock_bag, native_dag_startup, mock_supervisor_comms, answer, builds
+def test_parse_builds_the_provider_operator_of_a_file_no_importer_here_claims(
+    mock_bag, native_dag_startup, provider_operator, builds
 ):
     """A worker with no coordinator configured cannot import the native file itself either."""
-    _answer_provider_operator(mock_supervisor_comms, answer)
+    native_dag_startup.ti_context.provider_operator = provider_operator
     mock_bag.return_value.dags = {}
 
     with conf_vars({("sdk", "coordinators"): "{}"}):
@@ -1271,9 +1240,7 @@ def test_can_import_dag_file(file_name, expected):
 def test_parse_exits_non_zero_when_the_failure_cannot_be_reported(
     mock_bag, native_dag_startup, mock_supervisor_comms
 ):
-    _answer_provider_operator(
-        mock_supervisor_comms, NOT_A_PROVIDER_OPERATOR, other=ConnectionError("supervisor gone")
-    )
+    mock_supervisor_comms.send.side_effect = ConnectionError("supervisor gone")
 
     with pytest.raises(SystemExit, match="1"):
         parse(native_dag_startup, mock.Mock())
@@ -1285,7 +1252,6 @@ def test_parse_fails_a_task_of_a_native_dag_when_several_coordinators_could_pars
 ):
     coordinators = {"first": NATIVE_COORDINATOR_SPEC, "second": NATIVE_COORDINATOR_SPEC}
     log = mock.Mock()
-    _answer_provider_operator(mock_supervisor_comms, NOT_A_PROVIDER_OPERATOR)
 
     with conf_vars({("sdk", "coordinators"): json.dumps(coordinators)}), pytest.raises(SystemExit):
         parse(native_dag_startup, log)

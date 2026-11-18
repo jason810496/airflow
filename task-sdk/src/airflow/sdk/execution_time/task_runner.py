@@ -114,7 +114,6 @@ from airflow.sdk.execution_time.comms import (
     GetDRCount,
     GetPreviousDagRun,
     GetPreviousTI,
-    GetProviderOperator,
     GetTaskBreadcrumbs,
     GetTaskRescheduleStartDate,
     GetTaskStates,
@@ -122,7 +121,6 @@ from airflow.sdk.execution_time.comms import (
     InactiveAssetsResult,
     PreviousDagRunResult,
     PreviousTIResult,
-    ProviderOperatorResult,
     RescheduleTask,
     ResendLoggingFD,
     RetryTask,
@@ -1130,21 +1128,18 @@ def _build_provider_operator_task(what: StartupDetails, dag_path: str, log: Logg
     """
     Build the task of *what* from the provider operator its language SDK Dag declares.
 
-    Returns ``None`` when the task is not a provider operator, or when the API server cannot send it.
+    Returns ``None`` when the API server sent no provider operator, because the task is not one.
     """
-    try:
-        response = SUPERVISOR_COMMS.send(GetProviderOperator(ti_id=what.ti.id))
-    except AirflowRuntimeError as error:
-        log.warning("Cannot read the provider operator of the task", error=str(error))
+    if (provider_operator := what.ti_context.provider_operator) is None:
         return None
-    if TYPE_CHECKING:
-        assert isinstance(response, ProviderOperatorResult)
-    task = build_provider_operator(response, dag_id=what.ti.dag_id, task_id=what.ti.task_id, fileloc=dag_path)
+    task = build_provider_operator(
+        provider_operator, dag_id=what.ti.dag_id, task_id=what.ti.task_id, fileloc=dag_path
+    )
     log.info(
         "Built the task from its provider operator",
         dag_id=what.ti.dag_id,
         task_id=what.ti.task_id,
-        operator=response.classpath,
+        operator=provider_operator.classpath,
     )
     return task
 

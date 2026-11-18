@@ -65,7 +65,6 @@ const (
 	TypeGetPrevSuccessfulDagRun     = "GetPrevSuccessfulDagRun"
 	TypeGetPreviousDagRun           = "GetPreviousDagRun"
 	TypeGetPreviousTI               = "GetPreviousTI"
-	TypeGetProviderOperator         = "GetProviderOperator"
 	TypeGetTICount                  = "GetTICount"
 	TypeGetTaskBreadcrumbs          = "GetTaskBreadcrumbs"
 	TypeGetTaskRescheduleStartDate  = "GetTaskRescheduleStartDate"
@@ -85,7 +84,6 @@ const (
 	TypePrevSuccessfulDagRunResult  = "PrevSuccessfulDagRunResult"
 	TypePreviousDagRunResult        = "PreviousDagRunResult"
 	TypePreviousTIResult            = "PreviousTIResult"
-	TypeProviderOperatorResult      = "ProviderOperatorResult"
 	TypePutVariable                 = "PutVariable"
 	TypeRescheduleTask              = "RescheduleTask"
 	TypeResendLoggingFD             = "ResendLoggingFD"
@@ -249,9 +247,6 @@ func EnsureType(m any) any {
 	case GetPreviousTI:
 		b.Type = TypeGetPreviousTI
 		return b
-	case GetProviderOperator:
-		b.Type = TypeGetProviderOperator
-		return b
 	case GetTICount:
 		b.Type = TypeGetTICount
 		return b
@@ -308,9 +303,6 @@ func EnsureType(m any) any {
 		return b
 	case PreviousTIResult:
 		b.Type = TypePreviousTIResult
-		return b
-	case ProviderOperatorResult:
-		b.Type = TypeProviderOperatorResult
 		return b
 	case PutVariable:
 		b.Type = TypePutVariable

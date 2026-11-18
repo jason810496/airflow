@@ -143,7 +143,7 @@
       "type": "object"
     },
     "arg_binding": {
-      "$comment": "One captured TaskFlow call argument of a @task.stub task. Materialized directly by _serialize_node, so it stays plain JSON with no {__type, __var} encoding. The object stays open so future binding fields keep validating on older cores",
+      "$comment": "One captured TaskFlow call argument of a @task.stub task, or one constructor argument of a provider operator a non-Python SDK records in _operator_kwargs. It stays plain JSON with no {__type, __var} encoding. The object stays open so future binding fields keep validating on older cores",
       "type": "object",
       "properties": {
         "name": { "type": "string" },
@@ -384,8 +384,9 @@
           "items": { "$ref": "#/definitions/arg_binding" }
         },
         "_operator_kwargs": {
-          "$comment": "Constructor keyword arguments of the task_type class in _task_module. Written by a non-Python SDK for a task a Python worker runs, which builds the operator from them because it cannot import the Dag file",
-          "$ref": "#/definitions/dict"
+          "$comment": "Constructor keyword arguments of the task_type class in _task_module, in parameter order. Written by a non-Python SDK for a task a Python worker runs, which builds the operator from them because it cannot import the Dag file",
+          "type": "array",
+          "items": { "$ref": "#/definitions/arg_binding" }
         }
       },
       "dependencies": {

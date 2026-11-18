@@ -89,27 +89,84 @@ describe("defineProviderOperator", () => {
       task_type: "NotifyOperator",
       _task_module: "airflow.providers.demo.operators.notify",
       language: "typescript",
+      is_stub: true,
       template_fields: ["subject", "recipients"],
       retries: 2,
       retry_delay: 30,
       pool: "notifications",
-      _operator_kwargs: {
-        __type: "dict",
-        __var: {
-          subject: "Run {{ ds }}",
-          channel: "ops",
-          response_timeout: { __type: "timedelta", __var: 90 },
-          not_before: { __type: "datetime", __var: 1767323045 },
-          extra: {
-            __type: "dict",
-            __var: { tags: ["a", "b"], nested: { __type: "dict", __var: { level: 1 } } },
-          },
-          retries: 2,
-          retry_delay: { __type: "timedelta", __var: 30 },
-          pool: "notifications",
+      // In the order the operator declares its parameters, then the task options.
+      _operator_kwargs: [
+        { name: "subject", kind: "literal", value: "Run {{ ds }}" },
+        { name: "channel", kind: "literal", value: "ops" },
+        {
+          name: "response_timeout",
+          kind: "literal",
+          value: 90,
+          value_schema: { type: "number", format: "duration-seconds" },
         },
-      },
+        {
+          name: "not_before",
+          kind: "literal",
+          value: "2026-01-02T03:04:05.000Z",
+          value_schema: { type: "string", format: "date-time" },
+        },
+        { name: "extra", kind: "literal", value: { tags: ["a", "b"], nested: { level: 1 } } },
+        { name: "retries", kind: "literal", value: 2 },
+        { name: "pool", kind: "literal", value: "notifications" },
+        {
+          name: "retry_delay",
+          kind: "literal",
+          value: 30,
+          value_schema: { type: "number", format: "duration-seconds" },
+        },
+      ],
     });
+  });
+
+  it("writes the arguments in the operator's parameter order, whatever order they were given in", () => {
+    const dag = new Dag("d");
+    dag.task("notify", Notify({ extra: { a: 1 }, channel: "ops", subject: "s" }))();
+
+    expect(serializeTasks(dag).get("notify")!["_operator_kwargs"]).toEqual([
+      { name: "subject", kind: "literal", value: "s" },
+      { name: "channel", kind: "literal", value: "ops" },
+      { name: "extra", kind: "literal", value: { a: 1 } },
+    ]);
+  });
+
+  it("writes an unset optional argument nowhere and a null one as a null literal", () => {
+    const dag = new Dag("d");
+    dag.task("notify", Notify({ subject: "s", responseTimeout: null, notBefore: null }))();
+
+    expect(serializeTasks(dag).get("notify")!["_operator_kwargs"]).toEqual([
+      { name: "subject", kind: "literal", value: "s" },
+      { name: "response_timeout", kind: "literal", value: null },
+      { name: "not_before", kind: "literal", value: null },
+    ]);
+  });
+
+  it("writes a task option that is a date as an ISO 8601 string", () => {
+    const dag = new Dag("d");
+    dag.task("notify", Notify({ subject: "s" }), {
+      startDate: new Date("2026-03-04T05:06:07Z"),
+      maxRetryDelay: 600,
+    })();
+
+    expect(serializeTasks(dag).get("notify")!["_operator_kwargs"]).toEqual([
+      { name: "subject", kind: "literal", value: "s" },
+      {
+        name: "start_date",
+        kind: "literal",
+        value: "2026-03-04T05:06:07.000Z",
+        value_schema: { type: "string", format: "date-time" },
+      },
+      {
+        name: "max_retry_delay",
+        kind: "literal",
+        value: 600,
+        value_schema: { type: "number", format: "duration-seconds" },
+      },
+    ]);
   });
 
   it("keeps the Dag's queue for TypeScript tasks only, unless the task names its own", () => {
@@ -121,11 +178,13 @@ describe("defineProviderOperator", () => {
     const tasks = serializeTasks(dag);
     expect(tasks.get("native")!["queue"]).toBe("typescript");
     expect(tasks.get("python")).not.toHaveProperty("queue");
-    expect(tasks.get("python")).not.toHaveProperty("is_stub");
+    expect(tasks.get("python")!["is_stub"]).toBe(true);
     expect(tasks.get("routed")!["queue"]).toBe("python-gpu");
-    expect((tasks.get("routed")!["_operator_kwargs"] as { __var: Json }).__var["queue"]).toBe(
-      "python-gpu",
-    );
+    expect(tasks.get("routed")!["_operator_kwargs"]).toContainEqual({
+      name: "queue",
+      kind: "literal",
+      value: "python-gpu",
+    });
   });
 
   it("writes what the operator class fixes: sensor, skip, colours, templates and display name", () => {
@@ -144,30 +203,35 @@ describe("defineProviderOperator", () => {
     });
   });
 
-  it("turns a task's result into an XComArg and an upstream edge", () => {
+  it("writes a task's result given as a whole argument as an xcom binding and an upstream edge", () => {
     const dag = new Dag("d");
     const extracted = dag.task("extract", async () => "subject")();
-    const listed = dag.task("list", async () => ["a@example.com"])();
-    const notified = dag.task(
-      "notify",
-      Notify({ subject: extracted, recipients: ["ops@example.com", listed] as never }),
-    )();
+    const notified = dag.task("notify", Notify({ subject: extracted }))();
     dag.task("report", async ({ sent }: { sent: unknown }) => sent)({ sent: notified });
 
     const tasks = serializeTasks(dag);
     expect(tasks.get("extract")!["downstream_task_ids"]).toEqual(["notify"]);
-    expect(tasks.get("list")!["downstream_task_ids"]).toEqual(["notify"]);
-    expect((tasks.get("notify")!["_operator_kwargs"] as { __var: Json }).__var).toEqual({
-      subject: { __type: "xcomref", __var: { task_id: "extract", key: "return_value" } },
-      recipients: [
-        "ops@example.com",
-        { __type: "xcomref", __var: { task_id: "list", key: "return_value" } },
-      ],
-    });
+    expect(tasks.get("notify")!["_operator_kwargs"]).toEqual([
+      { name: "subject", kind: "xcom", task_id: "extract" },
+    ]);
     // The provider task's own result feeds a TypeScript task the usual way.
     expect(tasks.get("report")!["_arg_bindings"]).toEqual([
       { name: "sent", kind: "xcom", task_id: "notify" },
     ]);
+  });
+
+  it.each([
+    ["an array", (ref: TaskRef) => ({ recipients: ["ops@example.com", ref] as never })],
+    ["an object", (ref: TaskRef) => ({ recipients: { first: ref } as never })],
+  ])("rejects a task's result inside %s when the Dag is serialized", (_, nest) => {
+    const dag = new Dag("d");
+    const listed = dag.task("list", async () => ["a@example.com"])();
+    dag.task("notify", Notify({ subject: "s", ...nest(listed) }))();
+
+    expect(() => serializeTasks(dag)).toThrow(
+      'Argument "recipients" of task "notify" of Dag "d" holds the result of task "list" inside ' +
+        "an array or an object; only a whole argument can take a task's result",
+    );
   });
 
   it("copies its arguments, so a later change to them does not change the Dag", () => {
@@ -176,9 +240,11 @@ describe("defineProviderOperator", () => {
     dag.task("notify", Notify({ subject: "s", extra }))();
     extra.tags.push("b");
 
-    const kwargs = (serializeTasks(dag).get("notify")!["_operator_kwargs"] as { __var: Json })
-      .__var;
-    expect(kwargs["extra"]).toEqual({ __type: "dict", __var: { tags: ["a"] } });
+    expect(serializeTasks(dag).get("notify")!["_operator_kwargs"]).toContainEqual({
+      name: "extra",
+      kind: "literal",
+      value: { tags: ["a"] },
+    });
   });
 
   it.each([

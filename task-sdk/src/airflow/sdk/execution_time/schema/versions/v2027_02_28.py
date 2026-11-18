@@ -22,8 +22,6 @@ New bodies in this version:
 
 - ``HITLDetailResponseResult``: the supervisor's reply when a running task reads its own
   Human-in-the-loop response.
-- ``GetProviderOperator`` and its reply ``ProviderOperatorResult``: a running task reads the
-  provider operator a language SDK Dag declares for it, to build that operator.
 """
 
 from __future__ import annotations
@@ -55,6 +53,21 @@ class AddExecutionTimeoutToSupervisorTIRunContext(VersionChange):
 
     instructions_to_migrate_to_previous_version = (
         schema(TIRunContext).field("execution_timeout").didnt_exist,
+    )
+
+
+class AddProviderOperatorToSupervisorTIRunContext(VersionChange):
+    """
+    Add the ``provider_operator`` a Python worker builds the task of a language SDK Dag from.
+
+    The supervisor-schema mirror of the execution API's ``AddProviderOperatorToTIRunContext``,
+    named apart so the two migrations are not confused.
+    """
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (
+        schema(TIRunContext).field("provider_operator").didnt_exist,
     )
 
 

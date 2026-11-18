@@ -2549,27 +2549,6 @@
       "title": "GetPreviousTI",
       "type": "object"
     },
-    "GetProviderOperator": {
-      "description": "Ask for the provider operator of a task instance, to build a task whose Dag file cannot be imported.",
-      "properties": {
-        "ti_id": {
-          "format": "uuid",
-          "title": "Ti Id",
-          "type": "string"
-        },
-        "type": {
-          "const": "GetProviderOperator",
-          "default": "GetProviderOperator",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "ti_id"
-      ],
-      "title": "GetProviderOperator",
-      "type": "object"
-    },
     "GetTICount": {
       "properties": {
         "dag_id": {
@@ -3686,46 +3665,6 @@
         }
       },
       "title": "PreviousTIResult",
-      "type": "object"
-    },
-    "ProviderOperatorResult": {
-      "description": "The provider operator of the running task instance, in reply to :class:`GetProviderOperator`.",
-      "properties": {
-        "classpath": {
-          "description": "Import path of the operator class.",
-          "title": "Classpath",
-          "type": "string"
-        },
-        "kwargs": {
-          "additionalProperties": true,
-          "description": "Constructor keyword arguments, each in the type encoding of the serialized Dag.",
-          "title": "Kwargs",
-          "type": "object"
-        },
-        "downstream_task_ids": {
-          "additionalProperties": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "description": "The direct downstream task ids of every task in the Dag, keyed by task id.",
-          "title": "Downstream Task Ids",
-          "type": "object"
-        },
-        "type": {
-          "const": "ProviderOperatorResult",
-          "default": "ProviderOperatorResult",
-          "title": "Type",
-          "type": "string"
-        }
-      },
-      "required": [
-        "classpath",
-        "kwargs",
-        "downstream_task_ids"
-      ],
-      "title": "ProviderOperatorResult",
       "type": "object"
     },
     "PutVariable": {
@@ -5432,6 +5371,42 @@
       "title": "LoopContext",
       "type": "object"
     },
+    "TIProviderOperator": {
+      "description": "The Python operator a task of a language SDK Dag runs, and the Dag's edges.\n\nA Python worker builds the operator from it, because it cannot import the Dag file.",
+      "properties": {
+        "classpath": {
+          "description": "Import path of the operator class.",
+          "title": "Classpath",
+          "type": "string"
+        },
+        "kwargs": {
+          "description": "Constructor keyword arguments, in the order of the operator's parameters.",
+          "items": {
+            "$ref": "#/$defs/TaskArgBinding"
+          },
+          "title": "Kwargs",
+          "type": "array"
+        },
+        "downstream_task_ids": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "The direct downstream task ids of every task in the Dag, keyed by task id.",
+          "title": "Downstream Task Ids",
+          "type": "object"
+        }
+      },
+      "required": [
+        "classpath",
+        "kwargs",
+        "downstream_task_ids"
+      ],
+      "title": "TIProviderOperator",
+      "type": "object"
+    },
     "TIRunContext": {
       "description": "Response schema for TaskInstance run context.",
       "properties": {
@@ -5569,6 +5544,17 @@
           "default": null,
           "description": "The execution_timeout in seconds set on a task a language SDK runs, from its serialized Dag. Unset when the task sets none. Zero means no timeout and a negative value has already elapsed, as for a Python task. A Python task runs its own timer in the task runner instead, and gets no value here.",
           "title": "Execution Timeout"
+        },
+        "provider_operator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TIProviderOperator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "multi_team": {
           "default": false,

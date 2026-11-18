@@ -20,8 +20,8 @@ Build a provider operator that a language SDK Dag declares.
 A Python worker gets a task by importing its Dag file. A Dag written with another language SDK
 has no file Python can import, so for a task that a Python operator runs, the SDK writes the
 operator's class and constructor arguments (``_operator_kwargs``) into the serialized Dag, and the
-Execution API sends them to the worker with the Dag's edges. See
-``airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md``.
+Execution API sends them to the worker with the Dag's edges, in ``TIRunContext.provider_operator``.
+See ``airflow-core/adr/lang-sdk/0009-provider-operators-as-generated-dsl.md``.
 
 The other tasks of the Dag become placeholders that keep the task ids and the edges, which is
 what an operator reads of its Dag: the tasks it skips, and the upstream tasks whose results its
@@ -34,12 +34,16 @@ import datetime
 from typing import TYPE_CHECKING, Any
 
 from airflow.sdk._shared.module_loading import import_string
+from airflow.sdk.api.datamodels._generated import LiteralArgBinding, XComArgBinding
 from airflow.sdk.bases.operator import BaseOperator
+from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.definitions.dag import DAG
 from airflow.sdk.definitions.xcom_arg import XComArg
 
 if TYPE_CHECKING:
-    from airflow.sdk.api.datamodels._generated import TIProviderOperatorResponse
+    from collections.abc import Callable
+
+    from airflow.sdk.api.datamodels._generated import TaskArgBinding, TIProviderOperator
 
 
 class ProviderOperatorError(ValueError):
@@ -53,36 +57,47 @@ class _PlaceholderTask(BaseOperator):
         raise RuntimeError(f"Task {self.task_id!r} is a placeholder and does not run here")
 
 
-def decode_value(value: Any, dag: DAG) -> Any:
-    """
-    Decode one value the way ``BaseSerialization.deserialize`` does, for the types a language SDK writes.
+def _parse_date_time(value: Any) -> datetime.datetime:
+    moment = datetime.datetime.fromisoformat(value)
+    return moment if moment.tzinfo else moment.replace(tzinfo=datetime.UTC)
 
-    A reference to another task's result becomes the :class:`XComArg` of that task in *dag*.
-    """
-    if value is None or isinstance(value, (str, bool, int, float)):
+
+# The ``format`` of a ``value_schema`` that a language SDK sets for a value JSON has no type for.
+_LITERAL_CONVERTERS: dict[str, Callable[[Any], Any]] = {
+    "date-time": _parse_date_time,
+    "duration-seconds": lambda seconds: datetime.timedelta(seconds=seconds),
+}
+
+
+def _convert_literal(binding: LiteralArgBinding) -> Any:
+    value = binding.value
+    value_format = binding.value_schema.root.get("format") if binding.value_schema else None
+    if value is None or value_format not in _LITERAL_CONVERTERS:
         return value
-    if isinstance(value, list):
-        return [decode_value(item, dag) for item in value]
-    if not isinstance(value, dict) or "__type" not in value or "__var" not in value:
-        raise ProviderOperatorError(f"Cannot decode {value!r}: it is not a type-encoded value")
-    type_, var = value["__type"], value["__var"]
-    if type_ == "dict":
-        return {key: decode_value(item, dag) for key, item in var.items()}
-    if type_ == "timedelta":
-        return datetime.timedelta(seconds=var)
-    if type_ == "datetime":
-        return datetime.datetime.fromtimestamp(var, tz=datetime.UTC)
-    if type_ == "set":
-        return {decode_value(item, dag) for item in var}
-    if type_ == "tuple":
-        return tuple(decode_value(item, dag) for item in var)
-    if type_ == "xcomref":
-        try:
-            upstream = dag.task_dict[var["task_id"]]
-        except KeyError:
-            raise ProviderOperatorError(f"An argument takes the result of unknown task {var['task_id']!r}")
-        return XComArg(upstream, key=var["key"])
-    raise ProviderOperatorError(f"Cannot decode a value of type {type_!r}")
+    try:
+        return _LITERAL_CONVERTERS[value_format](value)
+    except (TypeError, ValueError) as exc:
+        raise ProviderOperatorError(
+            f"Argument {binding.name!r} is not a valid {value_format}: {value!r}"
+        ) from exc
+
+
+def resolve_binding(binding: TaskArgBinding, dag: DAG) -> Any:
+    """
+    Resolve one constructor argument the way the Dag declares it.
+
+    A literal is its value, as the Python type its ``value_schema`` names. A reference to another
+    task's result becomes the :class:`XComArg` of that task in *dag*.
+    """
+    match binding.root:
+        case LiteralArgBinding() as literal:
+            return _convert_literal(literal)
+        case XComArgBinding(task_id=task_id):
+            try:
+                upstream = dag.task_dict[task_id]
+            except KeyError:
+                raise ProviderOperatorError(f"An argument takes the result of unknown task {task_id!r}")
+            return XComArg(upstream, key=BaseXCom.XCOM_RETURN_KEY)
 
 
 def _find_operator_class(classpath: str) -> type[BaseOperator]:
@@ -99,7 +114,7 @@ def _find_operator_class(classpath: str) -> type[BaseOperator]:
 
 
 def build_provider_operator(
-    operator: TIProviderOperatorResponse, *, dag_id: str, task_id: str, fileloc: str
+    operator: TIProviderOperator, *, dag_id: str, task_id: str, fileloc: str
 ) -> BaseOperator:
     """
     Build task *task_id* from the provider *operator*, with its Dag around it.
@@ -115,7 +130,7 @@ def build_provider_operator(
         for other_id in operator.downstream_task_ids:
             if other_id != task_id:
                 _PlaceholderTask(task_id=other_id)
-        kwargs = {name: decode_value(value, dag) for name, value in operator.kwargs.items()}
+        kwargs = {binding.root.name: resolve_binding(binding, dag) for binding in operator.kwargs}
         task = operator_class(task_id=task_id, **kwargs)
     for upstream_id, downstream_ids in operator.downstream_task_ids.items():
         for downstream_id in downstream_ids:

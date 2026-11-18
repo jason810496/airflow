@@ -73,8 +73,10 @@ from airflow.models.taskinstance import TaskInstance, clear_loop_task_instances,
 from airflow.models.xcom import EXTERNAL_CLEAR_TARGET_XCOM_KEY, XComModel, XComModelV2
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.sdk import Asset, TaskGroup, TriggerRule, task, task_group
+from airflow.sdk import DAG, Asset, TaskGroup, TriggerRule, task, task_group
 from airflow.sdk.definitions._internal.loop import create_loop
+from airflow.serialization.enums import Encoding
+from airflow.serialization.serialized_objects import DagSerialization
 from airflow.state.metastore import MetastoreBackend
 from airflow.utils.state import DagRunState, State, TaskInstanceState, TerminalTIState
 
@@ -1289,6 +1291,88 @@ class TestTIRunState:
         response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
         assert response.status_code == 200
         assert response.json()["execution_timeout"] == 90.0
+
+    @staticmethod
+    def _serialize_language_sdk_dag(notify_fields):
+        """Deserialize a Dag whose ``notify`` task carries the fields a language SDK writes."""
+        with DAG("language_sdk_dag", schedule=None) as dag:
+            EmptyOperator(task_id="extract") >> EmptyOperator(task_id="notify")
+        data = DagSerialization.to_dict(dag)
+        notify = next(t[Encoding.VAR] for t in data["dag"]["tasks"] if t[Encoding.VAR]["task_id"] == "notify")
+        notify.update(notify_fields)
+        return DagSerialization.from_dict(data)
+
+    def _queue_notify_ti(self, dag_maker):
+        with dag_maker("language_sdk_dag", serialized=True):
+            EmptyOperator(task_id="extract") >> EmptyOperator(task_id="notify")
+        ti = dag_maker.create_dagrun().get_task_instance("notify")
+        ti.set_state(State.QUEUED)
+        dag_maker.session.get(TaskInstance, ti.id).is_stub = True
+        dag_maker.session.commit()
+        return ti
+
+    PROVIDER_OPERATOR_FIELDS = {
+        "task_type": "EmptyOperator",
+        "_task_module": "airflow.providers.standard.operators.empty",
+        "is_stub": True,
+        "_operator_kwargs": [
+            {"name": "task_display_name", "kind": "literal", "value": "Notify"},
+            {
+                "name": "start_date",
+                "kind": "literal",
+                "value": "2026-01-02T03:04:05+00:00",
+                "value_schema": {"type": "string", "format": "date-time"},
+            },
+            {"name": "doc_md", "kind": "xcom", "task_id": "extract"},
+        ],
+    }
+
+    def test_ti_run_returns_the_provider_operator(self, client, dag_maker):
+        ti = self._queue_notify_ti(dag_maker)
+        sdag = self._serialize_language_sdk_dag(self.PROVIDER_OPERATOR_FIELDS)
+
+        with mock.patch.object(DBDagBag, "get_dag", autospec=True, return_value=sdag) as get_dag:
+            response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+
+        assert response.status_code == 200
+        assert response.json()["provider_operator"] == {
+            "classpath": "airflow.providers.standard.operators.empty.EmptyOperator",
+            "kwargs": [
+                {"name": "task_display_name", "kind": "literal", "value": "Notify"},
+                {
+                    "name": "start_date",
+                    "kind": "literal",
+                    "value": "2026-01-02T03:04:05+00:00",
+                    "value_schema": {"type": "string", "format": "date-time"},
+                },
+                {"name": "doc_md", "kind": "xcom", "task_id": "extract"},
+            ],
+            "downstream_task_ids": {"extract": ["notify"], "notify": []},
+        }
+        assert get_dag.call_args.args[1] == ti.dag_version_id
+
+    def test_ti_run_returns_no_provider_operator_for_a_stub_without_kwargs(self, client, dag_maker):
+        ti = self._queue_notify_ti(dag_maker)
+        sdag = self._serialize_language_sdk_dag({"is_stub": True})
+
+        with mock.patch.object(DBDagBag, "get_dag", autospec=True, return_value=sdag):
+            response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+
+        assert response.status_code == 200
+        assert "provider_operator" not in response.json()
+
+    def test_ti_run_reports_invalid_provider_operator_kwargs(self, client, dag_maker):
+        """Kwargs this core version cannot validate fail with a structured error, not a bare 500."""
+        ti = self._queue_notify_ti(dag_maker)
+        sdag = self._serialize_language_sdk_dag(
+            {**self.PROVIDER_OPERATOR_FIELDS, "_operator_kwargs": [{"name": "doc_md", "kind": "hologram"}]}
+        )
+
+        with mock.patch.object(DBDagBag, "get_dag", autospec=True, return_value=sdag):
+            response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+
+        assert response.status_code == 500
+        assert response.json()["detail"]["reason"] == "invalid_provider_operator"
 
     def test_arg_bindings_adapter_rejects_unknown_kind(self):
         """The discriminated union refuses serialized specs with an unrecognised kind."""
@@ -6936,98 +7020,6 @@ class TestGetTaskInstanceBreadcrumbs:
                     "task_id": "UPSTREAM_FAILED",
                 },
             ]
-        }
-
-
-def _encoded_task(task_id, downstream=(), **fields):
-    return {
-        "__type": "operator",
-        "__var": {"task_id": task_id, "downstream_task_ids": list(downstream), **fields},
-    }
-
-
-def _serialized_language_sdk_dag(notify_fields):
-    return {
-        "__version": 3,
-        "dag": {
-            "dag_id": "language_sdk_dag",
-            "tasks": [
-                _encoded_task("extract", ["notify"], task_type="TypeScriptOperator", is_stub=True),
-                _encoded_task("notify", **notify_fields),
-            ],
-        },
-    }
-
-
-PROVIDER_OPERATOR_FIELDS = {
-    "task_type": "EmptyOperator",
-    "_task_module": "airflow.providers.standard.operators.empty",
-    "_operator_kwargs": {
-        "__type": "dict",
-        "__var": {"retries": 2, "doc": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "k"}}},
-    },
-}
-
-
-class TestGetProviderOperator:
-    def setup_method(self):
-        clear_db_runs()
-
-    def teardown_method(self):
-        clear_db_runs()
-
-    def _create_ti(self, dag_maker):
-        with dag_maker("language_sdk_dag", serialized=True):
-            EmptyOperator(task_id="extract") >> EmptyOperator(task_id="notify")
-        return dag_maker.create_dagrun().get_task_instance("notify")
-
-    @mock.patch.object(DBDagBag, "get_serialized_dag_model", autospec=True)
-    def test_returns_the_operator_and_the_edges(self, mock_get_model, client, dag_maker):
-        ti = self._create_ti(dag_maker)
-        mock_get_model.return_value.data = _serialized_language_sdk_dag(PROVIDER_OPERATOR_FIELDS)
-
-        response = client.get(f"/execution/task-instances/{ti.id}/provider-operator")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "classpath": "airflow.providers.standard.operators.empty.EmptyOperator",
-            "kwargs": {
-                "retries": 2,
-                "doc": {"__type": "xcomref", "__var": {"task_id": "extract", "key": "k"}},
-            },
-            "downstream_task_ids": {"extract": ["notify"], "notify": []},
-        }
-        assert mock_get_model.call_args.args[1] == ti.dag_version_id
-
-    @pytest.mark.parametrize(
-        "notify_fields",
-        [
-            pytest.param({"task_type": "EmptyOperator", "_task_module": "m"}, id="no-operator-kwargs"),
-            pytest.param({**PROVIDER_OPERATOR_FIELDS, "is_stub": True}, id="stub"),
-        ],
-    )
-    @mock.patch.object(DBDagBag, "get_serialized_dag_model", autospec=True)
-    def test_a_task_that_is_not_a_provider_operator_is_not_found(
-        self, mock_get_model, client, dag_maker, notify_fields
-    ):
-        ti = self._create_ti(dag_maker)
-        mock_get_model.return_value.data = _serialized_language_sdk_dag(notify_fields)
-
-        response = client.get(f"/execution/task-instances/{ti.id}/provider-operator")
-
-        assert response.status_code == 404
-        assert response.json()["detail"] == {
-            "reason": "not_a_provider_operator",
-            "message": "Task 'notify' is not a provider operator of a language SDK Dag",
-        }
-
-    def test_unknown_task_instance_is_not_found(self, client):
-        response = client.get(f"/execution/task-instances/{uuid6.uuid7()}/provider-operator")
-
-        assert response.status_code == 404
-        assert response.json()["detail"] == {
-            "reason": "not_found",
-            "message": "Task Instance or its serialized Dag not found",
         }
 
 

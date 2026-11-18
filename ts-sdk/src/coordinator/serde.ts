@@ -46,15 +46,17 @@ import {
   getDagTaskGroups,
   getDagTaskInputs,
   getDagTaskRecords,
+  isPlainRecord,
   isTaskRef,
   UPSTREAM_JOIN_SUFFIX,
   type Dag,
   type RecordedInputs,
   type TaskGroupRecord,
   type TaskRecord,
+  type TaskRef,
 } from "../sdk/dag.js";
 import { buildDagGraph, type DagGraph } from "../sdk/dag-graph.js";
-import type { PythonOperatorArgument, PythonOperatorTarget } from "../sdk/operator.js";
+import type { PythonOperatorTarget } from "../sdk/operator.js";
 import { describeType, toPlainJson } from "../sdk/plain-json.js";
 
 /** A serialized Dag: JSON, by the time it reaches the supervisor as msgpack. */
@@ -90,14 +92,19 @@ const TASK_LANGUAGE = "typescript";
 
 /**
  * Where a task that a Python worker runs carries the constructor keyword arguments of its
- * operator class, as a `dict` type encoding.
+ * operator class, as a list of argument bindings in parameter order.
  *
  * Python's own serializer keeps only what the scheduler needs, because a Python worker gets the
  * operator back by importing the Dag file. A Python worker cannot import a TypeScript bundle, so
- * it builds `_task_module.task_type(**_operator_kwargs)` from the serialized Dag instead.
+ * the API server sends it `_task_module.task_type` and these arguments with the task's run
+ * context, and it builds the operator from them.
  */
 const OPERATOR_KWARGS_KEY = "_operator_kwargs";
-const XCOM_RETURN_KEY = "return_value";
+
+/** A `value_schema` that tells the worker to read a literal back as a `timedelta`. */
+const DURATION_SECONDS_SCHEMA = { type: "number", format: "duration-seconds" } as const;
+/** A `value_schema` that tells the worker to read a literal back as an aware `datetime`. */
+const DATE_TIME_SCHEMA = { type: "string", format: "date-time" } as const;
 
 /**
  * Python's `DAG.edge_info`, keying a group end by its join node as Python does.
@@ -263,6 +270,10 @@ function serializeTask(
         task_type: python.className,
         _task_module: python.module,
         language: TASK_LANGUAGE,
+        // Makes the API server send the operator with the task's run context, as it sends the
+        // argument bindings of a task a foreign runtime runs. The Python worker builds a real
+        // operator from it, so the task is not a stub there.
+        is_stub: true,
         ...serializePythonOperator(python),
       }
     : {
@@ -298,10 +309,10 @@ function serializeTask(
   const spec = python ? record.spec : withDagQueue(record.spec, dagQueue);
   applySchemaFields(data, spec, TASK_FIELD_RULES, label);
   if (python) {
-    data[OPERATOR_KWARGS_KEY] = {
-      __type: "dict",
-      __var: { ...serializeOperatorKwargs(python), ...serializeSpecKwargs(spec, label) },
-    };
+    data[OPERATOR_KWARGS_KEY] = [
+      ...serializeOperatorKwargs(python, label),
+      ...serializeSpecKwargs(spec, label),
+    ];
   }
   if (downstream?.size) {
     data["downstream_task_ids"] = [...downstream].sort();
@@ -323,48 +334,78 @@ function serializePythonOperator(python: PythonOperatorTarget): Record<string, S
   };
 }
 
-/** The operator's own constructor arguments, each as `BaseSerialization.serialize()` writes it. */
-function serializeOperatorKwargs(python: PythonOperatorTarget): Record<string, SerializedValue> {
-  const kwargs: Record<string, SerializedValue> = {};
-  for (const [name, argument] of python.kwargs) kwargs[name] = serializeArgument(argument);
-  return kwargs;
-}
-
-function serializeArgument({ value, encoding }: PythonOperatorArgument): SerializedValue {
-  if (value === null) return null;
-  if (encoding === "timedelta") return { __type: "timedelta", __var: value as number };
-  return serializeArgumentValue(value);
-}
-
-/** {@link serializeValue}, with a task reference written as the `XComArg` it stands for. */
-function serializeArgumentValue(value: unknown): SerializedValue {
-  if (isTaskRef(value)) {
-    return { __type: "xcomref", __var: { task_id: value.taskId, key: XCOM_RETURN_KEY } };
-  }
-  if (Array.isArray(value)) return value.map(serializeArgumentValue);
-  if (typeof value === "object" && value !== null && !(value instanceof Date)) {
-    return {
-      __type: "dict",
-      __var: Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, serializeArgumentValue(item)]),
-      ),
-    };
-  }
-  return serializeValue(value);
+/** A literal binding, which the worker passes as the keyword argument `name`. */
+function literalKwarg(
+  name: string,
+  value: SerializedValue,
+  valueSchema?: SerializedValue,
+): SerializedValue {
+  return {
+    name,
+    kind: "literal",
+    value,
+    ...(valueSchema !== undefined && { value_schema: valueSchema }),
+  };
 }
 
 /**
- * The task options as `BaseOperator` constructor arguments. The worker has only the serialized
- * Dag to build the operator from, and a schema key is the name of the argument it came from.
+ * The operator's own constructor arguments as argument bindings, in the order the operator
+ * declares its parameters.
+ *
+ * A task's result is an `xcom` binding, which a whole argument can be and nothing nested in one.
+ * A value JSON has no type for is written as a string or a number with the `value_schema` that
+ * tells the worker which Python type to read it back as.
  */
-function serializeSpecKwargs(spec: object, label: string): Record<string, SerializedValue> {
-  const kwargs: Record<string, SerializedValue> = {};
+function serializeOperatorKwargs(python: PythonOperatorTarget, label: string): SerializedValue[] {
+  return [...python.kwargs].map(([name, { value, encoding }]): SerializedValue => {
+    if (isTaskRef(value)) return { name, kind: "xcom", task_id: value.taskId };
+    if (value === null) return literalKwarg(name, null);
+    if (encoding === "timedelta")
+      return literalKwarg(name, value as number, DURATION_SECONDS_SCHEMA);
+    if (encoding === "datetime") {
+      return literalKwarg(name, (value as Date).toISOString(), DATE_TIME_SCHEMA);
+    }
+    const nested = findNestedTaskRef(value);
+    if (nested !== undefined) {
+      throw new Error(
+        `Argument "${name}" of ${label} holds the result of task "${nested.taskId}" inside an ` +
+          "array or an object; only a whole argument can take a task's result",
+      );
+    }
+    return literalKwarg(name, toPlainJson(value, `Argument "${name}" of ${label}`));
+  });
+}
+
+/** The first task reference inside an array or a plain object, which only a whole argument may hold. */
+function findNestedTaskRef(value: unknown): TaskRef | undefined {
+  const items = Array.isArray(value) ? value : isPlainRecord(value) ? Object.values(value) : [];
+  for (const item of items) {
+    const found = isTaskRef(item) ? item : findNestedTaskRef(item);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * The task options as `BaseOperator` constructor arguments, in the order of the schema. The worker
+ * builds the operator from these bindings alone, and a schema key is the name of the argument it
+ * came from.
+ */
+function serializeSpecKwargs(spec: object, label: string): SerializedValue[] {
+  const kwargs: SerializedValue[] = [];
   const values = spec as Record<string, unknown>;
   for (const [name, field] of Object.entries(TASK_FIELD_RULES.fields)) {
     if (field.virtual || TASK_FIELD_RULES.omitted.has(field.key)) continue;
     const value = values[name];
     if (value === undefined || value === field.default) continue;
-    kwargs[field.key] = encodeField(field, value, `${name} for ${label}`);
+    const encoded = encodeField(field, value, `${name} for ${label}`);
+    if (field.type === "timedelta") {
+      kwargs.push(literalKwarg(field.key, value as number, DURATION_SECONDS_SCHEMA));
+    } else if (field.type === "datetime") {
+      kwargs.push(literalKwarg(field.key, (value as Date).toISOString(), DATE_TIME_SCHEMA));
+    } else {
+      kwargs.push(literalKwarg(field.key, unwrapTypeEncoding(encoded)));
+    }
   }
   return kwargs;
 }

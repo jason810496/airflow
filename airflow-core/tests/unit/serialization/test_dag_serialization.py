@@ -3763,6 +3763,37 @@ def test_stub_task_args_round_trip():
         get_arg_bindings_adapter().validate_python(round_tripped.task_dict[task_id].arg_bindings)
 
 
+def test_operator_kwargs_round_trip():
+    """A language SDK's ``_operator_kwargs`` is validated by the schema and restored as plain JSON."""
+    operator_kwargs = [
+        {"name": "message", "kind": "literal", "value": {"tags": ["a"]}},
+        {
+            "name": "timeout",
+            "kind": "literal",
+            "value": 90,
+            "value_schema": {"type": "number", "format": "duration-seconds"},
+        },
+        {"name": "doc_md", "kind": "xcom", "task_id": "extract"},
+    ]
+    with DAG(dag_id="operator_kwargs_dag", schedule=None) as dag:
+        BaseOperator(task_id="extract") >> BaseOperator(task_id="notify")
+    ser_dag = DagSerialization.to_dict(dag)
+    notify = next(t[Encoding.VAR] for t in ser_dag["dag"]["tasks"] if t[Encoding.VAR]["task_id"] == "notify")
+    notify["_operator_kwargs"] = operator_kwargs
+    jsonschema.validate(
+        notify["_operator_kwargs"],
+        {
+            "definitions": load_dag_schema_dict()["definitions"],
+            **load_dag_schema_dict()["definitions"]["operator"]["properties"]["_operator_kwargs"],
+        },
+    )
+
+    round_tripped = DagSerialization.from_dict(ser_dag)
+
+    assert round_tripped.task_dict["notify"].operator_kwargs == operator_kwargs
+    assert round_tripped.task_dict["extract"].operator_kwargs is None
+
+
 @pytest.mark.parametrize("raw", ["false", "true", 0, 1, None, [], {"a": 1}])
 def test_task_is_stub_fails_closed_on_non_boolean(raw):
     """A task flag from a non-Python producer is never schema-validated, so it must fail closed."""

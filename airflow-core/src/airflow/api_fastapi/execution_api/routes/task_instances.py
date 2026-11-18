@@ -68,7 +68,7 @@ from airflow.api_fastapi.execution_api.datamodels.taskinstance import (
     TIDeferredStatePayload,
     TIEnterRunningPayload,
     TIHeartbeatInfo,
-    TIProviderOperatorResponse,
+    TIProviderOperator,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
     TIRunContext,
@@ -92,8 +92,10 @@ from airflow.api_fastapi.execution_api.security import (
 )
 from airflow.api_fastapi.execution_api.services.task_instances import (
     client_supports_arg_bindings,
+    client_supports_provider_operator,
     get_arg_bindings,
     get_execution_timeout,
+    get_provider_operator,
     get_task,
 )
 from airflow.api_fastapi.execution_api.versions.v2026_10_30 import IdentifyArchivedTaskStateUpdates
@@ -416,6 +418,28 @@ def ti_run(
             # A Python task enforces its own and sends that to the supervisor.
             if (execution_timeout := get_execution_timeout(serialized_task)) is not None:
                 context.execution_timeout = execution_timeout
+
+            # A Python worker cannot import a language SDK Dag file, so a provider operator the Dag
+            # declares reaches it here to be built.
+            if client_supports_provider_operator() and (
+                provider_operator := get_provider_operator(serialized_task)
+            ):
+                try:
+                    context.provider_operator = TIProviderOperator.model_validate(provider_operator)
+                except ValidationError:
+                    log.exception(
+                        "Serialized provider operator failed validation",
+                        dag_id=ti.dag_id,
+                        task_id=ti.task_id,
+                        dag_version_id=ti.dag_version_id,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "reason": "invalid_provider_operator",
+                            "message": "The serialized provider operator of this task is not valid.",
+                        },
+                    )
 
         # Only set if they are non-null
         if ti.next_method:
@@ -1888,62 +1912,6 @@ def _get_group_tasks(
     ).all()
 
     return group_tasks
-
-
-@ti_id_router.get(
-    "/{task_instance_id}/provider-operator",
-    status_code=status.HTTP_200_OK,
-    responses=create_openapi_http_exception_doc(
-        [
-            (
-                status.HTTP_404_NOT_FOUND,
-                "Task Instance or its serialized Dag not found, or the task is not a provider operator",
-            ),
-        ]
-    ),
-)
-def get_provider_operator(
-    task_instance_id: UUID,
-    session: SessionDep,
-    dag_bag: DagBagDep,
-) -> TIProviderOperatorResponse:
-    """Get the provider operator a task of a language SDK Dag runs, at the Dag version the task instance runs."""
-    bind_contextvars(ti_id=str(task_instance_id))
-
-    row = session.execute(
-        select(TI.dag_version_id, TI.task_id).where(TI.id == task_instance_id)
-    ).one_or_none()
-    serialized_dag = (
-        dag_bag.get_serialized_dag_model(row.dag_version_id, session=session)
-        if row and row.dag_version_id
-        else None
-    )
-    if row is None or serialized_dag is None or (data := serialized_dag.data) is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "not_found",
-                "message": "Task Instance or its serialized Dag not found",
-            },
-        )
-
-    tasks = {task["__var"]["task_id"]: task["__var"] for task in data["dag"]["tasks"]}
-    task = tasks.get(row.task_id)
-    if task is None or task.get("is_stub") is True or "_operator_kwargs" not in task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "reason": "not_a_provider_operator",
-                "message": f"Task {row.task_id!r} is not a provider operator of a language SDK Dag",
-            },
-        )
-    return TIProviderOperatorResponse(
-        classpath=f"{task['_task_module']}.{task['task_type']}",
-        kwargs=task["_operator_kwargs"]["__var"],
-        downstream_task_ids={
-            task_id: list(other.get("downstream_task_ids", [])) for task_id, other in tasks.items()
-        },
-    )
 
 
 @ti_id_router.get(
