@@ -30,6 +30,8 @@ Proposed.
 - **Python to all.** The operator is implemented in Python, and a Dag written in a Lang SDK uses it. Example: a TypeScript Dag that writes a report to S3 with the amazon provider.
 - **All to all.** The operator is implemented in a Lang SDK, and a Dag written in Python or in any Lang SDK uses it. Example: a Python Dag that asks a model for a summary through a TypeScript provider built on the Vercel AI SDK.
 
+Both directions rest on one fact: a worker needs only two things to build a provider operator, its class path and the keyword arguments of its constructor. The Triggerer already works this way. A trigger serializes to its class path and kwargs, and the Triggerer rebuilds it from them without the Dag file. Provider operator arguments are limited to JSON-serializable values, so any SDK can write the pair and any runtime can read it. A cross-language provider only has to deliver that pair to a runtime of the language that implements the operator.
+
 A Dag author sees the same thing in both cases: a typed operator class in their own language. The two cases differ in where the operator is implemented, and so in which runtime builds and runs it.
 
 ## Decision
