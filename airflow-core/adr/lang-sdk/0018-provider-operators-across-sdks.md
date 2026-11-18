@@ -32,6 +32,22 @@ Proposed.
 
 Both directions rest on one fact: a worker needs only two things to build a provider operator, its class path and the keyword arguments of its constructor. The Triggerer already works this way. A trigger serializes to its class path and kwargs, and the Triggerer rebuilds it from them without the Dag file. Provider operator arguments are limited to JSON-serializable values, so any SDK can write the pair and any runtime can read it. A cross-language provider only has to deliver that pair to a runtime of the language that implements the operator.
 
+```mermaid
+flowchart LR
+    subgraph trig ["Trigger, today"]
+        direction LR
+        t1["Deferring task<br/>trigger.serialize()"] --> t2["class path + kwargs<br/>stored in the trigger table"]
+        t2 --> t3["Triggerer<br/>imports the class path<br/>builds Trigger(**kwargs)"]
+        t3 --> t4["run()"]
+    end
+    subgraph prov ["Provider operator, this ADR"]
+        direction LR
+        p1["Wrapper in a Dag<br/>of any SDK"] --> p2["class path + kwargs<br/>stored in the serialized Dag<br/>as JSON"]
+        p2 --> p3["Runtime of the implementing language<br/>loads the class path<br/>builds the operator from the kwargs"]
+        p3 --> p4["execute()"]
+    end
+```
+
 A Dag author sees the same thing in both cases: a typed operator class in their own language. The two cases differ in where the operator is implemented, and so in which runtime builds and runs it.
 
 ## Decision
