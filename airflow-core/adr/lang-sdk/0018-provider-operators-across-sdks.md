@@ -54,11 +54,12 @@ A Dag author sees the same thing in both cases: a typed operator class in their 
 
 1. **An operator has one name and one location.** Its name is the Python class path, for example `airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator`, which the scheduler, the UI and the Python wrapper use, and which a runtime checks the implementation against. Its location depends on the runtime that implements it: a Python worker imports the class path itself, and a Lang SDK runtime loads `_operator_module`, written in that SDK's own terms, such as an npm module specifier.
 2. **One generated spec per provider is the source of truth for every wrapper.** `providers/<provider>/_generated/lang_sdk_operators.json` describes each operator's parameters, template fields and class attributes. It is generated from the implementation: from the Python constructors for a Python provider, and from the Lang SDK code for any other. Every SDK generates its typed wrapper package from it.
-3. **A wrapper emits JSON in the argument-binding format, not in the core serialization format.** The serialized task carries the class path, the constructor arguments as `_operator_kwargs`, and `is_stub`. `_operator_kwargs` is a list of the argument bindings of [ADR-0007](0007-taskflow-across-language-boundary.md), whose values are plain JSON rather than Airflow's `{__type, __var}` encoding. Operator arguments are limited to JSON-serializable values, so no SDK runtime has to reimplement the core serializer to read them. When a Lang SDK implements the operator, the task also carries `_operator_module`, the module to import.
+3. **A wrapper emits JSON in the argument-binding format, not in the core serialization format.** The serialized task carries the class path, the constructor arguments as `_operator_kwargs`, `is_stub`, and `stub_kind` set to `provider_operator`. `_operator_kwargs` is a list of the argument bindings of [ADR-0007](0007-taskflow-across-language-boundary.md), whose values are plain JSON rather than Airflow's `{__type, __var}` encoding. Operator arguments are limited to JSON-serializable values, so no SDK runtime has to reimplement the core serializer to read them. When a Lang SDK implements the operator, the task also carries `_operator_module`, the module to import.
 4. **The task gets its operator in the run context.** Provider tasks are stubs, so the run endpoint reads their serialized task and fills `TIRunContext.provider_operator` with the class path, the module, the arguments and the Dag's edges. No extra request is made.
-5. **The task's queue picks the runtime.** `[sdk] queue_to_coordinator` routes a queue to a Lang SDK coordinator. A task of a Lang SDK implemented operator that lands on a Python worker fails with a message that names the queue setting.
-6. **A Lang SDK runtime loads an operator it was not built with.** The coordinator starts a generic runtime when no Dag bundle declares the task. The runtime starts knowing nothing about the operator; it learns which one to run from `TIRunContext.provider_operator` in its start-up details, then loads `_operator_module` from a location the administrator configures.
+5. **The task's queue picks the runtime.** A provider task takes the Dag's queue unless it sets its own, like any other task. When another runtime implements the operator, the author sets a task queue that `[sdk] queue_to_coordinator` routes to that runtime. A task of a Lang SDK implemented operator that lands on a Python worker fails with a message that names the queue setting.
+6. **A Lang SDK runtime loads an operator it was not built with.** The coordinator starts a generic runtime for a task whose `stub_kind` is `provider_operator`, unless the task's Dag file is a Dag of the coordinator's own SDK, which already packs the implementation. The runtime starts knowing nothing about the operator; it learns which one to run from `TIRunContext.provider_operator` in its start-up details, then loads `_operator_module` from a location the administrator configures.
 7. **Templates always render in Python.** A Python worker renders them as it does for any task. A Lang SDK runtime sends its template values to the supervisor, which renders them in the task's helper process.
+8. **`stub_kind` says what a stub task runs.** `is_stub` says only that the API server sends the task's definition. `stub_kind` adds what the worker starts: `task_handler` for a `@task.stub` task, `dag_definition` for a task of a Dag written in a Lang SDK, and `provider_operator` for a task with `_operator_kwargs`. The scheduler copies it to the task instance next to `is_stub`, and the task instance a worker receives carries it, so a coordinator picks what to start per task rather than per Dag.
 
 ## Overview
 
@@ -76,7 +77,7 @@ flowchart LR
         spec2 --> pywrap["Python wrapper<br/>LangSdkProviderOperator"]
         spec2 --> gowrap["Go and Java wrappers"]
     end
-    tsbind --> task["Serialized task<br/>class path, _operator_kwargs, is_stub"]
+    tsbind --> task["Serialized task<br/>class path, _operator_kwargs, stub_kind"]
     gobind --> task
     pywrap --> task
     gowrap --> task
@@ -99,13 +100,18 @@ const dag = new Dag("publish_report", { queue: "typescript" });
 const report = dag.task("build_report", async () => JSON.stringify({ orders: 3, total: 120 }))();
 dag.task(
   "write_report",
-  S3CreateObjectOperator({ s3Bucket: "reports", s3Key: "{{ ds }}/report.json", data: report }),
+  S3CreateObjectOperator({
+    s3Bucket: "reports",
+    s3Key: "{{ ds }}/report.json",
+    data: report,
+    queue: "default",
+  }),
 )();
 ```
 
 `build_report` runs in Node. `write_report` runs on a Python worker.
 
-> **Note:** The provider task needs no queue of its own. A Python-implemented provider task does not inherit the Dag's `queue`, so it gets `[operators] default_queue` (`default`). No coordinator is mapped to that queue in `[sdk] queue_to_coordinator`, so a Python worker runs it. Set a task queue only to send it to a different pool of Python workers.
+> **Note:** A provider task takes the Dag's queue unless it sets its own, like any other task. The Dag's `typescript` queue routes to the Node coordinator, so `write_report` sets `default`, a queue that a Python worker serves. An operator implemented in TypeScript needs no queue of its own in this Dag.
 
 **Authoring.** The question is how a worker builds the operator and calls `execute`, and the answer is the class path and the constructor arguments. The spec is generated from the Python constructors, as [ADR-0009](0009-provider-operators-as-generated-dsl.md) describes. Each SDK generates a typed wrapper from it, and the wrapper writes the arguments under the Python parameter names:
 
@@ -115,6 +121,7 @@ dag.task(
   "task_type": "S3CreateObjectOperator",
   "_task_module": "airflow.providers.amazon.aws.operators.s3",
   "is_stub": true,
+  "stub_kind": "provider_operator",
   "_operator_kwargs": [
     {"name": "s3_bucket", "kind": "literal", "value": "reports"},
     {"name": "s3_key", "kind": "literal", "value": "{{ ds }}/report.json"},
@@ -135,7 +142,7 @@ sequenceDiagram
     Sup->>API: start the task (ti.run)
     API-->>Sup: TIRunContext.provider_operator<br/>class path, kwargs, edges
     Sup->>Run: StartupDetails
-    Run->>Run: cannot import the Dag file, so import the class path
+    Run->>Run: stub_kind is provider_operator, so import the class path
     Run->>Run: build the operator in a Dag of placeholder tasks
     Run->>Run: render templates, run execute()
     Run->>Sup: return_value XCom, task succeeded
@@ -203,6 +210,7 @@ It writes the same task shape, plus the module:
   "_task_module": "airflow.providers.vercel.ai.operators.text",
   "_operator_module": "@apache-airflow/providers-vercel-ai/operators/text",
   "is_stub": true,
+  "stub_kind": "provider_operator",
   "_operator_kwargs": [
     {"name": "model", "kind": "literal", "value": "gpt-4o-mini"},
     {"name": "prompt", "kind": "literal", "value": "Summarize the orders of {{ ds }}."}
@@ -214,10 +222,11 @@ A TypeScript Dag that uses `GenerateTextOperator` directly writes the same task.
 
 Python's role changes in this direction. The Python package of the provider holds only wrappers: the Dag processor serializes a wrapper like any operator, and `LangSdkProviderOperator` makes the serializer write `_operator_kwargs` and `_operator_module` instead of running anything. [Serialized task and run context](#serialized-task-and-run-context) shows the schema and how the run endpoint reads it.
 
-**Launching a generic runtime.** The coordinator chooses which program to start before the task starts. The supervisor launches the runtime first and only then calls `ti.run`, because that call carries the new process's id, so the coordinator never sees `provider_operator`. It decides from the Dag alone:
+**Launching a generic runtime.** The coordinator chooses which program to start before the task starts. The supervisor launches the runtime first and only then calls `ti.run`, because that call carries the new process's id, so the coordinator never sees `provider_operator`. It decides from the task instance it is given, which carries `stub_kind`:
 
-- A Dag bundle declares the task's `dag_id`, as for a TypeScript Dag: the coordinator runs that bundle's artifact, `node <bundle>/dags/report.min.mjs --comm=<host:port> --logs=<host:port>`.
-- No bundle declares it, as for the Python Dag above, and `node_modules_path` is set: the coordinator runs the provider runner, `node <node_modules_path>/@apache-airflow/ts-sdk/dist/coordinator/provider-runner.js --comm=<host:port> --logs=<host:port>`. The runner serves an empty bundle, so it runs any provider operator and nothing else.
+- The task's Dag file is a TypeScript Dag: the coordinator runs it, `node <bundle>/dags/report.min.mjs --comm=<host:port> --logs=<host:port>`. The bundle packs every operator the Dag imports.
+- `stub_kind` is `provider_operator`, as for the Python Dag above: the coordinator runs the provider runner, `node <node_modules_path>/@apache-airflow/ts-sdk/dist/coordinator/provider-runner.js --comm=<host:port> --logs=<host:port>`. The runner serves an empty bundle, so it runs any provider operator and nothing else.
+- Any other task, such as a `@task.stub` task of a Python Dag, runs the bundle that declares its `dag_id`.
 
 The second case is why each SDK needs a generic runtime. A Python Dag's file is Python, not a `.min.mjs` artifact, so there is nothing of the Dag for Node to run. The same holds for any pair of languages, such as a Go Dag using an operator implemented in Java: the Java coordinator cannot run the Go Dag's binary, so it needs a Java runtime that holds no Dag.
 
@@ -249,7 +258,7 @@ sequenceDiagram
     participant Node as Node runtime
     participant Help as Helper process
     Sup->>Sup: queue_to_coordinator picks NodeCoordinator
-    Sup->>Node: run the bundle that declares the dag_id,<br/>else the provider runner from node_modules_path
+    Sup->>Node: stub_kind is provider_operator:<br/>run the provider runner from node_modules_path
     Sup->>API: start the task (ti.run)
     API-->>Sup: TIRunContext.provider_operator<br/>class path, module, kwargs, edges
     Sup->>Node: StartupDetails
@@ -263,12 +272,12 @@ sequenceDiagram
     Node->>Sup: return_value XCom, task succeeded
 ```
 
-- **Finding the implementation.** The runtime knows a task is a provider operator from `ti_context.provider_operator` alone. When the bundle declares the task, as for a TypeScript Dag's own task, the implementation is already packed in it. Otherwise the runtime runs `await import(module)`, takes the export named after the class, and checks that it implements the class path. Both ways share one task path for failure, retry and the `return_value` XCom.
+- **Finding the implementation.** The runtime knows a task is a provider operator from `ti_context.provider_operator` alone. When the task belongs to a TypeScript Dag, the Dag's bundle already packs the implementation. Otherwise the runtime runs `await import(module)`, takes the export named after the class, and checks that it implements the class path. Both ways share one task path for failure, retry and the `return_value` XCom.
 - **Rendering.** The helper process is the one that runs the XCom backend for the task, started on the first call that needs it. It builds the template context from the task's start-up details and renders with the Task SDK. The supervisor keeps the rendered values as the task's rendered fields, so the UI shows them as it does for a Python task. An `xcom` binding is pulled by the runtime, not rendered.
 
 ## Serialized task and run context
 
-Both directions store the same fields on the serialized task. The serialized Dag schema (`airflow-core/src/airflow/serialization/schema.json`) adds two of them, and reuses the argument binding that `@task.stub` already has:
+Both directions store the same fields on the serialized task. The serialized Dag schema (`airflow-core/src/airflow/serialization/schema.json`) adds three of them, and reuses the argument binding that `@task.stub` already has:
 
 ```json
 "arg_binding": {
@@ -291,6 +300,10 @@ Both directions store the same fields on the serialized task. The serialized Dag
 "_operator_module": {
   "$comment": "Module of the Lang SDK that implements the operator and exports it under the class name",
   "type": "string"
+},
+"stub_kind": {
+  "$comment": "What the worker runs for a stub task; set exactly when is_stub is true",
+  "enum": ["task_handler", "dag_definition", "provider_operator"]
 }
 ```
 
@@ -298,6 +311,7 @@ Both directions store the same fields on the serialized task. The serialized Dag
 | --- | --- | --- |
 | `task_type`, `_task_module` | Every wrapper | The Python class path, which the scheduler and the UI already read |
 | `is_stub` | Every wrapper | The task's runtime cannot build the task from a Dag file, so the API server sends what it needs |
+| `stub_kind` | Every wrapper | `provider_operator`: the worker builds the operator from the run context |
 | `_operator_kwargs` | Every wrapper | The constructor arguments as argument bindings with plain JSON values |
 | `_operator_module` | Wrappers of a Lang SDK implemented operator | What the implementing runtime imports |
 
@@ -314,6 +328,33 @@ flowchart TD
     kw -- "yes" --> po["provider_operator"]
     kw -- "no" --> done2["no provider_operator"]
 ```
+
+**`stub_kind`.** `is_stub` answers what the run endpoint needs to know, but not what the worker should start. Before this ADR every stub ran either its own Dag file or an artifact found by `dag_id`, so the coordinator never had to ask. A provider task breaks that: its Dag can be one that an artifact declares for its `@task.stub` tasks, yet the provider task must run in the generic runtime. `stub_kind` covers every stub task:
+
+| `stub_kind` | Tasks | What the worker starts |
+| --- | --- | --- |
+| unset | An ordinary Python task, `is_stub` false | The Python task runner, which imports the Dag file |
+| `task_handler` | A `@task.stub` task of a Python or YAML Dag, mapped or not | The artifact that declares the `dag_id`, or a Python task handler |
+| `dag_definition` | A task of a TypeScript, Go or Java Dag that is not a provider task | The Dag's own file |
+| `provider_operator` | A task with `_operator_kwargs`, in a Dag of any SDK | The Dag's own file when it is a Dag of the implementing SDK, else that SDK's generic runtime, or the Python task runner for a Python operator |
+
+The scheduler copies `stub_kind` into `task_instance.stub_kind`, and the Execution API's `TaskInstance` carries it to the worker in the workload, so the choice is made before the runtime starts:
+
+```mermaid
+flowchart TD
+    w["Task instance in the workload"] --> q{"queue_to_coordinator"}
+    q -- "Python worker" --> py{"stub_kind"}
+    py -- "provider_operator" --> pyb["build the operator<br/>from TIRunContext"]
+    py -- "task_handler" --> pyh["Python task handler"]
+    py -- "unset" --> pyd["import the Dag file"]
+    q -- "Lang SDK coordinator" --> nat{"Dag file of<br/>this SDK?"}
+    nat -- "yes" --> natr["run the Dag file"]
+    nat -- "no" --> k{"stub_kind"}
+    k -- "provider_operator" --> gen["generic runtime"]
+    k -- "task_handler" --> art["artifact that declares the dag_id"]
+```
+
+`is_stub` stays the run endpoint's gate and is true exactly when `stub_kind` is set. Replacing it with `stub_kind` needs a backfill of `stub_kind` for existing task instances from their serialized Dags, and a deprecation of `is_stub` and its column.
 
 **How the run endpoint reads the operator.** It reads the task from the serialized Dag of the task instance's Dag version, so a task always runs the arguments of the version its run started with. When the task has `_operator_kwargs`, it builds the container:
 
@@ -344,9 +385,9 @@ It validates the container against `TIProviderOperator` and fails the call with 
 | Spec generated from | Python constructors | Lang SDK implementation |
 | Python package | The operator itself | A generated `LangSdkProviderOperator` wrapper |
 | Other SDKs | Generated wrappers | Generated wrappers, or the implementation itself |
-| Serialized task | Class path, `_operator_kwargs`, `is_stub` | The same, plus `_operator_module` |
-| Queue | One a Python worker serves | One routed to the implementing SDK's coordinator |
-| Runtime started | The Python task runner | The Dag's bundle, or the SDK's generic runtime |
+| Serialized task | Class path, `_operator_kwargs`, `is_stub`, `stub_kind` | The same, plus `_operator_module` |
+| Queue | The Dag's, or a task queue a Python worker serves | The Dag's, or a task queue routed to the implementing SDK's coordinator |
+| Runtime started | The Python task runner | The Dag's own file in the implementing SDK, else the SDK's generic runtime |
 | Who builds the operator | Python task runner, from the class path | Lang SDK runtime, from its bundle or `_operator_module` |
 | Templates | Rendered by the task runner | Rendered by the supervisor's helper process |
 
@@ -376,7 +417,7 @@ The same choice applies in the other direction. For a provider implemented in a 
 
 The TypeScript SDK can load an operator it was not built with because Node imports modules at run time. Go and Java need the same three pieces, each in their own way:
 
-1. **A generic runtime** that the coordinator starts when no Dag bundle declares the task.
+1. **A generic runtime** that the coordinator starts for a `provider_operator` task.
 2. **A way to load an implementation by `_operator_module`** at run time.
 3. **An install location** that the administrator fills with provider packages and gives to the coordinator.
 
@@ -451,12 +492,13 @@ In both SDKs the arguments decode from the bindings into a typed struct or recor
 
 - **Every SDK writes one task shape.** Any runtime that implements a class path can run a task from a Dag in any language, and adding an SDK takes one generator that reads any spec rather than one per pair of languages.
 - **No runtime decodes core serialization.** Limiting operator arguments to JSON is what lets a wrapper write argument bindings instead of Airflow's Python encoding. An operator whose required argument is not JSON gets no wrapper, as in ADR-0009.
-- **Authors set the queue.** The wrapper cannot know which workers a deployment runs, so the author routes the task. A Lang SDK implemented operator that reaches a Python worker fails before it does any work.
+- **Authors set the queue.** The wrapper cannot know which workers a deployment runs, so the author routes the task. It takes the Dag's queue unless the author sets its own. A Lang SDK implemented operator that reaches a Python worker fails before it does any work.
 - **Administrators install implementations.** A provider implemented in a Lang SDK needs its package on every worker that serves its queue, in the location the coordinator is configured with.
 - **Wrapper and provider versions may drift.** As in ADR-0009, skew between the wrapper in the Dag and the provider installed on the worker warns and does not block. It fails a task only when the signatures disagree at run time, for example when the wrapper passes an argument the installed operator no longer accepts.
 - **Templates in a Lang SDK runtime render with less context, for now.** Dag params, `template_ext` files and user-defined macros do not reach the helper process yet. The run's details, `var`, `conn`, `xcom_pull` and macro plugins work. Nothing prevents the rest: the run context could carry the params, and the serialized task could carry the template extensions. That is follow-up work.
 - **A wrapper task cannot be mapped yet.** A Python operator in a Python Dag maps as before, because the worker imports the Dag file and expands it itself. A wrapper has no Dag file to import: its runtime gets one fixed set of arguments in the run context, and the serializer rejects a mapped wrapper. Mapping it means sending the arguments of one map index, as [ADR-0016](0016-mapped-tasks-across-lang-sdks.md) does for stub tasks. That is follow-up work.
-- **The coordinator picks the artifact by Dag, not by task.** Take a Python Dag `etl` with a `@task.stub` task whose handler lives in the TypeScript bundle `etl.min.mjs`, and a `GenerateTextOperator` task on the same queue. The bundle declares `etl`, so the coordinator runs `etl.min.mjs` for both tasks, and the generic runtime never starts. The provider task then runs only if the bundle itself imports `@apache-airflow/providers-vercel-ai`. Until the coordinator matches tasks as well as Dags, which the bundle metadata already allows since it lists the handled task ids per Dag, such an operator belongs in a Dag that no bundle declares, or in a bundle that imports its package.
+- **The coordinator picks what to start per task.** Take a Python Dag `etl` with a `@task.stub` task whose handler lives in the TypeScript bundle `etl.min.mjs`, and a `GenerateTextOperator` task on the same queue. The bundle declares `etl`, but `stub_kind` tells the two tasks apart: the stub task runs `etl.min.mjs`, and the provider task runs the generic runtime. A bundle never has to pack a provider package for a Dag it does not define.
+- **`is_stub` and `stub_kind` overlap for now.** Both are stored, and `is_stub` stays the run endpoint's gate. Dropping it needs a backfill of `stub_kind` for existing task instances and a deprecation of the `is_stub` column.
 
 ## Appendix: Implementation Notes
 
@@ -467,4 +509,4 @@ The TypeScript SDK implements both directions. `apache-airflow-providers-localfi
 - **Values.** A datetime is an ISO 8601 string with `value_schema` format `date-time`. A timedelta is a number of seconds with format `duration-seconds`. A set or a tuple is a list. A task's result is an `xcom` binding only when it is the whole argument; a result inside a list or a dict fails when the Dag is serialized. An unset optional argument is left out, so the implementation applies its own default.
 - **Run endpoint.** `get_provider_operator` in `airflow-core/src/airflow/api_fastapi/execution_api/services/task_instances.py` builds the container, and `AddProviderOperatorToTIRunContext` in the `2027-02-28` Execution API version adds the field.
 - **Rendering messages.** `RenderTemplateFields` and `RenderedTemplateFieldsResult` are internal to the protocol between a runtime and its supervisor.
-- **Node.** The provider runner is `airflow-ts-provider-runner`. The coordinator reads its supervisor schema version from `airflow.supervisorSchemaVersion` in the SDK's `package.json`. Without `node_modules_path`, a task that no bundle declares fails as before.
+- **Node.** The provider runner is `airflow-ts-provider-runner`. The coordinator reads its supervisor schema version from `airflow.supervisorSchemaVersion` in the SDK's `package.json`. Without `node_modules_path`, a `provider_operator` task of a Python Dag fails to launch.
