@@ -52,12 +52,12 @@ A Dag author sees the same thing in both cases: a typed operator class in their 
 
 ## Decision
 
-1. **An operator is identified by its Python class path in every SDK**, for example `airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator`. The class path is what the scheduler, the UI and every runtime see.
+1. **An operator has one name and one location.** Its name is the Python class path, for example `airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator`, which the scheduler, the UI and the Python wrapper use, and which a runtime checks the implementation against. Its location depends on the runtime that implements it: a Python worker imports the class path itself, and a Lang SDK runtime loads `_operator_module`, written in that SDK's own terms, such as an npm module specifier.
 2. **One generated spec per provider is the source of truth for every wrapper.** `providers/<provider>/_generated/lang_sdk_operators.json` describes each operator's parameters, template fields and class attributes. It is generated from the implementation: from the Python constructors for a Python provider, and from the Lang SDK code for any other. Every SDK generates its typed wrapper package from it.
 3. **A wrapper emits JSON in the argument-binding format, not in the core serialization format.** The serialized task carries the class path, the constructor arguments as `_operator_kwargs`, and `is_stub`. `_operator_kwargs` is a list of the argument bindings of [ADR-0007](0007-taskflow-across-language-boundary.md), whose values are plain JSON rather than Airflow's `{__type, __var}` encoding. Operator arguments are limited to JSON-serializable values, so no SDK runtime has to reimplement the core serializer to read them. When a Lang SDK implements the operator, the task also carries `_operator_module`, the module to import.
 4. **The task gets its operator in the run context.** Provider tasks are stubs, so the run endpoint reads their serialized task and fills `TIRunContext.provider_operator` with the class path, the module, the arguments and the Dag's edges. No extra request is made.
 5. **The task's queue picks the runtime.** `[sdk] queue_to_coordinator` routes a queue to a Lang SDK coordinator. A task of a Lang SDK implemented operator that lands on a Python worker fails with a message that names the queue setting.
-6. **A Lang SDK runtime loads an operator it was not built with.** The coordinator starts a generic runtime when no Dag bundle declares the task, and the runtime loads `_operator_module` from a location the administrator configures.
+6. **A Lang SDK runtime loads an operator it was not built with.** The coordinator starts a generic runtime when no Dag bundle declares the task. The runtime starts knowing nothing about the operator; it learns which one to run from `TIRunContext.provider_operator` in its start-up details, then loads `_operator_module` from a location the administrator configures.
 7. **Templates always render in Python.** A Python worker renders them as it does for any task. A Lang SDK runtime sends its template values to the supervisor, which renders them in the task's helper process.
 
 ## Overview
@@ -103,7 +103,9 @@ dag.task(
 )();
 ```
 
-`build_report` runs in Node. `write_report` runs on a Python worker: a provider task does not take the Dag's queue.
+`build_report` runs in Node. `write_report` runs on a Python worker.
+
+> **Note:** The provider task needs no queue of its own. A Python-implemented provider task does not inherit the Dag's `queue`, so it gets `[operators] default_queue` (`default`). No coordinator is mapped to that queue in `[sdk] queue_to_coordinator`, so a Python worker runs it. Set a task queue only to send it to a different pool of Python workers.
 
 **Authoring.** The question is how a worker builds the operator and calls `execute`, and the answer is the class path and the constructor arguments. The spec is generated from the Python constructors, as [ADR-0009](0009-provider-operators-as-generated-dsl.md) describes. Each SDK generates a typed wrapper from it, and the wrapper writes the arguments under the Python parameter names:
 
@@ -214,8 +216,10 @@ Python's role changes in this direction. The Python package of the provider hold
 
 **Launching a generic runtime.** The coordinator chooses which program to start before the task starts. The supervisor launches the runtime first and only then calls `ti.run`, because that call carries the new process's id, so the coordinator never sees `provider_operator`. It decides from the Dag alone:
 
-- A Dag bundle declares the task's `dag_id`, as for a TypeScript Dag: the coordinator runs that bundle.
-- No bundle declares it, as for the Python Dag above, and `node_modules_path` is set: the coordinator runs the provider runner. The runner ships in `@apache-airflow/ts-sdk` and serves an empty bundle, so it runs any provider operator and nothing else.
+- A Dag bundle declares the task's `dag_id`, as for a TypeScript Dag: the coordinator runs that bundle's artifact, `node <bundle>/dags/report.min.mjs --comm=<host:port> --logs=<host:port>`.
+- No bundle declares it, as for the Python Dag above, and `node_modules_path` is set: the coordinator runs the provider runner, `node <node_modules_path>/@apache-airflow/ts-sdk/dist/coordinator/provider-runner.js --comm=<host:port> --logs=<host:port>`. The runner serves an empty bundle, so it runs any provider operator and nothing else.
+
+The second case is why each SDK needs a generic runtime. A Python Dag's file is Python, not a `.min.mjs` artifact, so there is nothing of the Dag for Node to run. The same holds for any pair of languages, such as a Go Dag using an operator implemented in Java: the Java coordinator cannot run the Go Dag's binary, so it needs a Java runtime that holds no Dag.
 
 The administrator installs the SDK and the provider packages into one directory on the workers, usually in the worker image, and points the coordinator at it:
 
@@ -379,12 +383,65 @@ The TypeScript SDK can load an operator it was not built with because Node impor
 | | TypeScript | Go | Java |
 | --- | --- | --- | --- |
 | Loads code at run time | Yes, `import()` | No | Yes, class loaders |
-| Generic runtime | Provider runner in `@apache-airflow/ts-sdk` | A provider host binary the administrator builds | A runner main class in the SDK JAR |
-| `_operator_module` | npm module specifier | Go import path | Fully qualified class name |
-| Administrator installs | `npm install --prefix <dir>` | `go build` of the host with the provider modules | Provider JARs into a directory |
-| Coordinator setting | `node_modules_path` | A path to the host binary | A path to the JAR directory |
+| Generic runtime | Provider runner in `@apache-airflow/ts-sdk` | Open: a provider host the administrator builds, or a go-plugin host in the SDK | A runner main class in the SDK JAR |
+| `_operator_module` | npm module specifier | Go import path, or a plugin executable name | Fully qualified class name |
+| Administrator installs | `npm install --prefix <dir>` | `go build` of the host, or plugin executables into a directory | Provider JARs into a directory |
+| Coordinator setting | `node_modules_path` | A path to the host, or to the plugin directory | A path to the JAR directory |
 
-**Go.** Go links everything at build time. Its `plugin` package is not a practical answer: it works only on Linux and macOS, and a plugin must be built with the same toolchain and the same versions of every shared dependency as the program that loads it. The proposal is a provider host: a small `main` package that the administrator builds, which blank-imports the provider modules it needs. Each provider module registers its implementations in `init()`, keyed by the Python class path. The host serves an empty Dag bundle, and `ExecutableCoordinator` runs it when no bundle declares the task. `_operator_module` names the Go import path, so a host that lacks it fails with a message naming the module to add. Adding a provider means rebuilding the host, which matches how Go deployments already ship.
+**Go.** Go links everything into one binary at build time, so Go needs a design of its own. There are three candidates.
+
+- **The standard `plugin` package: rejected.** It works only on Linux and macOS, and a plugin must be built with the same toolchain and the same versions of every shared dependency as the program that loads it. Provider packages released on their own cadence cannot meet that.
+- **A provider host built by the administrator.** The administrator builds a small `main` package that blank-imports the provider modules the deployment needs. Each module registers its implementations in `init()`, keyed by the Python class path, and the host serves an empty Dag bundle. Discovery is a map lookup inside one process. Adding a provider means rebuilding the host.
+- **[hashicorp/go-plugin](https://github.com/hashicorp/go-plugin).** The Go SDK ships a generic host, and each provider ships its own plugin executable. The host starts the plugin as a subprocess and calls it over gRPC, so plugins and host can be built and released separately. Adding a provider means copying its executable into a directory.
+
+With the provider host, a provider module and the host look like this:
+
+```go
+// Provider module: github.com/apache/airflow/go-providers/example/operators
+func init() {
+    provider.Register("airflow.providers.example.operators.text.GenerateTextOperator", generateText)
+}
+
+// Host, built by the administrator
+package main
+
+import (
+    "github.com/apache/airflow/go-sdk/provider"
+    _ "github.com/apache/airflow/go-providers/example/operators"
+)
+
+func main() { provider.ServeHost() }
+```
+
+With go-plugin, the provider serves its operators and the host dispenses them by the module name:
+
+```go
+// Provider executable
+func main() {
+    plugin.Serve(&plugin.ServeConfig{
+        HandshakeConfig: provider.Handshake,
+        Plugins: map[string]plugin.Plugin{
+            "operators": &provider.OperatorsPlugin{Impl: provider.Operators{
+                "airflow.providers.example.operators.text.GenerateTextOperator": generateText,
+            }},
+        },
+        GRPCServer: plugin.DefaultGRPCServer,
+    })
+}
+
+// Generic host in the Go SDK, after it reads TIRunContext.provider_operator
+client := plugin.NewClient(&plugin.ClientConfig{
+    HandshakeConfig:  provider.Handshake,
+    Plugins:          map[string]plugin.Plugin{"operators": &provider.OperatorsPlugin{}},
+    Cmd:              exec.Command(filepath.Join(pluginDir, path.Base(operator.Module))),
+    AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
+})
+rpc, _ := client.Client()
+raw, _ := rpc.Dispense("operators")
+result, err := raw.(provider.Operators).Execute(ctx, operator.Classpath, operator.Kwargs)
+```
+
+`provider.Register`, `provider.ServeHost`, `provider.Handshake` and `provider.OperatorsPlugin` would be new Go SDK APIs; `plugin.*` is go-plugin's API. For go-plugin, discovery maps `_operator_module` to an executable in the configured directory, and the host can ask each plugin for the class paths it serves. The cost is a second process boundary: the operator's calls back to Airflow, such as reading a connection or pushing an XCom, must cross from the plugin to the host, which go-plugin supports through its gRPC broker. The provider host keeps everything in one process at the price of a rebuild per provider change. This ADR leaves the choice open.
 
 **Java.** The JVM loads classes at run time, so Java can follow TypeScript closely. The SDK JAR gains a runner main class that serves an empty bundle. The administrator copies the provider JARs into a directory, for example with Maven's `dependency:copy`, and the coordinator adds that directory to the runner's classpath. `_operator_module` is the implementation's class name, which the runner loads with `Class.forName` and checks against the class path. `ServiceLoader` could list the installed implementations for error messages.
 
@@ -396,10 +453,10 @@ In both SDKs the arguments decode from the bindings into a typed struct or recor
 - **No runtime decodes core serialization.** Limiting operator arguments to JSON is what lets a wrapper write argument bindings instead of Airflow's Python encoding. An operator whose required argument is not JSON gets no wrapper, as in ADR-0009.
 - **Authors set the queue.** The wrapper cannot know which workers a deployment runs, so the author routes the task. A Lang SDK implemented operator that reaches a Python worker fails before it does any work.
 - **Administrators install implementations.** A provider implemented in a Lang SDK needs its package on every worker that serves its queue, in the location the coordinator is configured with.
-- **A wrapper must match the deployed provider.** As in ADR-0009, version skew between a wrapper and the installed provider warns and does not block.
-- **Templates in a Lang SDK runtime render with less context.** Dag params, `template_ext` files and user-defined macros do not reach the helper process. The run's details, `var`, `conn`, `xcom_pull` and macro plugins work.
-- **A provider task cannot be mapped**, in either direction.
-- **A Python Dag that a bundle declares runs in that bundle.** If the Dag also has `@task.stub` handlers, its Lang SDK provider tasks run in that bundle instead of the generic runtime, so the bundle must resolve the provider package and share its copy of the SDK. Keeping such operators in Dags that no bundle declares avoids this.
+- **Wrapper and provider versions may drift.** As in ADR-0009, skew between the wrapper in the Dag and the provider installed on the worker warns and does not block. It fails a task only when the signatures disagree at run time, for example when the wrapper passes an argument the installed operator no longer accepts.
+- **Templates in a Lang SDK runtime render with less context, for now.** Dag params, `template_ext` files and user-defined macros do not reach the helper process yet. The run's details, `var`, `conn`, `xcom_pull` and macro plugins work. Nothing prevents the rest: the run context could carry the params, and the serialized task could carry the template extensions. That is follow-up work.
+- **A wrapper task cannot be mapped yet.** A Python operator in a Python Dag maps as before, because the worker imports the Dag file and expands it itself. A wrapper has no Dag file to import: its runtime gets one fixed set of arguments in the run context, and the serializer rejects a mapped wrapper. Mapping it means sending the arguments of one map index, as [ADR-0016](0016-mapped-tasks-across-lang-sdks.md) does for stub tasks. That is follow-up work.
+- **The coordinator picks the artifact by Dag, not by task.** Take a Python Dag `etl` with a `@task.stub` task whose handler lives in the TypeScript bundle `etl.min.mjs`, and a `GenerateTextOperator` task on the same queue. The bundle declares `etl`, so the coordinator runs `etl.min.mjs` for both tasks, and the generic runtime never starts. The provider task then runs only if the bundle itself imports `@apache-airflow/providers-vercel-ai`. Until the coordinator matches tasks as well as Dags, which the bundle metadata already allows since it lists the handled task ids per Dag, such an operator belongs in a Dag that no bundle declares, or in a bundle that imports its package.
 
 ## Appendix: Implementation Notes
 
