@@ -72,7 +72,7 @@
                     "type": "string"
                 },
                 "implementation_module": {
-                    "description": "Module of the language SDK package that exports the operator under the class name, such as @apache-airflow/providers-localfile/operators/file for TypeScript. A runtime imports it to run an operator its bundle does not declare. Present when the provider is implemented in a language SDK.",
+                    "description": "Module of the language SDK package that exports the operator under the class name, such as @apache-airflow/providers-ts-localfile/operators/file for TypeScript. A runtime imports it to run an operator its bundle does not declare. Present when the provider is implemented in a language SDK.",
                     "type": "string"
                 },
                 "kind": {"enum": ["operator", "sensor"]},

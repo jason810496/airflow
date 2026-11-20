@@ -1,0 +1,41 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+---
+
+package-name: apache-airflow-providers-ts-localfile
+name: Local File
+description: |
+    Operators to create, write, check and delete files of the machine that runs the task. They are
+    implemented in TypeScript, so a task runs on a worker of the TypeScript runtime.
+
+state: ready
+source-date-epoch: 0
+lifecycle: incubation
+versions:
+  - 1.0.0
+
+integrations:
+  - integration-name: Local File
+    external-doc-url: https://airflow.apache.org/docs/apache-airflow-providers-ts-localfile/
+    how-to-guide:
+      - /docs/apache-airflow-providers-ts-localfile/operators.rst
+    tags: [software]
+
+operators:
+  - integration-name: Local File
+    python-modules:
+      - airflow.providers.ts.localfile.operators.file

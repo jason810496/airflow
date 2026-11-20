@@ -289,9 +289,6 @@ apache-airflow = "airflow.__main__:main"
 "keycloak" = [
     "apache-airflow-providers-keycloak>=0.0.1"
 ]
-"localfile" = [
-    "apache-airflow-providers-localfile>=1.0.0"
-]
 "microsoft.azure" = [
     "apache-airflow-providers-microsoft-azure>=10.5.1"
 ]
@@ -409,6 +406,9 @@ apache-airflow = "airflow.__main__:main"
 "trino" = [
     "apache-airflow-providers-trino>=5.8.1"
 ]
+"ts.localfile" = [
+    "apache-airflow-providers-ts-localfile>=1.0.0"
+]
 "vertica" = [
     "apache-airflow-providers-vertica>=3.9.1"
 ]
@@ -494,7 +494,6 @@ apache-airflow = "airflow.__main__:main"
     "apache-airflow-providers-jdbc>=4.5.2",
     "apache-airflow-providers-jenkins>=3.7.2",
     "apache-airflow-providers-keycloak>=0.0.1",
-    "apache-airflow-providers-localfile>=1.0.0",
     "apache-airflow-providers-microsoft-azure>=10.5.1",
     "apache-airflow-providers-microsoft-mssql>=3.9.2",
     "apache-airflow-providers-microsoft-psrp>=3.0.0",
@@ -534,6 +533,7 @@ apache-airflow = "airflow.__main__:main"
     "apache-airflow-providers-telegram>=4.7.0",
     "apache-airflow-providers-teradata>=2.6.1",
     "apache-airflow-providers-trino>=5.8.1",
+    "apache-airflow-providers-ts-localfile>=1.0.0",
     "apache-airflow-providers-vertica>=3.9.1",
     "apache-airflow-providers-vespa>=0.1.0",
     "apache-airflow-providers-weaviate>=3.0.0",
@@ -1269,8 +1269,6 @@ mypy_path = [
     "$MYPY_CONFIG_FILE_DIR/providers/jenkins/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/keycloak/src",
     "$MYPY_CONFIG_FILE_DIR/providers/keycloak/tests",
-    "$MYPY_CONFIG_FILE_DIR/providers/localfile/src",
-    "$MYPY_CONFIG_FILE_DIR/providers/localfile/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/microsoft/azure/src",
     "$MYPY_CONFIG_FILE_DIR/providers/microsoft/azure/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/microsoft/mssql/src",
@@ -1349,6 +1347,8 @@ mypy_path = [
     "$MYPY_CONFIG_FILE_DIR/providers/teradata/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/trino/src",
     "$MYPY_CONFIG_FILE_DIR/providers/trino/tests",
+    "$MYPY_CONFIG_FILE_DIR/providers/ts/localfile/src",
+    "$MYPY_CONFIG_FILE_DIR/providers/ts/localfile/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/vertica/src",
     "$MYPY_CONFIG_FILE_DIR/providers/vertica/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/vespa/src",
@@ -1579,7 +1579,6 @@ apache-airflow-providers-informatica = false
 apache-airflow-providers-jdbc = false
 apache-airflow-providers-jenkins = false
 apache-airflow-providers-keycloak = false
-apache-airflow-providers-localfile = false
 apache-airflow-providers-microsoft-azure = false
 apache-airflow-providers-microsoft-mssql = false
 apache-airflow-providers-microsoft-psrp = false
@@ -1619,6 +1618,7 @@ apache-airflow-providers-tableau = false
 apache-airflow-providers-telegram = false
 apache-airflow-providers-teradata = false
 apache-airflow-providers-trino = false
+apache-airflow-providers-ts-localfile = false
 apache-airflow-providers-vertica = false
 apache-airflow-providers-vespa = false
 apache-airflow-providers-weaviate = false
@@ -1779,7 +1779,6 @@ apache-airflow-providers-informatica = false
 apache-airflow-providers-jdbc = false
 apache-airflow-providers-jenkins = false
 apache-airflow-providers-keycloak = false
-apache-airflow-providers-localfile = false
 apache-airflow-providers-microsoft-azure = false
 apache-airflow-providers-microsoft-mssql = false
 apache-airflow-providers-microsoft-psrp = false
@@ -1819,6 +1818,7 @@ apache-airflow-providers-tableau = false
 apache-airflow-providers-telegram = false
 apache-airflow-providers-teradata = false
 apache-airflow-providers-trino = false
+apache-airflow-providers-ts-localfile = false
 apache-airflow-providers-vertica = false
 apache-airflow-providers-vespa = false
 apache-airflow-providers-weaviate = false
@@ -1954,7 +1954,6 @@ apache-airflow-providers-informatica = { workspace = true }
 apache-airflow-providers-jdbc = { workspace = true }
 apache-airflow-providers-jenkins = { workspace = true }
 apache-airflow-providers-keycloak = { workspace = true }
-apache-airflow-providers-localfile = { workspace = true }
 apache-airflow-providers-microsoft-azure = { workspace = true }
 apache-airflow-providers-microsoft-mssql = { workspace = true }
 apache-airflow-providers-microsoft-psrp = { workspace = true }
@@ -1994,6 +1993,7 @@ apache-airflow-providers-tableau = { workspace = true }
 apache-airflow-providers-telegram = { workspace = true }
 apache-airflow-providers-teradata = { workspace = true }
 apache-airflow-providers-trino = { workspace = true }
+apache-airflow-providers-ts-localfile = { workspace = true }
 apache-airflow-providers-vertica = { workspace = true }
 apache-airflow-providers-vespa = { workspace = true }
 apache-airflow-providers-weaviate = { workspace = true }
@@ -2102,7 +2102,6 @@ members = [
     "providers/jdbc",
     "providers/jenkins",
     "providers/keycloak",
-    "providers/localfile",
     "providers/microsoft/azure",
     "providers/microsoft/mssql",
     "providers/microsoft/psrp",
@@ -2142,6 +2141,7 @@ members = [
     "providers/telegram",
     "providers/teradata",
     "providers/trino",
+    "providers/ts/localfile",
     "providers/vertica",
     "providers/vespa",
     "providers/weaviate",

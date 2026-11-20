@@ -889,12 +889,12 @@ def _build_ts_sdk_example_bundle(*, native=False, provider_runner=False):
         " && pnpm run build:localfile"
     )
     if provider_runner:
-        # The provider runner runs from a node_modules directory. The SDK and the localfile provider are
+        # The provider runner runs from a node_modules directory. The SDK and the ts.localfile provider are
         # workspace packages that are not on npm, so they are installed from the tarballs pnpm packs.
         build_commands += (
             " && rm -rf dist/provider-packages dist/provider-runner && mkdir -p dist/provider-packages"
             " && (cd .. && pnpm pack --pack-destination example/dist/provider-packages)"
-            " && (cd ../providers/localfile"
+            " && (cd ../providers/ts-localfile"
             " && pnpm pack --pack-destination ../../example/dist/provider-packages)"
             " && npm install --prefix dist/provider-runner --no-audit --no-fund dist/provider-packages/*.tgz"
         )
@@ -948,8 +948,8 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
     # which the stock image does not ship, so the in-tree provider is installed in every service.
     _copy_localstack_files(tmp_dir)
     # `python_localfile` and `ts_localfile` use the generated wrapper of the TypeScript-implemented
-    # localfile provider.
-    provider_paths = _write_providers_mount_override(tmp_dir, ["common.ai", "localfile"])
+    # ts.localfile provider.
+    provider_paths = _write_providers_mount_override(tmp_dir, ["common.ai", "ts.localfile"])
 
     # Deliberately no metadata sidecar: the coordinator must resolve the schema
     # version from the metadata airflow-ts-pack embedded in the bundle.
@@ -969,7 +969,7 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
         TS_SDK_EXAMPLE_PATH / "dist" / "providers.min.mjs",
         tmp_dir / "dags" / "typescript" / "providers.min.mjs",
     )
-    # The native Dag `ts_localfile` runs the localfile operators from this bundle. The tasks of the Python
+    # The native Dag `ts_localfile` runs the ts.localfile operators from this bundle. The tasks of the Python
     # Dag `python_localfile` are in no bundle, so they run in the SDK's provider runner, from the
     # node_modules directory the worker mounts.
     copyfile(

@@ -104,7 +104,6 @@ services:
       - ../../../providers/jdbc/tests:/opt/airflow/providers/jdbc/tests
       - ../../../providers/jenkins/tests:/opt/airflow/providers/jenkins/tests
       - ../../../providers/keycloak/tests:/opt/airflow/providers/keycloak/tests
-      - ../../../providers/localfile/tests:/opt/airflow/providers/localfile/tests
       - ../../../providers/microsoft/azure/tests:/opt/airflow/providers/microsoft/azure/tests
       - ../../../providers/microsoft/mssql/tests:/opt/airflow/providers/microsoft/mssql/tests
       - ../../../providers/microsoft/psrp/tests:/opt/airflow/providers/microsoft/psrp/tests
@@ -144,6 +143,7 @@ services:
       - ../../../providers/telegram/tests:/opt/airflow/providers/telegram/tests
       - ../../../providers/teradata/tests:/opt/airflow/providers/teradata/tests
       - ../../../providers/trino/tests:/opt/airflow/providers/trino/tests
+      - ../../../providers/ts/localfile/tests:/opt/airflow/providers/ts/localfile/tests
       - ../../../providers/vertica/tests:/opt/airflow/providers/vertica/tests
       - ../../../providers/vespa/tests:/opt/airflow/providers/vespa/tests
       - ../../../providers/weaviate/tests:/opt/airflow/providers/weaviate/tests

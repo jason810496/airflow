@@ -41,7 +41,7 @@ class LangSdkProviderOperator(BaseOperator):
         instance attribute of the same name.
     :cvar implemented_in: Runtimes that implement the operator, such as ``("TypeScript",)``.
     :cvar implementation_module: Module of the runtime's package that exports the operator under the
-        class name, such as ``"@apache-airflow/providers-localfile/operators/file"``. A runtime that
+        class name, such as ``"@apache-airflow/providers-ts-localfile/operators/file"``. A runtime that
         does not declare the task imports it to run the operator.
     """
 

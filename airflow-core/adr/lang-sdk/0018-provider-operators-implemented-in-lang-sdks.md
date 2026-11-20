@@ -26,7 +26,7 @@ Proposed.
 ## Decision
 
 1. **A provider operator may be implemented in a Lang SDK.** Its identity is a Python class path, such as
-   `airflow.providers.localfile.operators.file.WriteFileOperator`, in every SDK.
+   `airflow.providers.ts.localfile.operators.file.WriteFileOperator`, in every SDK.
 2. **The task's queue picks the runtime.** `[sdk] queue_to_coordinator` routes the task to a coordinator. A task
    left on a queue that a Python worker serves fails and names the queue setting.
 3. **The Python package of such a provider is a generated wrapper.** Its classes subclass
@@ -63,11 +63,11 @@ operator that its bundle did not declare, and a way to render the operator's tem
 
 ## Example
 
-The `localfile` provider is implemented in TypeScript:
+The `ts.localfile` provider is implemented in TypeScript:
 
 ```ts
 export const WriteFileOperator = defineProviderOperator<WriteFileOperatorArgs, WriteFileResult>({
-  module: "airflow.providers.localfile.operators.file",
+  module: "airflow.providers.ts.localfile.operators.file",
   className: "WriteFileOperator",
   params: { path: { name: "path", required: true }, content: { name: "content", required: true } },
   templateFields: ["path", "content"],
@@ -81,7 +81,7 @@ export const WriteFileOperator = defineProviderOperator<WriteFileOperatorArgs, W
 A Python Dag uses the generated wrapper and routes the task to the TypeScript runtime with its queue:
 
 ```python
-from airflow.providers.localfile.operators.file import WriteFileOperator
+from airflow.providers.ts.localfile.operators.file import WriteFileOperator
 
 with DAG("write_report"):
     WriteFileOperator(
@@ -99,8 +99,8 @@ The wrapper and a TypeScript Dag write the same task:
 ```json
 {
   "task_type": "WriteFileOperator",
-  "_task_module": "airflow.providers.localfile.operators.file",
-  "_operator_module": "@apache-airflow/providers-localfile/operators/file",
+  "_task_module": "airflow.providers.ts.localfile.operators.file",
+  "_operator_module": "@apache-airflow/providers-ts-localfile/operators/file",
   "is_stub": true,
   "_operator_kwargs": [
     {"name": "path", "kind": "literal", "value": "/tmp/{{ run_id }}.txt"},
@@ -159,7 +159,7 @@ task it runs takes the import branch. `NodeCoordinator` gets the `node_modules` 
 ```
 
 The directory holds `@apache-airflow/ts-sdk` and the provider packages, for example from
-`npm install --prefix /opt/airflow/ts @apache-airflow/ts-sdk @apache-airflow/providers-localfile`. A provider
+`npm install --prefix /opt/airflow/ts @apache-airflow/ts-sdk @apache-airflow/providers-ts-localfile`. A provider
 package installed beside the SDK resolves from the runner and shares its copy of the SDK. The coordinator reads
 the runner's supervisor schema version from `airflow.supervisorSchemaVersion` in the SDK's `package.json`.
 Without `node_modules_path`, a task that no bundle declares fails as it did before.
@@ -193,7 +193,7 @@ Each SDK needs one generator that reads any spec, so supporting every SDK takes 
 
 ## Appendix: Implementation Notes
 
-The TypeScript SDK implements this ADR, with `apache-airflow-providers-localfile` as the first provider.
+The TypeScript SDK implements this ADR, with `apache-airflow-providers-ts-localfile` as the first provider.
 
 - **TypeScript.** `defineProviderOperator` takes an optional `execute`. With it, the binding is also the
   implementation. A provider package exports each binding under its class name from the module the spec names.
@@ -202,6 +202,6 @@ The TypeScript SDK implements this ADR, with `apache-airflow-providers-localfile
   name and the path of the source file under `src/`.
 - **Python.** `scripts/ci/lang_sdk_providers/generate_python_wrappers.py` writes the wrapper from the spec. A unit
   test fails when the committed wrapper is not what the spec generates.
-- **localfile.** `CreateFileOperator`, `WriteFileOperator`, `HasFileOperator` and `DeleteFileOperator`.
+- **ts.localfile.** `CreateFileOperator`, `WriteFileOperator`, `HasFileOperator` and `DeleteFileOperator`.
   `HasFileOperator` with `skip_downstream_if_missing` skips its direct downstream tasks when the file is missing,
   which uses the edges in `provider_operator.downstream_task_ids`.

@@ -25,7 +25,7 @@
 //
 // A package takes part when its package.json has an `airflow` field:
 //
-//     "airflow": { "providerId": "localfile", "pythonPackage": "apache-airflow-providers-localfile" }
+//     "airflow": { "providerId": "ts.localfile", "pythonPackage": "apache-airflow-providers-ts-localfile" }
 //
 // The spec goes to providers/<provider id as a path>/_generated/lang_sdk_operators.json at the
 // repository root, beside the specs the Python generator writes. tests/scripts/generate-operator-spec.test.ts

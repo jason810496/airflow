@@ -28,12 +28,16 @@ from ci.lang_sdk_providers import generate_python_wrappers as generator
 
 STRING = {"kind": "string"}
 NULL = {"kind": "null"}
-MODULE = "airflow.providers.localfile.operators.file"
-IMPLEMENTATION_MODULE = "@scope/providers-localfile/operators/file"
+MODULE = "airflow.providers.ts.localfile.operators.file"
+IMPLEMENTATION_MODULE = "@scope/providers-ts-localfile/operators/file"
 
 SPEC: dict[str, Any] = {
     "spec_version": "1.0",
-    "provider": {"id": "localfile", "package": "apache-airflow-providers-localfile", "version": "0.1.0"},
+    "provider": {
+        "id": "ts.localfile",
+        "package": "apache-airflow-providers-ts-localfile",
+        "version": "0.1.0",
+    },
     "implemented_in": ["TypeScript"],
     "operators": [
         {
@@ -90,7 +94,7 @@ class WriteFileOperator(LangSdkProviderOperator):
     template_fields = ("path", "content")
     operator_params = ("path", "content", "mode", "tags", "extra", "limit", "ratio", "flag")
     implemented_in = ("TypeScript",)
-    implementation_module = "@scope/providers-localfile/operators/file"
+    implementation_module = "@scope/providers-ts-localfile/operators/file"
     ui_color = "#ffefeb"
 
     def __init__(
@@ -118,7 +122,7 @@ class WriteFileOperator(LangSdkProviderOperator):
 '''
 
 
-def write_spec(providers_dir, spec=SPEC, provider_path="localfile"):
+def write_spec(providers_dir, spec=SPEC, provider_path="ts/localfile"):
     spec_file = providers_dir / provider_path / "_generated" / generator.SPEC_FILE_NAME
     spec_file.parent.mkdir(parents=True)
     spec_file.write_text(json.dumps(spec))
@@ -128,11 +132,11 @@ def write_spec(providers_dir, spec=SPEC, provider_path="localfile"):
 def test_build_modules_writes_one_module_per_spec_module():
     modules = generator.build_modules(SPEC)
 
-    assert list(modules) == ["airflow/providers/localfile/operators/file.py"]
-    module = modules["airflow/providers/localfile/operators/file.py"]
+    assert list(modules) == ["airflow/providers/ts/localfile/operators/file.py"]
+    module = modules["airflow/providers/ts/localfile/operators/file.py"]
     assert module.startswith(generator.LICENSE)
     assert (
-        "# Generated from providers/localfile/_generated/lang_sdk_operators.json by\n"
+        "# Generated from providers/ts/localfile/_generated/lang_sdk_operators.json by\n"
         "# scripts/ci/lang_sdk_providers/generate_python_wrappers.py. Do not edit by hand.\n"
     ) in module
     assert (
@@ -148,7 +152,7 @@ def test_build_modules_writes_one_module_per_spec_module():
 def test_build_modules_imports_only_what_a_module_uses():
     spec = {**SPEC, "operators": SPEC["operators"][1:]}
 
-    module = generator.build_modules(spec)["airflow/providers/localfile/operators/file.py"]
+    module = generator.build_modules(spec)["airflow/providers/ts/localfile/operators/file.py"]
 
     assert "from __future__ import annotations\n\nfrom airflow.sdk import LangSdkProviderOperator\n" in module
     assert "collections.abc" not in module
@@ -156,13 +160,13 @@ def test_build_modules_imports_only_what_a_module_uses():
 
 
 def test_build_modules_splits_the_spec_by_module():
-    operators = [SPEC["operators"][0], {**SPEC["operators"][1], "module": "airflow.providers.localfile.x"}]
+    operators = [SPEC["operators"][0], {**SPEC["operators"][1], "module": "airflow.providers.ts.localfile.x"}]
 
     modules = generator.build_modules({**SPEC, "operators": operators})
 
     assert list(modules) == [
-        "airflow/providers/localfile/operators/file.py",
-        "airflow/providers/localfile/x.py",
+        "airflow/providers/ts/localfile/operators/file.py",
+        "airflow/providers/ts/localfile/x.py",
     ]
 
 
@@ -226,7 +230,7 @@ def test_build_modules_names_the_operator_of_an_unsupported_argument():
         ({**SPEC, "spec_version": "2.0"}, "has version 2.0; this generator reads version 1.x"),
         (
             {**SPEC, "operators": [{**SPEC["operators"][1], "module": "airflow.providers.other.file"}]},
-            "Module airflow.providers.other.file is not part of provider localfile",
+            "Module airflow.providers.other.file is not part of provider ts.localfile",
         ),
         (
             {**SPEC, "operators": [{**SPEC["operators"][1], "params": [{"name": "class", "type": STRING}]}]},
@@ -277,7 +281,7 @@ def test_main_writes_the_wrappers_and_check_finds_them_up_to_date(tmp_path):
     assert generator.main(args) == 0
     assert (
         target.with_suffix(".py").read_text()
-        == generator.build_modules(SPEC)["airflow/providers/localfile/operators/file.py"]
+        == generator.build_modules(SPEC)["airflow/providers/ts/localfile/operators/file.py"]
     )
     assert generator.main([*args, "--check"]) == 0
 
@@ -298,7 +302,7 @@ def test_main_leaves_a_provider_implemented_in_python_alone(tmp_path):
     write_spec(tmp_path, spec)
 
     assert generator.main(["--providers-dir", str(tmp_path)]) == 0
-    assert not (tmp_path / "localfile" / "src").exists()
+    assert not (tmp_path / "ts" / "localfile" / "src").exists()
 
 
 def test_main_finds_a_provider_nested_under_a_namespace_directory(tmp_path):
@@ -331,7 +335,7 @@ def test_main_rejects_a_spec_that_breaks_the_schema(tmp_path, spec):
 
     with pytest.raises(jsonschema.ValidationError):
         generator.main(["--providers-dir", str(tmp_path)])
-    assert not (tmp_path / "localfile" / "src").exists()
+    assert not (tmp_path / "ts" / "localfile" / "src").exists()
 
 
 def test_the_spec_schema_takes_the_languages_of_the_sdks():

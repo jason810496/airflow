@@ -84,7 +84,7 @@ export interface ProviderOperatorDefinition<TArgs extends object = object, TResu
   readonly className: string;
   /**
    * The module that exports this binding under `className`, such as
-   * `@apache-airflow/providers-localfile/operators/file`. It is written to the task, as the generated
+   * `@apache-airflow/providers-ts-localfile/operators/file`. It is written to the task, as the generated
    * Python wrapper writes it, so that a runtime that does not declare the task can import it. The spec
    * generator fails when it is not the package name and the source file's path.
    */

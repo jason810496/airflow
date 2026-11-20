@@ -212,9 +212,6 @@ labelPRBasedOnFilePath:
   provider:keycloak:
     - providers/keycloak/**
 
-  provider:localfile:
-    - providers/localfile/**
-
   provider:microsoft-azure:
     - providers/microsoft/azure/**
 
@@ -331,6 +328,9 @@ labelPRBasedOnFilePath:
 
   provider:trino:
     - providers/trino/**
+
+  provider:ts-localfile:
+    - providers/ts/localfile/**
 
   provider:vertica:
     - providers/vertica/**

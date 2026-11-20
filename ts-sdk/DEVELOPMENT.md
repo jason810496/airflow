@@ -91,9 +91,9 @@ in the same file. `execute` gets the rendered arguments and returns the `return_
 
 ```ts
 export const WriteFileOperator = defineProviderOperator<WriteFileOperatorArgs, WriteFileResult>({
-  module: "airflow.providers.localfile.operators.file",
+  module: "airflow.providers.ts.localfile.operators.file",
   className: "WriteFileOperator",
-  implementationModule: "@apache-airflow/providers-localfile/operators/file",
+  implementationModule: "@apache-airflow/providers-ts-localfile/operators/file",
   templateFields: ["path", "content"],
   params: { path: { name: "path", required: true }, content: { name: "content", required: true } },
   async execute({ path, content }, ctx) {
@@ -115,7 +115,7 @@ Add an `airflow` field to the package's `package.json`, and generate the spec th
 the other SDKs read:
 
 ```json
-{ "airflow": { "providerId": "localfile", "pythonPackage": "apache-airflow-providers-localfile" } }
+{ "airflow": { "providerId": "ts.localfile", "pythonPackage": "apache-airflow-providers-ts-localfile" } }
 ```
 
 ```bash

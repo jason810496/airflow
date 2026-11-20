@@ -23,7 +23,7 @@ Run with::
 
 What is verified
 ----------------
-``apache-airflow-providers-localfile`` is implemented in TypeScript. Both Dags have the same chain::
+``apache-airflow-providers-ts-localfile`` is implemented in TypeScript. Both Dags have the same chain::
 
     build_content -> create -> write -> has_file -> delete -> has_after_delete -> after_skip
 
@@ -32,7 +32,7 @@ bundle. ``python_localfile`` in ``ts-sdk/example/dags/typescript_localfile_examp
 the generated Python wrappers. Every provider task sets ``queue="typescript"``, which
 ``[sdk] queue_to_coordinator`` routes to the Node coordinator. No bundle declares ``python_localfile``, so the
 coordinator runs the SDK's provider runner from ``node_modules_path``, where ``@apache-airflow/ts-sdk`` and
-``@apache-airflow/providers-localfile`` are installed. The runner imports the module the task's run context
+``@apache-airflow/providers-ts-localfile`` are installed. The runner imports the module the task's run context
 names.
 
 1. Both Dags run to success, and ``after_skip`` ends skipped: ``has_after_delete`` finds the file gone and

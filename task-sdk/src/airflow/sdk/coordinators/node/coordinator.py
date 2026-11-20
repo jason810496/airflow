@@ -127,7 +127,7 @@ class NodeCoordinator(SubprocessCoordinator):
     A task of a native TypeScript Dag runs the ``*.min.mjs`` bundle its Dag was parsed from.
 
     A task of a Python Dag may be a provider operator implemented in TypeScript, such as one of
-    ``apache-airflow-providers-localfile``. Its ``stub_kind`` is ``provider_operator``, so
+    ``apache-airflow-providers-ts-localfile``. Its ``stub_kind`` is ``provider_operator``, so
     ``node_modules_path`` selects the provider runner, whether or not a bundle declares the task's
     ``dag_id``. Any other task of a Python Dag, such as a TypeScript task handler, runs the bundle that
     declares its ``dag_id``.

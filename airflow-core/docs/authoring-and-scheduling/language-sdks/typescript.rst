@@ -877,7 +877,7 @@ and finds no Dags. List such bundles in ``.airflowignore`` to skip that; the coo
 Python Dag with a provider operator implemented in TypeScript
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Some providers, such as ``apache-airflow-providers-localfile``, implement their operators in TypeScript. A Python
+Some providers, such as ``apache-airflow-providers-ts-localfile``, implement their operators in TypeScript. A Python
 Dag uses the Python wrapper that the provider ships, and sets the task's ``queue`` to one that
 ``queue_to_coordinator`` routes to the ``NodeCoordinator``. It needs no bundle.
 
@@ -886,7 +886,7 @@ worker image:
 
 .. code-block:: bash
 
-    npm install --prefix /opt/airflow/ts @apache-airflow/ts-sdk @apache-airflow/providers-localfile
+    npm install --prefix /opt/airflow/ts @apache-airflow/ts-sdk @apache-airflow/providers-ts-localfile
 
 Then give the directory to the coordinator with ``node_modules_path``:
 

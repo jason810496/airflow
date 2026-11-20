@@ -15,8 +15,8 @@
   "dependencies": {
     "@apache-airflow/providers-amazon": "workspace:*",
     "@apache-airflow/providers-common-ai": "workspace:*",
-    "@apache-airflow/providers-localfile": "workspace:*",
     "@apache-airflow/providers-standard": "workspace:*",
+    "@apache-airflow/providers-ts-localfile": "workspace:*",
     "@apache-airflow/ts-sdk": "workspace:*"
   },
   "devDependencies": {

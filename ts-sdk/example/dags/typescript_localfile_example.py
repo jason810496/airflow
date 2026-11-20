@@ -14,11 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Python Dags that use the TypeScript-implemented ``localfile`` provider, routed with ``queue``."""
+"""Python Dags that use the TypeScript-implemented ``ts.localfile`` provider, routed with ``queue``."""
 
 from __future__ import annotations
 
-from airflow.providers.localfile.operators.file import (
+from airflow.providers.ts.localfile.operators.file import (
     CreateFileOperator,
     DeleteFileOperator,
     HasFileOperator,
@@ -40,7 +40,7 @@ def after_skip() -> str:
     return "unreachable"
 
 
-@dag(dag_id="python_localfile", schedule=None, catchup=False, tags=["typescript", "localfile"])
+@dag(dag_id="python_localfile", schedule=None, catchup=False, tags=["typescript", "ts.localfile"])
 def python_localfile():
     content = build_content()
     create = CreateFileOperator(task_id="create", path=REPORT_PATH, queue=QUEUE)
@@ -57,7 +57,7 @@ def python_localfile():
 python_localfile()
 
 
-@dag(dag_id="python_localfile_misrouted", schedule=None, catchup=False, tags=["typescript", "localfile"])
+@dag(dag_id="python_localfile_misrouted", schedule=None, catchup=False, tags=["typescript", "ts.localfile"])
 def python_localfile_misrouted():
     # No queue, so a Python worker runs it and the wrapper fails the task.
     WriteFileOperator(

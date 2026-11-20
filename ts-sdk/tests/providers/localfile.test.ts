@@ -29,7 +29,7 @@ import {
   DeleteFileOperator,
   HasFileOperator,
   WriteFileOperator,
-} from "../../providers/localfile/src/operators/file.js";
+} from "../../providers/ts-localfile/src/operators/file.js";
 import { getProviderImplementation } from "../../src/sdk/provider-operator.js";
 import type {
   ProviderImplementation,
@@ -69,17 +69,17 @@ afterEach(() => {
 const run = (binding: unknown, args: object, ctx = makeContext()) =>
   Promise.resolve(implementationOf(binding).execute(args, ctx));
 
-describe("the localfile operators", () => {
+describe("the ts.localfile operators", () => {
   it("implement their Python class paths", () => {
     expect(
       [CreateFileOperator, WriteFileOperator, HasFileOperator, DeleteFileOperator].map(
         (binding) => getProviderImplementation(binding)?.classpath,
       ),
     ).toEqual([
-      "airflow.providers.localfile.operators.file.CreateFileOperator",
-      "airflow.providers.localfile.operators.file.WriteFileOperator",
-      "airflow.providers.localfile.operators.file.HasFileOperator",
-      "airflow.providers.localfile.operators.file.DeleteFileOperator",
+      "airflow.providers.ts.localfile.operators.file.CreateFileOperator",
+      "airflow.providers.ts.localfile.operators.file.WriteFileOperator",
+      "airflow.providers.ts.localfile.operators.file.HasFileOperator",
+      "airflow.providers.ts.localfile.operators.file.DeleteFileOperator",
     ]);
   });
 });

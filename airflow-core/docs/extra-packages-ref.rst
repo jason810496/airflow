@@ -429,8 +429,6 @@ pre-installed when Airflow is installed.
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | keycloak            | ``pip install apache-airflow[keycloak]``             | Keycloak hooks and operators         |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
-| localfile           | ``pip install 'apache-airflow[localfile]'``          | Local file operators (TypeScript)    |              |
-+---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | microsoft-psrp      | ``pip install 'apache-airflow[microsoft-psrp]'``     | PSRP hooks and operators             |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | microsoft-winrm     | ``pip install 'apache-airflow[microsoft-winrm]'``    | WinRM hooks and operators            |              |
@@ -448,6 +446,8 @@ pre-installed when Airflow is installed.
 | sqlite              | ``pip install 'apache-airflow[sqlite]'``             | SQLite hooks and operators           |      *       |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | ssh                 | ``pip install 'apache-airflow[ssh]'``                | SSH hooks and operators              |              |
++---------------------+------------------------------------------------------+--------------------------------------+--------------+
+| ts-localfile        | ``pip install 'apache-airflow[ts-localfile]'``       | Local file operators (TypeScript)    |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | informatica         | ``pip install 'apache-airflow[informatica]'``        | Informatica hooks and operators      |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+

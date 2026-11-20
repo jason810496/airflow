@@ -17,10 +17,10 @@
  * under the License.
  */
 
-// A bundle with the native Dag `ts_localfile`, which uses the operators of the `localfile` provider,
+// A bundle with the native Dag `ts_localfile`, which uses the operators of the `ts.localfile` provider,
 // implemented in TypeScript, and runs them from the bundle.
 //
-// A Python Dag that uses the generated `airflow.providers.localfile` wrapper on the `typescript`
+// A Python Dag that uses the generated `airflow.providers.ts.localfile` wrapper on the `typescript`
 // queue does not need this bundle. The Node coordinator runs it in the SDK's provider runner, from
 // the `node_modules` directory it is configured with.
 //
@@ -38,14 +38,14 @@ import {
   DeleteFileOperator,
   HasFileOperator,
   WriteFileOperator,
-} from "@apache-airflow/providers-localfile/operators/file";
+} from "@apache-airflow/providers-ts-localfile/operators/file";
 
 /** The queue the deployment's `[sdk] queue_to_coordinator` routes to the Node coordinator. */
 const QUEUE = "typescript";
 /** Rendered by the Python supervisor, as it renders a Python Dag's templates. */
 const REPORT_PATH = "/tmp/airflow-localfile/ts_localfile/{{ run_id }}/report.txt";
 
-const dag = new Dag("ts_localfile", { queue: QUEUE, tags: ["typescript", "providers", "localfile"] });
+const dag = new Dag("ts_localfile", { queue: QUEUE, tags: ["typescript", "providers", "ts.localfile"] });
 
 // Every task takes the Dag's queue, the provider tasks included.
 const buildContent = dag.task(

@@ -54,12 +54,12 @@ importers:
       '@apache-airflow/providers-common-ai':
         specifier: workspace:*
         version: link:../providers/common-ai
-      '@apache-airflow/providers-localfile':
-        specifier: workspace:*
-        version: link:../providers/localfile
       '@apache-airflow/providers-standard':
         specifier: workspace:*
         version: link:../providers/standard
+      '@apache-airflow/providers-ts-localfile':
+        specifier: workspace:*
+        version: link:../providers/ts-localfile
       '@apache-airflow/ts-sdk':
         specifier: workspace:*
         version: link:..
@@ -95,7 +95,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.3
 
-  providers/localfile:
+  providers/standard:
     devDependencies:
       '@apache-airflow/ts-sdk':
         specifier: workspace:*
@@ -104,7 +104,7 @@ importers:
         specifier: ^6.0.2
         version: 6.0.3
 
-  providers/standard:
+  providers/ts-localfile:
     devDependencies:
       '@apache-airflow/ts-sdk':
         specifier: workspace:*
