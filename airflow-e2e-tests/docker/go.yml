@@ -46,4 +46,6 @@ services:
       HOME: /home/airflow
     volumes:
       - ./go-bundles:/opt/airflow/go-bundles:ro
+      # The generic provider runner and the plugins it starts, which go_providers_path names.
+      - ./go-providers:/opt/airflow/go-providers:ro
     command: celery worker -q golang,default

@@ -176,6 +176,9 @@ labelPRBasedOnFilePath:
   provider:github:
     - providers/github/**
 
+  provider:go-localfile:
+    - providers/go/localfile/**
+
   provider:google:
     - providers/google/**
 

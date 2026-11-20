@@ -40,6 +40,10 @@ from airflow_e2e_tests.constants import (
     ELASTICSEARCH_PATH,
     GO_BUILDER_IMAGE,
     GO_COMPOSE_PATH,
+    GO_LOCALFILE_PLUGIN_PKG,
+    GO_PROVIDER_RUNNER_PKG,
+    GO_PROVIDERS_BUILD_PATH,
+    GO_PROVIDERS_CONTAINER_PATH,
     GO_SDK_BIN_PATH,
     GO_SDK_BUNDLE_NAME,
     GO_SDK_DAGS_PATH,
@@ -47,8 +51,12 @@ from airflow_e2e_tests.constants import (
     GO_SDK_DYNAMIC_BUNDLE_PKG,
     GO_SDK_DYNAMIC_YAML_PATH,
     GO_SDK_EXAMPLE_BUNDLE_PKG,
+    GO_SDK_LOCALFILE_BUNDLE_NAME,
+    GO_SDK_LOCALFILE_BUNDLE_PKG,
     GO_SDK_NATIVE_BUNDLE_NAME,
     GO_SDK_NATIVE_BUNDLE_PKG,
+    GO_SDK_PROVIDERS_BUNDLE_NAME,
+    GO_SDK_PROVIDERS_BUNDLE_PKG,
     GO_SDK_ROOT_PATH,
     JAVA_COMPOSE_PATH,
     JAVA_DOCKERFILE_PATH,
@@ -711,6 +719,28 @@ def _pack_go_sdk_dynamic_bundle(*, native=False):
     )
 
 
+def _build_go_providers(*, native=False):
+    """Build the generic provider runner and the plugin of the go.localfile provider.
+
+    ``ExecutableCoordinator`` runs the runner for the provider tasks of a Dag that is not a native Go Dag,
+    and the runner starts the plugin from ``plugins/`` beside it. Both are statically linked, like the
+    packed bundles, so the stock worker image runs them.
+    """
+    rmtree(GO_PROVIDERS_BUILD_PATH, ignore_errors=True)
+    plugins_dir = GO_PROVIDERS_BUILD_PATH / "plugins"
+    plugins_dir.mkdir(parents=True)
+    _run_go_logged(
+        f"Building the Go provider runner {GO_PROVIDER_RUNNER_PKG}",
+        ["build", "-o", GO_PROVIDERS_BUILD_PATH / "airflow-provider-runner", GO_PROVIDER_RUNNER_PKG],
+        native=native,
+    )
+    _run_go_logged(
+        f"Building the go.localfile plugin {GO_LOCALFILE_PLUGIN_PKG}",
+        ["build", "-o", plugins_dir / "airflow-provider-go-localfile", GO_LOCALFILE_PLUGIN_PKG],
+        native=native,
+    )
+
+
 def _setup_go_sdk_integration(dot_env_file, tmp_dir):
     """Set up the go_sdk E2E test mode.
 
@@ -729,13 +759,32 @@ def _setup_go_sdk_integration(dot_env_file, tmp_dir):
     The packed bundle is a statically linked native executable (built with
     ``CGO_ENABLED=0``), so the stock Airflow worker image can exec it directly
     without a Go toolchain or any extra runtime installed -- see ``go.yml``.
+
+    The provider examples go into the Dags folder too: ``go_localfile`` links the Go-implemented
+    ``go.localfile`` provider, and ``go_provider_operators`` uses the generated amazon and standard
+    wrappers, which a Python worker runs. The Python Dag ``python_localfile`` uses the generated
+    Python wrappers of ``go.localfile``, so the coordinator runs the provider runner from
+    ``go_providers_path``, built here and mounted into the worker. The providers need LocalStack and the
+    in-tree ``go.localfile`` provider in every service, as the ``ts_sdk`` mode does for its providers.
     """
     _pack_go_sdk_bundle(GO_SDK_EXAMPLE_BUNDLE_PKG, GO_SDK_BUNDLE_NAME, native=LANG_SDK_NATIVE_TOOLCHAIN)
     _pack_go_sdk_bundle(GO_SDK_NATIVE_BUNDLE_PKG, GO_SDK_NATIVE_BUNDLE_NAME, native=LANG_SDK_NATIVE_TOOLCHAIN)
+    _pack_go_sdk_bundle(
+        GO_SDK_LOCALFILE_BUNDLE_PKG, GO_SDK_LOCALFILE_BUNDLE_NAME, native=LANG_SDK_NATIVE_TOOLCHAIN
+    )
+    _pack_go_sdk_bundle(
+        GO_SDK_PROVIDERS_BUNDLE_PKG, GO_SDK_PROVIDERS_BUNDLE_NAME, native=LANG_SDK_NATIVE_TOOLCHAIN
+    )
     _pack_go_sdk_dynamic_bundle(native=LANG_SDK_NATIVE_TOOLCHAIN)
+    _build_go_providers(native=LANG_SDK_NATIVE_TOOLCHAIN)
 
     # Copy the compose override into the temp directory.
     copyfile(GO_COMPOSE_PATH, tmp_dir / "go.yml")
+    # `go_provider_operators` runs amazon S3 operators against LocalStack.
+    _copy_localstack_files(tmp_dir)
+    # `python_localfile` uses the generated wrapper of the Go-implemented go.localfile provider, which the
+    # Dag processor needs to parse the Dag and every worker needs to run it.
+    provider_paths = _write_providers_mount_override(tmp_dir, ["go.localfile"])
 
     # Place the packed bundle where the compose bind-mount (./go-bundles) exposes
     # it to the worker at /opt/airflow/go-bundles. The bundle scanner requires
@@ -752,9 +801,18 @@ def _setup_go_sdk_integration(dot_env_file, tmp_dir):
     # The native-Dag bundle goes into the Dags folder, where the Dag processor runs it to parse.
     native_dags_dir = tmp_dir / "dags" / "go"
     native_dags_dir.mkdir()
-    packed_native_bundle = native_dags_dir / GO_SDK_NATIVE_BUNDLE_NAME
-    copyfile(GO_SDK_BIN_PATH / GO_SDK_NATIVE_BUNDLE_NAME, packed_native_bundle)
-    os.chmod(packed_native_bundle, 0o755)
+    for bundle_name in (
+        GO_SDK_NATIVE_BUNDLE_NAME,
+        GO_SDK_LOCALFILE_BUNDLE_NAME,
+        GO_SDK_PROVIDERS_BUNDLE_NAME,
+    ):
+        packed_native_bundle = native_dags_dir / bundle_name
+        copyfile(GO_SDK_BIN_PATH / bundle_name, packed_native_bundle)
+        os.chmod(packed_native_bundle, 0o755)
+
+    # The runner and the plugin that the provider tasks of `python_localfile` run in. The coordinator makes
+    # the runner executable if it is not, and the runner starts the plugin from plugins/ beside it.
+    copytree(GO_PROVIDERS_BUILD_PATH, tmp_dir / "go-providers")
 
     dynamic_dags_dir = tmp_dir / "dags" / "go-dynamic"
     dynamic_dags_dir.mkdir()
@@ -765,6 +823,7 @@ def _setup_go_sdk_integration(dot_env_file, tmp_dir):
 
     # Copy the Go SDK example stub Dag so Airflow can discover and serialize it.
     copyfile(GO_SDK_DAGS_PATH / "go_examples.py", tmp_dir / "dags" / "go_examples.py")
+    copyfile(GO_SDK_DAGS_PATH / "go_localfile_example.py", tmp_dir / "dags" / "go_localfile_example.py")
 
     # Coordinator registry: maps the logical name "go-sdk" to ExecutableCoordinator,
     # which scans the go-task-handlers Dag bundle for the packed bundle by dag_id.
@@ -776,7 +835,10 @@ def _setup_go_sdk_integration(dot_env_file, tmp_dir):
         {
             "go-sdk": {
                 "classpath": "airflow.sdk.coordinators.executable.ExecutableCoordinator",
-                "kwargs": {"task_handler_bundle_name": "go-task-handlers"},
+                "kwargs": {
+                    "task_handler_bundle_name": "go-task-handlers",
+                    "go_providers_path": GO_PROVIDERS_CONTAINER_PATH,
+                },
             }
         }
     )
@@ -791,6 +853,10 @@ def _setup_go_sdk_integration(dot_env_file, tmp_dir):
         # Connection and variable read by the Go example bundle tasks.
         "AIRFLOW_CONN_TEST_HTTP=http://test:test@example.com/\n"
         "AIRFLOW_VAR_MY_VARIABLE=test_value\n"
+        f"_PIP_ADDITIONAL_REQUIREMENTS={' '.join(provider_paths)}\n"
+        # The connection `go_provider_operators` names, and the endpoint of LocalStack.
+        "AIRFLOW_CONN_AWS_LOCALSTACK=aws://test:test@\n"
+        f"{LOCALSTACK_AWS_ENV}"
     )
     os.environ["ENV_FILE_PATH"] = str(dot_env_file)
 
@@ -1159,7 +1225,7 @@ def spin_up_airflow_environment(tmp_path_factory: pytest.TempPathFactory):
         compose_file_names.append("java.yml")
         _setup_java_sdk_integration(dot_env_file, tmp_dir)
     elif E2E_TEST_MODE == "go_sdk":
-        compose_file_names.append("go.yml")
+        compose_file_names.extend(["localstack.yml", "go.yml", "providers-mount.yml"])
         _setup_go_sdk_integration(dot_env_file, tmp_dir)
     elif E2E_TEST_MODE == "openlineage":
         compose_file_names.append("openlineage.yml")

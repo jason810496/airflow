@@ -175,7 +175,10 @@ capabilities:
   human-in-the-loop:
     supported: false
   provider-operators:
-    supported: false
+    supported: true
+    since: "3.5.0"
+    sdk_version: "1.0.0"
+    note: "generated wrappers of Python providers, and providers implemented in Go"
   dag-test:
     supported: false
   asset-definition:

@@ -46,3 +46,17 @@ generate-models:
 # Regenerate the Dag, task and task group spec structs from the core Dag serialization schema
 generate-specs:
   go generate ./airflow/...
+
+# Regenerate the Go wrappers of the Python providers from their operator specs
+generate-providers:
+  go run ./internal/genproviders
+
+# Regenerate the operator spec of each provider implemented in Go
+generate-operator-spec:
+  go run ./internal/genoperatorspec
+
+# Build the generic provider runner and the plugin of each provider implemented in Go into bin/go-providers,
+# the layout that the coordinator's go_providers_path expects
+build-providers:
+  CGO_ENABLED=0 go build -o bin/go-providers/airflow-provider-runner ./cmd/airflow-provider-runner
+  CGO_ENABLED=0 go build -o bin/go-providers/plugins/airflow-provider-go-localfile ./providers/localfile/cmd/airflow-provider-go-localfile

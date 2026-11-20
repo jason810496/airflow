@@ -123,6 +123,13 @@ func (d *DagRef) addSwitch(
 			method, d.dagID,
 		))
 	}
+	if _, ok := fn.(OperatorTask); ok {
+		panic(fmt.Sprintf(
+			"%s: Dag %q: fn comes from airflow.UseOperator, "+
+				"but a decider function is a Go function that returns (*airflow.TaskRef, error)",
+			method, d.dagID,
+		))
+	}
 	switchRef := &SwitchRef{}
 	d.addTask(method, group, fn, opts, switchRef)
 	return switchRef

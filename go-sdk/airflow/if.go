@@ -92,6 +92,13 @@ func (d *DagRef) addIf(method string, group *TaskGroupRef, fn any, opts []TaskOp
 			method, d.dagID,
 		))
 	}
+	if _, ok := fn.(OperatorTask); ok {
+		panic(fmt.Sprintf(
+			"%s: Dag %q: fn comes from airflow.UseOperator, "+
+				"but a condition function is a Go function that returns (bool, error)",
+			method, d.dagID,
+		))
+	}
 	ifRef := &IfRef{}
 	d.addTask(method, group, fn, opts, ifRef)
 	return ifRef

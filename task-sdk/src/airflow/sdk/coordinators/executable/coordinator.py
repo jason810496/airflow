@@ -20,11 +20,13 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import os
 import pathlib
 import stat
 import struct
+import subprocess
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -37,6 +39,7 @@ from airflow.sdk.coordinators._bundle_metadata import (
     parse_metadata_mapping,
 )
 from airflow.sdk.coordinators._subprocess import SubprocessCoordinator
+from airflow.sdk.execution_time.coordinator import TaskLaunchError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -48,6 +51,11 @@ if TYPE_CHECKING:
 
 log: FilteringBoundLogger = structlog.get_logger(logger_name="coordinators.executable")
 
+
+PROVIDER_RUNNER_NAME = "airflow-provider-runner"
+PROVIDER_PLUGINS_DIR_NAME = "plugins"
+# The runner prints its manifest and exits, so a few seconds only guard against a hung binary.
+_RUNNER_METADATA_TIMEOUT = 10.0
 
 FOOTER_MAGIC = b"AFBNDL01"
 FOOTER_SIZE = 64
@@ -339,6 +347,32 @@ def _ensure_executable(path: pathlib.Path) -> str | None:
     return None
 
 
+@functools.lru_cache(maxsize=16)
+def _read_runner_schema_version(runner: str, mtime_ns: int, size: int) -> str:
+    """
+    Return the supervisor schema version of the provider runner at *runner*.
+
+    The runner prints it with ``--airflow-metadata``, like a bundle does. *mtime_ns* and *size* key the
+    cache, so a replaced runner is asked again.
+
+    :raises ValueError: when the runner cannot tell its version.
+    """
+    try:
+        completed = subprocess.run(
+            [runner, "--airflow-metadata", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=_RUNNER_METADATA_TIMEOUT,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = getattr(exc, "stderr", None) or exc
+        raise ValueError(f"cannot run {runner} --airflow-metadata: {detail}") from exc
+    return extract_supervisor_schema_version(
+        parse_metadata_mapping(completed.stdout, source="runner metadata")
+    )
+
+
 @attrs.define
 class _Bundle(ResolvedBundle):
     @classmethod
@@ -402,9 +436,49 @@ class ExecutableCoordinator(SubprocessCoordinator):
         be registered in ``[dag_processor] dag_bundle_config_list``. If unset,
         the task's own Dag bundle is used. Bundles are identified by their footer
         trailer, not the execute bit, so an object-store Dag bundle works too.
+    :param go_providers_path: A directory that holds the generic provider runner,
+        ``airflow-provider-runner``, and the plugin executables of the providers implemented in Go, in its
+        ``plugins`` subdirectory. A provider operator task of a Dag that is not a native Go Dag runs in the
+        runner, which starts the plugin that the task's ``_operator_module`` names. If unset, such a task
+        fails.
     :param task_startup_timeout: Maximum time the coordinator waits for a task
         process to start, in seconds. The default is 10 seconds.
+
+    A task of a Python Dag may be a provider operator implemented in Go, such as one of
+    ``apache-airflow-providers-go-localfile``. Its ``stub_kind`` is ``provider_operator``, so
+    ``go_providers_path`` selects the runner, whether or not a bundle declares the task's ``dag_id``. A
+    task of a native Go Dag runs its own Dag file, which links the operators it uses.
     """
+
+    go_providers_path: str | None = None
+
+    def _build_provider_operator_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
+        if self.go_providers_path is None:
+            raise TaskLaunchError(
+                f"Task {what.task_id!r} in Dag {what.dag_id!r} is a provider operator, which the Go "
+                "coordinator runs from go_providers_path, and it is not set. Set it to the directory that "
+                f"holds {PROVIDER_RUNNER_NAME} and, in {PROVIDER_PLUGINS_DIR_NAME}, the plugin of the provider.",
+                retryable=False,
+            )
+        root = pathlib.Path(self.go_providers_path)
+        runner = root / PROVIDER_RUNNER_NAME
+        try:
+            info = runner.stat()
+        except OSError as exc:
+            raise TaskLaunchError(
+                f"Cannot find the provider runner {runner}: {exc}. Install it into go_providers_path.",
+                retryable=False,
+            ) from exc
+        if (reason := _ensure_executable(runner)) is not None:
+            raise TaskLaunchError(f"Cannot run the provider runner {runner}: {reason}", retryable=False)
+        try:
+            schema_version = _read_runner_schema_version(str(runner), info.st_mtime_ns, info.st_size)
+        except ValueError as exc:
+            raise TaskLaunchError(
+                f"The provider runner {runner} has no usable supervisor schema version: {exc}",
+                retryable=False,
+            ) from exc
+        return [str(runner), f"--plugins-dir={root / PROVIDER_PLUGINS_DIR_NAME}"], schema_version
 
     def _build_execute_task_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
         roots = self._get_scan_roots()

@@ -1,0 +1,89 @@
+{
+  "spec_version": "1.0",
+  "provider": {
+    "id": "go.localfile",
+    "package": "apache-airflow-providers-go-localfile",
+    "version": "1.0.0"
+  },
+  "implemented_in": [
+    "Go"
+  ],
+  "operators": [
+    {
+      "name": "CreateFileOperator",
+      "module": "airflow.providers.go.localfile.operators.file",
+      "implementation_module": "airflow-provider-go-localfile",
+      "kind": "operator",
+      "description": "Create an empty file.",
+      "template_fields": [
+        "path"
+      ],
+      "params": [
+        {"name": "path", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The file to create. Missing parent directories are created too."},
+        {"name": "exist_ok", "type": {"kind": "boolean"}, "default": true, "description": "Succeed when the file exists already. When false, an existing file fails the task."}
+      ]
+    },
+    {
+      "name": "DeleteFileOperator",
+      "module": "airflow.providers.go.localfile.operators.file",
+      "implementation_module": "airflow-provider-go-localfile",
+      "kind": "operator",
+      "description": "Delete a file.",
+      "template_fields": [
+        "path"
+      ],
+      "params": [
+        {"name": "path", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The file to delete."},
+        {"name": "missing_ok", "type": {"kind": "boolean"}, "default": true, "description": "Succeed when the file is missing. When false, a missing file fails the task."}
+      ]
+    },
+    {
+      "name": "HasFileOperator",
+      "module": "airflow.providers.go.localfile.operators.file",
+      "implementation_module": "airflow-provider-go-localfile",
+      "kind": "operator",
+      "description": "Check that a file exists.",
+      "template_fields": [
+        "path"
+      ],
+      "can_skip_downstream": true,
+      "params": [
+        {"name": "path", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The path to look for."},
+        {"name": "skip_downstream_if_missing", "type": {"kind": "boolean"}, "default": false, "description": "Skip the direct downstream tasks when nothing is at the path."}
+      ]
+    },
+    {
+      "name": "WriteFileOperator",
+      "module": "airflow.providers.go.localfile.operators.file",
+      "implementation_module": "airflow-provider-go-localfile",
+      "kind": "operator",
+      "description": "Write text to a file.",
+      "template_fields": [
+        "path",
+        "content"
+      ],
+      "params": [
+        {"name": "path", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The file to write. Missing parent directories are created."},
+        {"name": "content", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The text to write."},
+        {"name": "mode", "type": {"kind": "literal", "literals": ["overwrite", "append"]}, "default": "overwrite", "description": "Replace what the file holds, or add to its end."},
+        {"name": "encoding", "type": {"kind": "literal", "literals": ["utf-8", "ascii", "latin1"]}, "default": "utf-8", "description": "How the text is encoded in the file."}
+      ]
+    },
+    {
+      "name": "WriteVariableOperator",
+      "module": "airflow.providers.go.localfile.operators.file",
+      "implementation_module": "airflow-provider-go-localfile",
+      "kind": "operator",
+      "description": "Write the value of an Airflow Variable to a file.",
+      "template_fields": [
+        "path",
+        "key"
+      ],
+      "params": [
+        {"name": "path", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The file to write. Missing parent directories are created."},
+        {"name": "key", "type": {"kind": "string"}, "required": true, "templated": true, "description": "The key of the Airflow Variable whose value is written."}
+      ]
+    }
+  ],
+  "skipped": []
+}

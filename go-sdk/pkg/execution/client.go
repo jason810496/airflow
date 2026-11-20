@@ -351,6 +351,32 @@ func (c *CoordinatorClient) skipDownstreamTasks(ctx context.Context, taskIDs []s
 	return err
 }
 
+// renderTemplateFields asks the supervisor to render the values of an operator's template fields,
+// which a Go runtime cannot do. The supervisor's helper process renders them with the task's context,
+// and the result holds each value under the name it was sent with.
+func (c *CoordinatorClient) renderTemplateFields(
+	ctx context.Context,
+	values map[string]any,
+) (map[string]any, error) {
+	sent := make(genmodels.Values, len(values))
+	for name, value := range values {
+		sent[name] = value
+	}
+	resp, err := c.comm.Communicate(ctx, genmodels.RenderTemplateFields{Values: sent})
+	if err != nil {
+		return nil, err
+	}
+	var result genmodels.RenderedTemplateFieldsResult
+	if err := decodeBody(resp, &result); err != nil {
+		return nil, fmt.Errorf("decoding rendered template fields: %w", err)
+	}
+	rendered := make(map[string]any, len(result.Values))
+	for name, value := range result.Values {
+		rendered[name] = value
+	}
+	return rendered, nil
+}
+
 // triggerDagRun asks the supervisor to create a Dag run. It reports alreadyExists, not an error,
 // when a Dag run with the same run_id exists, because a trigger task decides what to do then.
 func (c *CoordinatorClient) triggerDagRun(

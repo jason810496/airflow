@@ -430,9 +430,16 @@ func (d *DagRef) serializeTasksLocked() []any {
 func (d *DagRef) serializeTaskLocked(task *TaskRef) map[string]any {
 	data := map[string]any{"task_id": task.taskID}
 	spec := task.spec
-	if task.triggerDagRun != nil {
+	// The worker picks a runtime by queue, so a provider task takes the queue of the Dag too.
+	if spec.Queue == "" {
+		spec.Queue = d.spec.Queue
+	}
+	switch {
+	case task.triggerDagRun != nil:
 		writeTriggerDagRun(data, *task.triggerDagRun)
-	} else {
+	case task.operator != nil:
+		serializeOperatorTask(data, task.operator, spec)
+	default:
 		data["task_type"] = goTaskType
 		data["_task_module"] = goTaskModule
 		data["language"] = goLanguage
@@ -451,13 +458,14 @@ func (d *DagRef) serializeTaskLocked(task *TaskRef) map[string]any {
 	}
 	// The Go runtime runs every task of a Go Dag, a task from TriggerDagRun included, so every one of
 	// them is a stub. is_stub makes the API server send the task its arguments from _arg_bindings when
-	// the task runs, as it does for a @task.stub task of a Python Dag.
+	// the task runs, as it does for a @task.stub task of a Python Dag. A provider task is a stub too,
+	// because the API server sends the operator to whichever runtime runs it.
 	data["is_stub"] = true
-	// A task of a Dag written in a language SDK, as opposed to a task handler or a provider operator.
-	data["stub_kind"] = "dag_definition"
-	// The worker picks a runtime by queue, so a task from TriggerDagRun takes the queue of the Dag too.
-	if spec.Queue == "" {
-		spec.Queue = d.spec.Queue
+	if task.operator != nil {
+		data["stub_kind"] = "provider_operator"
+	} else {
+		// A task of a Dag written in a language SDK, as opposed to a task handler or a provider operator.
+		data["stub_kind"] = "dag_definition"
 	}
 	writeSpecFields(data, spec, taskSpecRules)
 	if len(task.downstreams) > 0 {

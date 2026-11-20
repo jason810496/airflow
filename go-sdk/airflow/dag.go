@@ -176,6 +176,10 @@ type TaskRef struct {
 	// It is nil for a task that runs a Go function. A task from TriggerDagRun runs no Go
 	// function, so its resultType, inputs and task are nil.
 	triggerDagRun *TriggerDagRunSpec
+	// operator is the checked form of an OperatorTask. It is nil for a task that runs a Go function
+	// or comes from TriggerDagRun. A task from UseOperator runs no Go function either, so its
+	// resultType, inputs and task are nil.
+	operator *operatorTask
 	// decider is the IfRef or the SwitchRef that an If or a Switch method returned for the task. It
 	// is nil for a task from DagRef.Task or TaskGroupRef.Task.
 	decider decider
@@ -245,6 +249,12 @@ func (d *DagRef) addTask(
 	method string, group *TaskGroupRef, fn any, opts []TaskOption, decider decider,
 ) *TaskRef {
 	trigger, isTrigger := fn.(TriggerDagRunTask)
+	operatorFn, isOperator := fn.(OperatorTask)
+	var operator *operatorTask
+	var operatorErr error
+	if isOperator {
+		operator, operatorErr = checkOperatorTask(operatorFn)
+	}
 	var triggerSpec *TriggerDagRunSpec
 	var triggerErr error
 	if isTrigger {
@@ -266,7 +276,7 @@ func (d *DagRef) addTask(
 	}
 	d.checkGroupLocked(method, group)
 	var wrapped bundle.Task
-	if !isTrigger {
+	if !isTrigger && !isOperator {
 		wrap := bundle.NewPositionalTaskFunction
 		if decider != nil {
 			wrap = decider.wrap
@@ -300,7 +310,7 @@ func (d *DagRef) addTask(
 			// A task from TriggerDagRun takes no Inputs at all, and the check after this loop
 			// reports that. err says to merge the Inputs into one, which would not fix a task from
 			// TriggerDagRun.
-			if _, ok := opt.(inputs); ok && isTrigger {
+			if _, ok := opt.(inputs); ok && (isTrigger || isOperator) {
 				continue
 			}
 			panic(fmt.Sprintf(
@@ -310,6 +320,13 @@ func (d *DagRef) addTask(
 	}
 
 	taskID := cfg.spec.TaskID
+	if taskID == "" && isOperator {
+		panic(fmt.Sprintf(
+			"%s: Dag %q: a task from airflow.UseOperator with the class path %q has no "+
+				"Go function to take a task_id from; set one with airflow.TaskSpec{TaskID: ...}",
+			method, d.dagID, operatorFn.classpath,
+		))
+	}
 	if taskID == "" && isTrigger {
 		panic(fmt.Sprintf(
 			"%s: Dag %q: a task from airflow.TriggerDagRun with DagID %q has no "+
@@ -335,6 +352,9 @@ func (d *DagRef) addTask(
 	if triggerErr != nil {
 		panic(fmt.Sprintf("%s: task %q of Dag %q: %v", method, taskID, d.dagID, triggerErr))
 	}
+	if operatorErr != nil {
+		panic(fmt.Sprintf("%s: task %q of Dag %q: %v", method, taskID, d.dagID, operatorErr))
+	}
 	if err := checkTaskSpec(cfg.spec); err != nil {
 		panic(fmt.Sprintf("%s: task %q of Dag %q: %v", method, taskID, d.dagID, err))
 	}
@@ -354,13 +374,21 @@ func (d *DagRef) addTask(
 	}
 	var taskInputs []taskInput
 	var resultType reflect.Type
-	if isTrigger {
+	if isTrigger || isOperator {
 		if cfg.hasInputs {
+			source := "airflow.TriggerDagRun"
+			advice := "it has no Go function to pass the results to"
+			if isOperator {
+				source = "airflow.UseOperator"
+				advice = "an argument takes the result of a task as airflow.ResultOf or a *airflow.TaskRef"
+			}
 			panic(fmt.Sprintf(
-				"%s: task %q of Dag %q comes from airflow.TriggerDagRun and "+
-					"takes no airflow.Inputs, because it has no Go function to pass the results to",
-				method, taskID, d.dagID,
+				"%s: task %q of Dag %q comes from %s and takes no airflow.Inputs, because %s",
+				method, taskID, d.dagID, source, advice,
 			))
+		}
+		if isOperator {
+			d.checkOperatorUpstreams(method, taskID, operator)
 		}
 	} else {
 		fnType := reflect.TypeOf(fn)
@@ -380,6 +408,7 @@ func (d *DagRef) addTask(
 		inputs:        taskInputs,
 		task:          wrapped,
 		triggerDagRun: triggerSpec,
+		operator:      operator,
 		decider:       decider,
 	}
 	if decider != nil {
@@ -398,6 +427,11 @@ func (d *DagRef) addTask(
 	for _, input := range taskInputs {
 		if !input.literal {
 			d.addEdgeLocked(input.ref, task, "")
+		}
+	}
+	if operator != nil {
+		for _, upstream := range operator.upstream {
+			d.addEdgeLocked(upstream, task, "")
 		}
 	}
 	return task
@@ -491,6 +525,9 @@ func findTaskName(group *TaskGroupRef, fn any, opts []TaskOption) string {
 	}
 	if _, ok := fn.(TriggerDagRunTask); ok {
 		return "airflow.TriggerDagRun"
+	}
+	if _, ok := fn.(OperatorTask); ok {
+		return "airflow.UseOperator"
 	}
 	if taskID, ok := taskIDFromFuncName(funcName(fn)); ok {
 		return group.childID(taskID)

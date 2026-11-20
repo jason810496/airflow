@@ -33,7 +33,7 @@ import yaml
 from uuid6 import uuid7
 
 from airflow.dag_processing.bundles.base import BaseDagBundle
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance
+from airflow.sdk.api.datamodels._generated import BundleInfo, StubKind, TaskInstance
 from airflow.sdk.coordinators._subprocess import _PopenActivitySubprocess
 from airflow.sdk.coordinators.executable.coordinator import (
     FOOTER_MAGIC,
@@ -44,7 +44,7 @@ from airflow.sdk.coordinators.executable.coordinator import (
     _digest_cache,
     _ensure_executable,
 )
-from airflow.sdk.execution_time.coordinator import BaseCoordinator
+from airflow.sdk.execution_time.coordinator import BaseCoordinator, TaskLaunchError
 from airflow.sdk.execution_time.supervisor import ActivitySubprocess
 from airflow.sdk.importers import reset_importer_registry
 
@@ -117,7 +117,9 @@ def _make_executable(path: Path) -> Path:
     return path
 
 
-def _make_ti(dag_id: str = "tutorial_dag", queue: str = "executable") -> TaskInstance:
+def _make_ti(
+    dag_id: str = "tutorial_dag", queue: str = "executable", stub_kind: StubKind | None = None
+) -> TaskInstance:
     return TaskInstance(
         id=uuid7(),
         dag_version_id=uuid7(),
@@ -127,6 +129,7 @@ def _make_ti(dag_id: str = "tutorial_dag", queue: str = "executable") -> TaskIns
         try_number=1,
         map_index=-1,
         queue=queue,
+        stub_kind=stub_kind,
     )
 
 
@@ -738,3 +741,104 @@ class TestExecuteTaskNativeBundle:
 
         mock_scan.assert_not_called()
         assert mock_start.call_args.kwargs["command"][0] == str(binary.resolve())
+
+
+def _make_provider_runner(directory: Path, *, schema_version: str | None = "2026-06-16", exit_code=0) -> Path:
+    """Write a script that answers ``--airflow-metadata`` like the Go provider runner does."""
+    manifest = json.dumps({"sdk": {"supervisor_schema_version": schema_version}})
+    runner = directory / "airflow-provider-runner"
+    runner.write_text(f"#!/bin/sh\necho '{manifest}'\necho 'runner stderr' >&2\nexit {exit_code}\n")
+    runner.chmod(0o755)
+    return runner
+
+
+class TestProviderOperatorCommand:
+    def _build(self, coordinator: ExecutableCoordinator):
+        return coordinator._build_provider_operator_command(
+            what=_make_ti(dag_id="python_dag", stub_kind=StubKind.PROVIDER_OPERATOR)
+        )
+
+    def test_runs_the_runner_with_its_plugin_directory(self, tmp_path):
+        runner = _make_provider_runner(tmp_path)
+
+        command, schema_version = self._build(ExecutableCoordinator(go_providers_path=str(tmp_path)))
+
+        assert command == [str(runner), f"--plugins-dir={tmp_path / 'plugins'}"]
+        assert schema_version == "2026-06-16"
+
+    def test_makes_the_runner_executable(self, tmp_path):
+        runner = _make_provider_runner(tmp_path)
+        runner.chmod(0o644)
+
+        self._build(ExecutableCoordinator(go_providers_path=str(tmp_path)))
+
+        assert os.access(runner, os.X_OK)
+
+    def test_without_a_go_providers_path_it_fails_without_a_retry(self):
+        with pytest.raises(TaskLaunchError, match="go_providers_path, and it is not set") as raised:
+            self._build(ExecutableCoordinator())
+
+        assert raised.value.retryable is False
+
+    def test_fails_when_the_runner_is_not_installed(self, tmp_path):
+        with pytest.raises(TaskLaunchError, match="Cannot find the provider runner") as raised:
+            self._build(ExecutableCoordinator(go_providers_path=str(tmp_path)))
+
+        assert raised.value.retryable is False
+
+    @pytest.mark.parametrize(
+        ("schema_version", "exit_code", "message"),
+        [
+            pytest.param(None, 0, "missing or invalid sdk.supervisor_schema_version", id="no-version"),
+            pytest.param("2026-06-16", 3, "runner stderr", id="runner-fails"),
+        ],
+    )
+    def test_fails_when_the_runner_cannot_tell_its_schema_version(
+        self, tmp_path, schema_version, exit_code, message
+    ):
+        _make_provider_runner(tmp_path, schema_version=schema_version, exit_code=exit_code)
+
+        with pytest.raises(TaskLaunchError, match=message) as raised:
+            self._build(ExecutableCoordinator(go_providers_path=str(tmp_path)))
+
+        assert raised.value.retryable is False
+
+
+class TestExecuteProviderOperatorTask:
+    def _execute(self, mock_client, *, go_providers_path: str | None, stub_kind=StubKind.PROVIDER_OPERATOR):
+        return ExecutableCoordinator(go_providers_path=go_providers_path).execute_task(
+            what=_make_ti(dag_id="python_dag", stub_kind=stub_kind),
+            dag_rel_path="dag.py",
+            bundle_info=BundleInfo(name="dags-folder", version="v1"),
+            client=mock_client,
+            subprocess_logs_to_stdout=False,
+        )
+
+    @pytest.fixture
+    def mock_start(self):
+        with (
+            patch.object(ExecutableCoordinator, "_is_native_dag_file", return_value=False),
+            patch.object(_PopenActivitySubprocess, "start") as mock_start,
+        ):
+            mock_start.return_value.wait.return_value = 0
+            yield mock_start
+
+    def test_runs_the_provider_runner_for_a_provider_operator_of_a_python_dag(
+        self, mock_start, mock_client, tmp_path
+    ):
+        runner = _make_provider_runner(tmp_path)
+
+        self._execute(mock_client, go_providers_path=str(tmp_path))
+
+        assert mock_start.call_args.kwargs["command"] == [
+            str(runner),
+            f"--plugins-dir={tmp_path / 'plugins'}",
+        ]
+        assert mock_start.call_args.kwargs["subprocess_schema_version"] == "2026-06-16"
+
+    def test_fails_a_provider_operator_without_a_go_providers_path(self, mock_start, mock_client):
+        with pytest.raises(TaskLaunchError, match="go_providers_path, and it is not set") as raised:
+            self._execute(mock_client, go_providers_path=None)
+
+        assert raised.value.retryable is False
+        mock_start.assert_not_called()

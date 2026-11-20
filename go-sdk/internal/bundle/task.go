@@ -262,15 +262,28 @@ func (b *branchRun) skipDownstream(
 	taskIDs []string,
 	logger *slog.Logger,
 ) error {
+	return SkipTasks(ctx, client, b.skip, b.ti, taskIDs, logger)
+}
+
+// SkipTasks records taskIDs in the skipmixin_key XCom of ti, and then skips those tasks with skip. It
+// does nothing when taskIDs is empty.
+func SkipTasks(
+	ctx context.Context,
+	client sdk.Client,
+	skip func(ctx context.Context, taskIDs []string) error,
+	ti sdk.TaskInstance,
+	taskIDs []string,
+	logger *slog.Logger,
+) error {
 	if len(taskIDs) == 0 {
 		return nil
 	}
-	err := client.PushXCom(ctx, b.ti, skipMixinXComKey, map[string][]string{"skipped": taskIDs})
+	err := client.PushXCom(ctx, ti, skipMixinXComKey, map[string][]string{"skipped": taskIDs})
 	if err != nil {
 		return fmt.Errorf("recording the skipped tasks in the %s XCom: %w", skipMixinXComKey, err)
 	}
 	logger.InfoContext(ctx, "Skipping downstream tasks", "task_ids", taskIDs)
-	if err := b.skip(ctx, taskIDs); err != nil {
+	if err := skip(ctx, taskIDs); err != nil {
 		return fmt.Errorf("skipping the downstream tasks %q: %w", taskIDs, err)
 	}
 	return nil

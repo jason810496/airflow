@@ -31,6 +31,9 @@ just build             # pack the example bundles
 just docs              # serve the package docs locally
 just generate-models   # regenerate the coordinator-protocol models
 just generate-specs    # regenerate the Dag, task and task group specs
+just generate-providers      # regenerate the Go wrappers of the Python providers
+just generate-operator-spec  # regenerate the operator spec of the providers implemented in Go
+just build-providers   # build the provider runner and the plugins into bin/go-providers
 ```
 
 ## How it works
@@ -181,6 +184,41 @@ The check runs every Dag of the file, including the ones that `requires` a featu
 have. [`go_native.json`](../airflow-core/tests/unit/dag_processing/lang_sdk_fixtures/go_native.json)
 holds the Go output for the same Dags, so that the Airflow core tests check that Airflow loads it.
 `TestSerializeConformanceDags` says how to rewrite it.
+
+## Provider operators
+
+A Dag declared in Go uses provider operators in two ways, and a provider implemented in Go adds a third.
+[ADR 0018](../airflow-core/adr/lang-sdk/0018-provider-operators-implemented-in-lang-sdks.md) describes the design.
+
+- **Python to all.** The wrappers under [`providers/standard`](./providers/standard) and
+  [`providers/amazon`](./providers/amazon) are generated from the operator specs that
+  `scripts/ci/lang_sdk_providers/generate_operator_specs.py` writes to
+  `providers/<provider>/_generated/lang_sdk_operators.json`. Run `just generate-providers` after a spec
+  changes. A wrapper calls `airflow.UseOperator`, which is the only code that writes a provider task.
+  `TestTheCommittedWrappersAreUpToDate` fails when a committed wrapper is not what its spec generates.
+- **A provider implemented in Go.** [`providers/localfile`](./providers/localfile) defines its operators with
+  `provider.Define`: a Go function over a struct whose `airflow:"python_name"` tags name the Python arguments.
+  `just generate-operator-spec` writes the spec of the provider to `providers/go/localfile/_generated`, and
+  `scripts/ci/lang_sdk_providers/generate_python_wrappers.py` writes the Python wrapper package from it.
+  `TestTheCommittedSpecsAreUpToDate` fails when the committed spec is stale.
+- **Where an operator runs.** A task of a Go Dag that links the provider package runs the operator from its own
+  executable, which finds it by class path in a registry that `provider.Define` fills. Any other task of that
+  provider runs in `cmd/airflow-provider-runner`, which `ExecutableCoordinator` starts from `go_providers_path`.
+  The runner serves an empty bundle, resolves the arguments, has the supervisor render the template fields, and
+  starts the plugin executable that the task's `_operator_module` names, from `<go_providers_path>/plugins`.
+
+The runner and a plugin talk over `hashicorp/go-plugin` with `net/rpc`. A plugin has no supervisor socket, so
+the runner serves a callback service to it for the length of one task, and the operator reaches Variables,
+Connections, XComs, the task state store, the log and `provider.SkipDownstream` through the same
+`airflow.Context` as an operator that is linked in. The protocol is in
+[`internal/providerrpc`](./internal/providerrpc).
+
+`hashicorp/go-plugin` is MPL-2.0, which the ASF counts as a Category B license. Its use needs a licensing review
+before a release of the SDK.
+
+The plugin package links gRPC and `net/http`, even though the SDK uses only `net/rpc`. The fixes for the
+`golang.org/x/net` advisories that `govulncheck` reports for them need Go 1.26, so that CI step fails until the
+module moves to it.
 
 ## Architectural decisions
 

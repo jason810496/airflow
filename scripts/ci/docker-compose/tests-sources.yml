@@ -91,6 +91,7 @@ services:
       - ../../../providers/ftp/tests:/opt/airflow/providers/ftp/tests
       - ../../../providers/git/tests:/opt/airflow/providers/git/tests
       - ../../../providers/github/tests:/opt/airflow/providers/github/tests
+      - ../../../providers/go/localfile/tests:/opt/airflow/providers/go/localfile/tests
       - ../../../providers/google/tests:/opt/airflow/providers/google/tests
       - ../../../providers/grpc/tests:/opt/airflow/providers/grpc/tests
       - ../../../providers/hashicorp/tests:/opt/airflow/providers/hashicorp/tests

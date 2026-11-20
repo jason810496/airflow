@@ -103,6 +103,12 @@ GO_SDK_BUNDLE_NAME = "example_dags"
 # The native-Dag example: Dags declared in Go and parsed from the binary by the Dag processor.
 GO_SDK_NATIVE_BUNDLE_PKG = "./example/native"
 GO_SDK_NATIVE_BUNDLE_NAME = "go_native_dags"
+# The go.localfile example: a native Dag that links the Go-implemented provider, run from its executable.
+GO_SDK_LOCALFILE_BUNDLE_PKG = "./example/localfile"
+GO_SDK_LOCALFILE_BUNDLE_NAME = "go_localfile_dags"
+# The providers example: a native Dag whose provider tasks the generated amazon and standard wrappers write.
+GO_SDK_PROVIDERS_BUNDLE_PKG = "./example/providers"
+GO_SDK_PROVIDERS_BUNDLE_NAME = "go_provider_dags"
 # The dynamic example: Dags generated from a dags.yaml shipped next to the packed binary.
 GO_SDK_DYNAMIC_BUNDLE_PKG = "./example/dynamic"
 GO_SDK_DYNAMIC_BUNDLE_NAME = "go_dynamic_dags"
@@ -110,6 +116,13 @@ GO_SDK_DYNAMIC_YAML_PATH = GO_SDK_ROOT_PATH / "example" / "dynamic" / "dags.yaml
 # Where airflow-go-pack writes the packed bundle inside the repo (go-sdk/bin is gitignored).
 GO_SDK_BIN_PATH = GO_SDK_ROOT_PATH / "bin"
 GO_COMPOSE_PATH = AIRFLOW_ROOT_PATH / "airflow-e2e-tests" / "docker" / "go.yml"
+# The directory the coordinator's go_providers_path names: the generic provider runner, and in plugins/ the
+# plugin executable of each provider implemented in Go. The e2e build puts it here, and go.yml mounts it
+# into the worker at GO_PROVIDERS_CONTAINER_PATH.
+GO_PROVIDERS_BUILD_PATH = GO_SDK_BIN_PATH / "go-providers"
+GO_PROVIDERS_CONTAINER_PATH = "/opt/airflow/go-providers"
+GO_PROVIDER_RUNNER_PKG = "./cmd/airflow-provider-runner"
+GO_LOCALFILE_PLUGIN_PKG = "./providers/localfile/cmd/airflow-provider-go-localfile"
 # Go toolchain image used to build the bundle in the containerized path (i.e. unless
 # LANG_SDK_NATIVE_TOOLCHAIN is set); must satisfy go-sdk/go.mod's toolchain.
 # The Alpine variant is ~7x smaller than the Debian one and is safe here because the

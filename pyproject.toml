@@ -250,6 +250,9 @@ apache-airflow = "airflow.__main__:main"
 "github" = [
     "apache-airflow-providers-github>=2.8.0"
 ]
+"go.localfile" = [
+    "apache-airflow-providers-go-localfile>=1.0.0"
+]
 "google" = [
     "apache-airflow-providers-google>=10.24.0"
 ]
@@ -481,6 +484,7 @@ apache-airflow = "airflow.__main__:main"
     "apache-airflow-providers-ftp>=3.12.0",
     "apache-airflow-providers-git>=0.0.2", # Set from MIN_VERSION_OVERRIDE in update_airflow_pyproject_toml.py
     "apache-airflow-providers-github>=2.8.0",
+    "apache-airflow-providers-go-localfile>=1.0.0",
     "apache-airflow-providers-google>=10.24.0",
     "apache-airflow-providers-grpc>=3.7.0",
     "apache-airflow-providers-hashicorp>=4.0.0",
@@ -1243,6 +1247,8 @@ mypy_path = [
     "$MYPY_CONFIG_FILE_DIR/providers/git/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/github/src",
     "$MYPY_CONFIG_FILE_DIR/providers/github/tests",
+    "$MYPY_CONFIG_FILE_DIR/providers/go/localfile/src",
+    "$MYPY_CONFIG_FILE_DIR/providers/go/localfile/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/google/src",
     "$MYPY_CONFIG_FILE_DIR/providers/google/tests",
     "$MYPY_CONFIG_FILE_DIR/providers/grpc/src",
@@ -1566,6 +1572,7 @@ apache-airflow-providers-facebook = false
 apache-airflow-providers-ftp = false
 apache-airflow-providers-git = false
 apache-airflow-providers-github = false
+apache-airflow-providers-go-localfile = false
 apache-airflow-providers-google = false
 apache-airflow-providers-grpc = false
 apache-airflow-providers-hashicorp = false
@@ -1766,6 +1773,7 @@ apache-airflow-providers-facebook = false
 apache-airflow-providers-ftp = false
 apache-airflow-providers-git = false
 apache-airflow-providers-github = false
+apache-airflow-providers-go-localfile = false
 apache-airflow-providers-google = false
 apache-airflow-providers-grpc = false
 apache-airflow-providers-hashicorp = false
@@ -1941,6 +1949,7 @@ apache-airflow-providers-facebook = { workspace = true }
 apache-airflow-providers-ftp = { workspace = true }
 apache-airflow-providers-git = { workspace = true }
 apache-airflow-providers-github = { workspace = true }
+apache-airflow-providers-go-localfile = { workspace = true }
 apache-airflow-providers-google = { workspace = true }
 apache-airflow-providers-grpc = { workspace = true }
 apache-airflow-providers-hashicorp = { workspace = true }
@@ -2089,6 +2098,7 @@ members = [
     "providers/ftp",
     "providers/git",
     "providers/github",
+    "providers/go/localfile",
     "providers/google",
     "providers/grpc",
     "providers/hashicorp",

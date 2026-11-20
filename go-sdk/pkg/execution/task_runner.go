@@ -40,6 +40,10 @@ import (
 // is the only one that defers, and RunTask runs it without a Go function. When RunTask cannot
 // delete an XCom, or arg_bindings is invalid, the task fails without running.
 //
+// A task whose ti_context carries a provider_operator is not looked up in the bundle. RunTask runs
+// the operator that the run context names, from the operators this binary links or from a plugin, and
+// pushes its result as the return_value XCom.
+//
 // The supervisor owns the Execution-API state transitions, so the runtime only
 // invokes the user's task function and returns its terminal response.
 //
@@ -52,15 +56,21 @@ func RunTask(
 	comm *CoordinatorComm,
 	logger *slog.Logger,
 ) any {
-	task, exists := b.LookupTask(details.TI.DagID, details.TI.TaskID)
-	if !exists {
-		logger.Error("Task not registered",
-			"dag_id", details.TI.DagID,
-			"task_id", details.TI.TaskID,
-		)
-		return genmodels.TaskState{
-			State:   genmodels.TaskStateStateRemoved,
-			EndDate: genmodels.TimePtr(time.Now().UTC()),
+	// A provider operator task has no bundle entry: the generic provider runner serves an empty bundle,
+	// and the run context names the operator. So the bundle is not asked for it.
+	provider := details.TIContext.ProviderOperator
+	var task bundle.Task
+	if provider == nil {
+		var exists bool
+		if task, exists = b.LookupTask(details.TI.DagID, details.TI.TaskID); !exists {
+			logger.Error("Task not registered",
+				"dag_id", details.TI.DagID,
+				"task_id", details.TI.TaskID,
+			)
+			return genmodels.TaskState{
+				State:   genmodels.TaskStateStateRemoved,
+				EndDate: genmodels.TimePtr(time.Now().UTC()),
+			}
 		}
 	}
 
@@ -78,20 +88,17 @@ func RunTask(
 	if dagRun.Conf != nil {
 		conf = *dagRun.Conf
 	}
-	runtimeContext := sdk.NewTIRunContext(
-		context.Background(),
-		ti,
-		sdk.DagRun{
-			DagID:             details.TI.DagID,
-			RunID:             details.TI.RunID,
-			LogicalDate:       (*time.Time)(dagRun.LogicalDate),
-			DataIntervalStart: (*time.Time)(dagRun.DataIntervalStart),
-			DataIntervalEnd:   (*time.Time)(dagRun.DataIntervalEnd),
-			RunAfter:          time.Time(dagRun.RunAfter),
-			RunType:           dagRun.RunType,
-			Conf:              conf,
-		},
-	)
+	sdkDagRun := sdk.DagRun{
+		DagID:             details.TI.DagID,
+		RunID:             details.TI.RunID,
+		LogicalDate:       (*time.Time)(dagRun.LogicalDate),
+		DataIntervalStart: (*time.Time)(dagRun.DataIntervalStart),
+		DataIntervalEnd:   (*time.Time)(dagRun.DataIntervalEnd),
+		RunAfter:          time.Time(dagRun.RunAfter),
+		RunType:           dagRun.RunType,
+		Conf:              conf,
+	}
+	runtimeContext := sdk.NewTIRunContext(context.Background(), ti, sdkDagRun)
 
 	ctx = context.WithValue(ctx, sdkcontext.SdkClientContextKey, sdk.Client(client))
 	ctx = context.WithValue(ctx, sdkcontext.RuntimeContextKey, runtimeContext)
@@ -112,6 +119,10 @@ func RunTask(
 			)
 			return failTask(details.TIContext.ShouldRetry, err)
 		}
+	}
+
+	if provider != nil {
+		return runProviderOperator(ctx, details, provider, client, ti, sdkDagRun, logger)
 	}
 
 	// The runtime runs a TriggerDagRun task itself. It has no Go function to bind arguments to.

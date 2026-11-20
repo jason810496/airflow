@@ -252,6 +252,8 @@ func (d *DagRef) checkInputs(
 					"but that task comes from airflow.TriggerDagRun and returns no result",
 				method, taskID, d.dagID, param, upstream.taskID,
 			))
+		case upstream.operator != nil:
+			// The result of a provider operator is JSON, which the runtime decodes into the parameter.
 		case upstream.resultType == nil:
 			panic(fmt.Sprintf(
 				"%s: task %q of Dag %q takes parameter %d from task %q, "+

@@ -91,6 +91,7 @@ The [Go SDK guide][guide] covers:
 | Topic                                                                                         | Guide section                                  |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | Task inputs, options, order-only dependencies, task groups, branching, triggering another Dag | [Declaring a Dag in Go][declaring-a-dag-in-go] |
+| Provider operators, and providers implemented in Go                                           | [Provider operators][provider-operators]       |
 | The `airflow.Context`, the `sdk.Client` and the task state store                              | [Writing tasks][writing-tasks]                 |
 | Building a bundle with `airflow-go-pack`, and cross-platform builds                           | [Building a bundle][building-a-bundle]         |
 | Where to deploy a bundle, and the `ExecutableCoordinator` options                             | [Deploying][deploying]                         |
@@ -100,6 +101,7 @@ See [`example/`](./example) for working projects.
 
 [guide]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html
 [declaring-a-dag-in-go]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html#declaring-a-dag-in-go
+[provider-operators]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html#provider-operators
 [writing-tasks]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html#writing-tasks
 [building-a-bundle]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html#building-a-bundle
 [deploying]: https://airflow.apache.org/docs/apache-airflow/stable/authoring-and-scheduling/language-sdks/go.html#deploying
@@ -160,7 +162,7 @@ prek hook regenerate it.
 | capability: `trigger-dag-run` | MAY † | ✓ | 3.4.0 | 1.0.0 | airflow.TriggerDagRun |
 | capability: `dynamic-dag-generation` | MAY † | ✓ | 3.4.0 | 1.0.0 |  |
 | capability: `human-in-the-loop` | MAY † | ✗ | – | – |  |
-| capability: `provider-operators` | MAY † | ✗ | – | – |  |
+| capability: `provider-operators` | MAY † | ✓ | 3.5.0 | 1.0.0 | generated wrappers of Python providers, and providers implemented in Go |
 | capability: `dag-test` | SHOULD † | ✗ | – | – |  |
 | capability: `asset-definition` | MAY † | ✗ | – | – |  |
 | capability: `asset-scheduling` | MAY † | ✗ | – | – |  |

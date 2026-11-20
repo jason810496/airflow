@@ -316,6 +316,59 @@ When ``Deferrable`` is unset, it follows ``[operators] default_deferrable``. A d
 triggerer, which needs the standard provider installed. Without it, ``WaitForCompletion`` polls from the task
 and holds its worker slot.
 
+Provider operators
+~~~~~~~~~~~~~~~~~~
+
+The operators and sensors of a Python provider are available as typed wrappers under
+``github.com/apache/airflow/go-sdk/providers/``, such as ``providers/amazon`` and ``providers/standard``. A
+package mirrors the Python module of the same path, without the underscores, and an argument is the Python
+argument in Go case. Pass the wrapper to ``dag.Task`` in place of a function:
+
+.. code-block:: go
+
+    import (
+        s3 "github.com/apache/airflow/go-sdk/providers/amazon/aws/operators/s3"
+        bash "github.com/apache/airflow/go-sdk/providers/standard/operators/bash"
+    )
+
+    report := dag.Task(buildReport)
+    write := dag.Task(
+        s3.S3CreateObjectOperator(s3.S3CreateObjectOperatorArgs{
+            S3Bucket: airflow.Of("reports"),
+            S3Key:    airflow.Of("runs/{{ run_id }}/report.json"),
+            Data:     airflow.ResultOf[string](report),
+            Replace:  airflow.Ptr(true),
+        }),
+        airflow.TaskSpec{TaskID: "write_report", Queue: "default"},
+    )
+    printed := dag.Task(
+        bash.BashOperator(bash.BashOperatorArgs{BashCommand: airflow.Of("echo done")}),
+        airflow.TaskSpec{TaskID: "print"},
+    )
+    dag.Task(finish, airflow.Inputs(printed))
+
+A wrapper has no task body. The SDK writes the Python operator class and its arguments into the serialized Dag,
+and a Python worker builds the operator from there and runs it, so the worker needs the provider installed.
+Such a task takes the Dag's ``Queue`` like any other task, and that queue routes it to the Go coordinator, which
+cannot run a Python operator. Name a ``Queue`` that a Python worker serves, such as ``default``, in its
+``TaskSpec``.
+
+* A templated argument is an ``airflow.Templated``. It takes ``airflow.Of`` with a Jinja template, which the Python
+  worker renders, or ``airflow.ResultOf`` with another task, which also makes that task an upstream. Any other
+  argument takes a value.
+* An argument that is not required is a pointer, a slice or a map, so ``airflow.Ptr`` sets it and nil leaves it
+  out. A duration is a ``time.Duration`` and a datetime is a ``time.Time``.
+* A provider task's result reaches a Go task through ``airflow.Inputs``, such as ``airflow.Inputs(printed)``.
+* An argument JSON cannot carry, such as a callable, is left out of the wrapper, and an operator that requires one
+  has no wrapper.
+
+``airflow.UseOperator`` reaches an operator that has no wrapper: it takes the class path and the arguments under
+their Python names. Nothing checks them before the task runs.
+
+The wrappers describe one version of each provider, and are generated from the provider's operator spec with
+``just generate-providers`` in ``go-sdk``. ``go-sdk/example/providers`` uses the amazon and standard providers in
+one Dag.
+
 Generating Dags from data
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -792,6 +845,50 @@ bundle that holds only such bundles, as ``go-task-handlers`` above:
 For bundles next to a Python Dag, put them in a folder such as ``bin/`` and ignore it with ``bin/*`` (glob) or
 ``^bin/`` (regexp).
 
+Python Dag with a provider operator implemented in Go
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some providers, such as ``apache-airflow-providers-go-localfile``, implement their operators in Go. A Python Dag
+uses the Python wrapper that the provider ships, and sets the task's ``queue`` to one that
+``queue_to_coordinator`` routes to the ``ExecutableCoordinator``. It needs no bundle.
+
+Put the SDK's provider runner and the plugin executable of each provider in one directory on the workers, such as
+in the worker image. The runner goes in the directory, and the plugins go in its ``plugins`` subdirectory:
+
+.. code-block:: bash
+
+    GOBIN=/opt/airflow/go-providers go install \
+      github.com/apache/airflow/go-sdk/cmd/airflow-provider-runner@latest
+    GOBIN=/opt/airflow/go-providers/plugins go install \
+      github.com/apache/airflow/go-sdk/providers/localfile/cmd/airflow-provider-go-localfile@latest
+
+Then give the directory to the coordinator with ``go_providers_path``:
+
+.. code-block:: ini
+
+    [sdk]
+    coordinators = {
+      "go": {
+        "classpath": "airflow.sdk.coordinators.executable.ExecutableCoordinator",
+        "kwargs": {"go_providers_path": "/opt/airflow/go-providers"}
+      }
+    }
+    queue_to_coordinator = {"golang": "go"}
+
+The coordinator runs the runner for each provider operator task, whether or not a bundle declares the Dag's
+``dag_id``. The runner reads the operator from the task, has Airflow render the template fields, and starts the
+plugin that the task names. The operator calls back to Airflow through the runner, so it reads Variables,
+Connections and XComs as a task function does. Another task of the Python Dag, such as a stub task, runs in the
+bundle that declares the ``dag_id``.
+
+A Dag declared in Go that links the provider package runs the operator from its own bundle instead, so it needs
+neither the runner nor the plugin. ``go-sdk/example/localfile`` does that with ``go.localfile``.
+
+.. note::
+
+    The runner loads plugins with `hashicorp/go-plugin <https://github.com/hashicorp/go-plugin>`__, which is
+    licensed under MPL-2.0. That license needs a review before a release of the SDK.
+
 Where the configuration is needed
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -821,6 +918,11 @@ The ``kwargs`` of a ``coordinators`` entry are passed to
      - *(unset)*
      - The Dag bundle to load the bundles that implement stub tasks from. When unset, a stub task loads its
        bundle from its own Dag bundle. It must be registered in ``[dag_processor] dag_bundle_config_list``.
+   * - ``go_providers_path``
+     - *(unset)*
+     - A directory that holds the provider runner, ``airflow-provider-runner``, and the plugin of each provider
+       implemented in Go, in its ``plugins`` subdirectory. A provider operator task of a Python Dag runs in the
+       runner from it. When unset, such a task fails.
    * - ``task_startup_timeout``
      - ``10.0``
      - Seconds to wait for a task's bundle to start. Increase it if your bundle starts slowly, for example on

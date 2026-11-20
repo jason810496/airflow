@@ -162,6 +162,7 @@ body:
         - ftp
         - git
         - github
+        - go-localfile
         - google
         - grpc
         - hashicorp
