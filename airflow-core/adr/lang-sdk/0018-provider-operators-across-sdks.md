@@ -347,12 +347,15 @@ flowchart TD
     py -- "provider_operator" --> pyb["build the operator<br/>from TIRunContext"]
     py -- "task_handler" --> pyh["Python task handler"]
     py -- "unset" --> pyd["import the Dag file"]
-    q -- "Lang SDK coordinator" --> nat{"Dag file of<br/>this SDK?"}
-    nat -- "yes" --> natr["run the Dag file"]
-    nat -- "no" --> k{"stub_kind"}
-    k -- "provider_operator" --> gen["generic runtime"]
+    q -- "Lang SDK coordinator" --> k{"stub_kind"}
+    k -- "dag_definition" --> natr["run the Dag file"]
     k -- "task_handler" --> art["artifact that declares the dag_id"]
+    k -- "provider_operator" --> nat{"fileloc is a Dag file<br/>of this SDK?"}
+    nat -- "yes" --> natr
+    nat -- "no" --> gen["generic runtime"]
 ```
+
+A provider task of a TypeScript Dag that uses a TypeScript-implemented operator runs its own Dag file, because the Dag's bundle already packs the implementation. The check reads only the task's `fileloc`, matched against the SDK's artifact suffix such as `.min.mjs`, and does not scan the Dag bundle.
 
 `is_stub` stays the run endpoint's gate and is true exactly when `stub_kind` is set. Replacing it with `stub_kind` needs a backfill of `stub_kind` for existing task instances from their serialized Dags, and a deprecation of `is_stub` and its column.
 
@@ -413,86 +416,12 @@ Either way a wrapper package is versioned as the provider it was generated from,
 
 The same choice applies in the other direction. For a provider implemented in a Lang SDK, the spec comes from the implementation's release, and the Python wrapper is the package released from it.
 
-## Dynamic loading in Go and Java
-
-The TypeScript SDK can load an operator it was not built with because Node imports modules at run time. Go and Java need the same three pieces, each in their own way:
-
-1. **A generic runtime** that the coordinator starts for a `provider_operator` task.
-2. **A way to load an implementation by `_operator_module`** at run time.
-3. **An install location** that the administrator fills with provider packages and gives to the coordinator.
-
-| | TypeScript | Go | Java |
-| --- | --- | --- | --- |
-| Loads code at run time | Yes, `import()` | No | Yes, class loaders |
-| Generic runtime | Provider runner in `@apache-airflow/ts-sdk` | Open: a provider host the administrator builds, or a go-plugin host in the SDK | A runner main class in the SDK JAR |
-| `_operator_module` | npm module specifier | Go import path, or a plugin executable name | Fully qualified class name |
-| Administrator installs | `npm install --prefix <dir>` | `go build` of the host, or plugin executables into a directory | Provider JARs into a directory |
-| Coordinator setting | `node_modules_path` | A path to the host, or to the plugin directory | A path to the JAR directory |
-
-**Go.** Go links everything into one binary at build time, so Go needs a design of its own. There are three candidates.
-
-- **The standard `plugin` package: rejected.** It works only on Linux and macOS, and a plugin must be built with the same toolchain and the same versions of every shared dependency as the program that loads it. Provider packages released on their own cadence cannot meet that.
-- **A provider host built by the administrator.** The administrator builds a small `main` package that blank-imports the provider modules the deployment needs. Each module registers its implementations in `init()`, keyed by the Python class path, and the host serves an empty Dag bundle. Discovery is a map lookup inside one process. Adding a provider means rebuilding the host.
-- **[hashicorp/go-plugin](https://github.com/hashicorp/go-plugin).** The Go SDK ships a generic host, and each provider ships its own plugin executable. The host starts the plugin as a subprocess and calls it over gRPC, so plugins and host can be built and released separately. Adding a provider means copying its executable into a directory.
-
-With the provider host, a provider module and the host look like this:
-
-```go
-// Provider module: github.com/apache/airflow/go-providers/example/operators
-func init() {
-    provider.Register("airflow.providers.example.operators.text.GenerateTextOperator", generateText)
-}
-
-// Host, built by the administrator
-package main
-
-import (
-    "github.com/apache/airflow/go-sdk/provider"
-    _ "github.com/apache/airflow/go-providers/example/operators"
-)
-
-func main() { provider.ServeHost() }
-```
-
-With go-plugin, the provider serves its operators and the host dispenses them by the module name:
-
-```go
-// Provider executable
-func main() {
-    plugin.Serve(&plugin.ServeConfig{
-        HandshakeConfig: provider.Handshake,
-        Plugins: map[string]plugin.Plugin{
-            "operators": &provider.OperatorsPlugin{Impl: provider.Operators{
-                "airflow.providers.example.operators.text.GenerateTextOperator": generateText,
-            }},
-        },
-        GRPCServer: plugin.DefaultGRPCServer,
-    })
-}
-
-// Generic host in the Go SDK, after it reads TIRunContext.provider_operator
-client := plugin.NewClient(&plugin.ClientConfig{
-    HandshakeConfig:  provider.Handshake,
-    Plugins:          map[string]plugin.Plugin{"operators": &provider.OperatorsPlugin{}},
-    Cmd:              exec.Command(filepath.Join(pluginDir, path.Base(operator.Module))),
-    AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
-})
-rpc, _ := client.Client()
-raw, _ := rpc.Dispense("operators")
-result, err := raw.(provider.Operators).Execute(ctx, operator.Classpath, operator.Kwargs)
-```
-
-`provider.Register`, `provider.ServeHost`, `provider.Handshake` and `provider.OperatorsPlugin` would be new Go SDK APIs; `plugin.*` is go-plugin's API. For go-plugin, discovery maps `_operator_module` to an executable in the configured directory, and the host can ask each plugin for the class paths it serves. The cost is a second process boundary: the operator's calls back to Airflow, such as reading a connection or pushing an XCom, must cross from the plugin to the host, which go-plugin supports through its gRPC broker. The provider host keeps everything in one process at the price of a rebuild per provider change. This ADR leaves the choice open.
-
-**Java.** The JVM loads classes at run time, so Java can follow TypeScript closely. The SDK JAR gains a runner main class that serves an empty bundle. The administrator copies the provider JARs into a directory, for example with Maven's `dependency:copy`, and the coordinator adds that directory to the runner's classpath. `_operator_module` is the implementation's class name, which the runner loads with `Class.forName` and checks against the class path. `ServiceLoader` could list the installed implementations for error messages.
-
-In both SDKs the arguments decode from the bindings into a typed struct or record, the same as for a Dag declared in that SDK. Neither is implemented yet, and the coordinator settings are named here only to show the shape.
-
 ## Consequences
 
 - **Every SDK writes one task shape.** Any runtime that implements a class path can run a task from a Dag in any language, and adding an SDK takes one generator that reads any spec rather than one per pair of languages.
 - **No runtime decodes core serialization.** Limiting operator arguments to JSON is what lets a wrapper write argument bindings instead of Airflow's Python encoding. An operator whose required argument is not JSON gets no wrapper, as in ADR-0009.
 - **Authors set the queue.** The wrapper cannot know which workers a deployment runs, so the author routes the task. It takes the Dag's queue unless the author sets its own. A Lang SDK implemented operator that reaches a Python worker fails before it does any work.
+- **Go and Java need their own way to load an operator.** Go links every module into one binary at build time, and Java loads classes from a classpath, so each SDK's generic runtime and install location need a design of their own. That is follow-up work.
 - **Administrators install implementations.** A provider implemented in a Lang SDK needs its package on every worker that serves its queue, in the location the coordinator is configured with.
 - **Wrapper and provider versions may drift.** As in ADR-0009, skew between the wrapper in the Dag and the provider installed on the worker warns and does not block. It fails a task only when the signatures disagree at run time, for example when the wrapper passes an argument the installed operator no longer accepts.
 - **Templates in a Lang SDK runtime render with less context, for now.** Dag params, `template_ext` files and user-defined macros do not reach the helper process yet. The run's details, `var`, `conn`, `xcom_pull` and macro plugins work. Nothing prevents the rest: the run context could carry the params, and the serialized task could carry the template extensions. That is follow-up work.
@@ -502,7 +431,7 @@ In both SDKs the arguments decode from the bindings into a typed struct or recor
 
 ## Appendix: Implementation Notes
 
-The TypeScript SDK implements both directions. `apache-airflow-providers-localfile` (`CreateFileOperator`, `WriteFileOperator`, `HasFileOperator`, `DeleteFileOperator`) is the first provider implemented in TypeScript. The vercel-ai provider above is an illustration.
+The TypeScript SDK implements both directions. `apache-airflow-providers-localfile` (`CreateFileOperator`, `WriteFileOperator`, `HasFileOperator`, `DeleteFileOperator`) is the proof-of-concept provider for all to all. Its operators only touch local files, so an end-to-end test can run the whole scenario and check the result without any external service. The vercel-ai provider above is an illustration.
 
 - **Spec.** `scripts/ci/lang_sdk_providers/generate_operator_specs.py` writes the spec of a Python provider. `ts-sdk/scripts/generate-operator-spec.mjs` writes the spec of a TypeScript provider from the definitions that have an `execute`, and from the `<ClassName>Args` interface of each. Both follow `airflow-core/src/airflow/lang_sdk_provider_operators.schema.json`.
 - **Wrappers.** `ts-sdk/scripts/generate-providers.mjs` writes the TypeScript wrappers and skips TypeScript-implemented specs. `scripts/ci/lang_sdk_providers/generate_python_wrappers.py` writes the Python wrappers. Unit tests fail when committed wrappers are not what the specs generate.
