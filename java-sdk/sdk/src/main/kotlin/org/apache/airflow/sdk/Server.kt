@@ -36,12 +36,15 @@ import kotlinx.coroutines.runBlocking
 import org.apache.airflow.sdk.execution.CoordinatorComm
 import org.apache.airflow.sdk.execution.LogSender
 import org.apache.airflow.sdk.execution.Logger
+import org.apache.airflow.sdk.execution.ProviderLoader
 import org.apache.airflow.sdk.execution.comm.DagFileParseRequest
 import org.apache.airflow.sdk.execution.comm.ErrorResponse
 import org.apache.airflow.sdk.execution.comm.StartupDetails
 import org.apache.airflow.sdk.execution.parseDags
 import org.apache.airflow.sdk.execution.runTask
 import java.io.File
+import java.nio.file.Path
+import java.nio.file.Paths
 import kotlin.text.substringAfterLast
 import kotlin.text.substringBeforeLast
 
@@ -59,6 +62,9 @@ private class Args(
     .default(null)
   val logs by parser
     .storing("--logs", help = "Address (host:port) to send Airflow logs to") { parseAddress(this) }
+    .default(null)
+  val providersPath by parser
+    .storing("--providers-path", help = "Directory with one subdirectory of JARs per provider") { Paths.get(this) }
     .default(null)
   val describeSources by parser
     .storing("--describe-sources", help = "File to write each Dag's declaring class to, instead of serving") {
@@ -158,6 +164,7 @@ sealed class Server {
       return CoordinatorServer(
         args.comm ?: throw MissingValueException("--comm"),
         args.logs ?: throw MissingValueException("--logs"),
+        args.providersPath,
       )
     }
   }
@@ -180,8 +187,10 @@ internal class SourceDescriber(
 class CoordinatorServer(
   private val comm: InetSocketAddress,
   private val logs: InetSocketAddress,
+  providersPath: Path? = null,
 ) : Server() {
   private val logger = Logger(CoordinatorServer::class)
+  private val providers = ProviderLoader(providersPath)
 
   override suspend fun serveAsync(bundle: Bundle) {
     coroutineScope {
@@ -235,7 +244,7 @@ class CoordinatorServer(
     startup: StartupDetails,
     coordinator: CoordinatorComm,
   ) {
-    val result = runTask(bundle, startup, coordinator)
+    val result = runTask(bundle, startup, coordinator, providers)
     coordinator.communicate<Unit>(result)
   }
 
@@ -245,5 +254,22 @@ class CoordinatorServer(
     coordinator: CoordinatorComm,
   ) {
     coordinator.communicate<Unit>(parseDags(bundle, request))
+  }
+}
+
+/**
+ * @suppress
+ *
+ * Entry point of the generic Java runtime, which a Java coordinator starts for a provider operator
+ * task of a Dag it does not run itself, such as a Python Dag.
+ *
+ * It serves a bundle with no Dag, so it runs the operator the task's run context names, which it
+ * loads from the `--providers-path` directory, one class loader per provider directory. Nothing
+ * starts it by hand: `JavaCoordinator` runs it from `java_providers_path`.
+ */
+object ProviderRunner {
+  @JvmStatic
+  fun main(args: Array<String>) {
+    Server.create(args).serve(Bundle())
   }
 }

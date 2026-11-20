@@ -192,7 +192,7 @@ prek hook regenerate it.
 | capability: `trigger-dag-run` | MAY † | ✓ | 3.4.0 | 1.0.0 | TriggerDagRun |
 | capability: `dynamic-dag-generation` | MAY † | ✓ | 3.4.0 | 1.0.0 |  |
 | capability: `human-in-the-loop` | MAY † | ✗ | – | – |  |
-| capability: `provider-operators` | MAY † | ✗ | – | – |  |
+| capability: `provider-operators` | MAY † | ✓ | 3.5.0 | 1.0.0 | generated airflow-provider-* wrappers, a Python worker runs them; Java-implemented providers |
 | capability: `dag-test` | SHOULD † | ✗ | – | – |  |
 | capability: `asset-definition` | MAY † | ✗ | – | – |  |
 | capability: `asset-scheduling` | MAY † | ✗ | – | – |  |

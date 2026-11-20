@@ -640,7 +640,7 @@ release that shipped it. See the legend below the tables for what each mark mean
      - ✓ 1.0.0
    * - ``provider-operators`` (MAY †)
      - ✗
-     - ✗
+     - ✓ 1.0.0
      - ✓ 1.0.0
    * - ``dag-test`` (SHOULD †)
      - ✗

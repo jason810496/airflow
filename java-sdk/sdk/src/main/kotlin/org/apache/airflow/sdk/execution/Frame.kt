@@ -48,6 +48,12 @@ data class RawFrame(
  */
 private val REQUIRED_NULLABLE_REQUESTS = setOf(PutVariable::class.java, SetTaskStateStore::class.java)
 
+/**
+ * Messages whose payload is a map of JSON values. jsonschema2pojo generates an empty class for such a
+ * map, so decoding into it would drop every value, and the message stays a plain map.
+ */
+private val RAW_MESSAGE_TYPES = setOf("RenderedTemplateFieldsResult")
+
 @JsonInclude(JsonInclude.Include.ALWAYS)
 private abstract class KeepNullFields
 
@@ -130,6 +136,7 @@ object Frame {
 
   private fun decodeMessage(raw: Any?): Any? {
     val body = raw as? Map<*, *> ?: return raw
+    if (body["type"] in RAW_MESSAGE_TYPES) return body
     return mapper.convertValue(body, Discriminator.discriminate(body) ?: return raw)
   }
 

@@ -20,6 +20,7 @@
 package org.apache.airflow.sdk.execution
 
 import kotlinx.coroutines.runBlocking
+import org.apache.airflow.sdk.ApiError
 import org.apache.airflow.sdk.execution.comm.ClearTaskStateStore
 import org.apache.airflow.sdk.execution.comm.ConnectionResult
 import org.apache.airflow.sdk.execution.comm.DagResult
@@ -142,6 +143,14 @@ interface Client {
 
   /** Whether the Dag is paused, which a task may refuse to trigger. */
   fun isDagPaused(dagId: String): Boolean
+
+  /**
+   * Has the supervisor render [values], the literals of a provider operator's template fields by
+   * their Python argument names, as it renders a Python task's templates.
+   *
+   * @return The rendered value of each name in [values].
+   */
+  fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?>
 }
 
 /**
@@ -323,4 +332,13 @@ class CoordinatorClient(
 
   override fun isDagPaused(dagId: String): Boolean =
     runBlocking { exec.communicate<DagResult>(GetDag().also { it.dagId = dagId }) }.isPaused == true
+
+  // jsonschema2pojo models a map of JSON values as an empty class, which would drop the values, so
+  // the request goes as a plain map and the reply is read as one (see Frame.decodeMessage).
+  override fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?> {
+    val message = mapOf("type" to "RenderTemplateFields", "values" to values)
+    val response = runBlocking { exec.communicate<Map<*, *>>(message) }
+    val rendered = response["values"] as? Map<*, *> ?: throw ApiError("The supervisor rendered no values")
+    return rendered.entries.associate { (key, value) -> key as String to value }
+  }
 }

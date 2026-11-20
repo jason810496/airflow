@@ -84,6 +84,8 @@ private class FakeTrigger(
 
   override fun isDagPaused(dagId: String): Boolean = paused
 
+  override fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?> = throw UnsupportedOperationException("not used in test")
+
   override fun setXCom(
     key: String,
     value: Any,

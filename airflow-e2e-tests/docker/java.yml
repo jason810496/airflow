@@ -25,6 +25,11 @@
 # consume the "java", "scala", "java-test", and "java-native" Celery queues where
 # Java tasks are routed. The native-Dag JAR is in the Dags folder, so the Dag
 # processor runs on the same image to parse it.
+#
+# A provider operator implemented in Java, used from a Python Dag that no bundle
+# declares, runs in the SDK's generic runtime. The worker mounts the directory that
+# holds the SDK in sdk/ and the provider in java-localfile/, which the java-jdk
+# coordinator is given as java_providers_path.
 ---
 services:
   airflow-dag-processor:
@@ -42,4 +47,5 @@ services:
       - ./java-jars:/opt/airflow/java-jars:ro
       - ./scala-jars:/opt/airflow/scala-jars:ro
       - ./java-test-jars:/opt/airflow/java-test-jars:ro
+      - ./java-providers:/opt/airflow/java-providers:ro
     command: celery worker -q java,scala,java-test,java-native,default

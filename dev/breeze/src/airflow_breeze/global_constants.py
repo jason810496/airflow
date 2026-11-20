@@ -915,7 +915,7 @@ PROVIDERS_COMPATIBILITY_TESTS_MATRIX: list[dict[str, str | list[str]]] = [
     {
         "python-version": "3.11",
         "airflow-version": "2.11.1",
-        "remove-providers": "anthropic common.messaging common.dataquality edge3 fab git huggingface keycloak informatica ts.localfile modal opensearch",
+        "remove-providers": "anthropic common.messaging common.dataquality edge3 fab git huggingface keycloak informatica java.localfile ts.localfile modal opensearch",
         "run-unit-tests": "true",
     },
     {

@@ -54,6 +54,10 @@ from airflow_e2e_tests.constants import (
     JAVA_DOCKERFILE_PATH,
     JAVA_NATIVE_BUNDLE_LIBS_PATH,
     JAVA_NATIVE_BUNDLE_ROOT_PATH,
+    JAVA_PROVIDER_BUNDLE_DAGS_PATH,
+    JAVA_PROVIDER_BUNDLE_LIBS_PATH,
+    JAVA_PROVIDER_BUNDLE_ROOT_PATH,
+    JAVA_PROVIDERS_RUNTIME_PATH,
     JAVA_SDK_EXAMPLE_DAGS_PATH,
     JAVA_SDK_EXAMPLE_LIBS_PATH,
     JAVA_SDK_MAVEN_CACHE_PATH,
@@ -456,10 +460,21 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
     Builds the Java SDK and Scala Spark example bundles via the Gradle wrapper,
     then builds a Java-capable Airflow worker image, copies the JARs into the
     temp directory, and writes the coordinator configuration.
+
+    The provider operator tests need three more things: the ``java_providers_path`` directory the
+    ``java-jdk`` coordinator runs the generic runtime from (the SDK and the java.localfile provider),
+    the in-tree java.localfile Python wrappers, and LocalStack for the S3 operators.
     """
     native = LANG_SDK_NATIVE_TOOLCHAIN
     console.print("[yellow]Publishing Java SDK artifacts to local Maven repository...")
-    _run_java_sdk_gradle(JAVA_SDK_ROOT_PATH, "publishToMavenLocal", "-PskipSigning=true", native=native)
+    rmtree(JAVA_PROVIDERS_RUNTIME_PATH, ignore_errors=True)
+    _run_java_sdk_gradle(
+        JAVA_SDK_ROOT_PATH,
+        "publishToMavenLocal",
+        ":providers:localfile:installProviderRuntime",
+        "-PskipSigning=true",
+        native=native,
+    )
 
     # The example, scala_spark_example, java-test-bundle, and java-native-bundle
     # are independent Gradle builds that all consume the SDK artifact published above, so build
@@ -478,16 +493,18 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
     rmtree(SCALA_SPARK_EXAMPLE_LIBS_PATH, ignore_errors=True)
     rmtree(JAVA_TEST_BUNDLE_LIBS_PATH, ignore_errors=True)
     rmtree(JAVA_NATIVE_BUNDLE_LIBS_PATH, ignore_errors=True)
+    rmtree(JAVA_PROVIDER_BUNDLE_LIBS_PATH, ignore_errors=True)
     toolchain = "host toolchain" if native else "eclipse-temurin:17-jdk"
     console.print(
-        "[yellow]Building Java SDK, Scala Spark, test-fixture, and native-Dag bundles concurrently "
-        f"({toolchain})..."
+        "[yellow]Building Java SDK, Scala Spark, test-fixture, native-Dag, and provider bundles "
+        f"concurrently ({toolchain})..."
     )
     example_bundle_workdirs = [
         JAVA_SDK_ROOT_PATH / "example",
         JAVA_SDK_ROOT_PATH / "scala_spark_example",
         JAVA_TEST_BUNDLE_ROOT_PATH,
         JAVA_NATIVE_BUNDLE_ROOT_PATH,
+        JAVA_PROVIDER_BUNDLE_ROOT_PATH,
     ]
     with ThreadPoolExecutor(max_workers=len(example_bundle_workdirs)) as pool:
         bundle_builds = [
@@ -506,6 +523,16 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
     copytree(JAVA_TEST_BUNDLE_LIBS_PATH, tmp_dir / "java-test-jars")
     # The native-Dag bundle goes into the Dag bundle, where the Dag processor parses it.
     copytree(JAVA_NATIVE_BUNDLE_LIBS_PATH, tmp_dir / "dags" / "java-native")
+    # The provider bundle holds the native Dags that use provider operators. Its own JAR holds the
+    # java.localfile provider that `java_localfile` runs from.
+    copytree(JAVA_PROVIDER_BUNDLE_LIBS_PATH, tmp_dir / "dags" / "java-provider")
+    # What the java-jdk coordinator's java_providers_path names: the Python Dag `python_java_localfile`
+    # is in no bundle, so its tasks run in the SDK's generic runtime, which loads the provider from here.
+    copytree(JAVA_PROVIDERS_RUNTIME_PATH, tmp_dir / "java-providers")
+    # The generated Python wrappers of the Java-implemented java.localfile provider, which the Python Dag
+    # and the Dag processor import, and the LocalStack that `java_provider_operators` talks to.
+    provider_paths = _write_providers_mount_override(tmp_dir, ["java.localfile"])
+    _copy_localstack_files(tmp_dir)
 
     # Copy the Java SDK example Dag files so Airflow can discover them.
     copyfile(JAVA_SDK_EXAMPLE_DAGS_PATH / "java_examples.py", tmp_dir / "dags" / "java_examples.py")
@@ -514,8 +541,14 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
         tmp_dir / "dags" / "scala_spark_examples.py",
     )
     copyfile(JAVA_TEST_BUNDLE_DAGS_PATH / "java_test_dags.py", tmp_dir / "dags" / "java_test_dags.py")
+    copyfile(
+        JAVA_PROVIDER_BUNDLE_DAGS_PATH / "java_localfile_example.py",
+        tmp_dir / "dags" / "java_localfile_example.py",
+    )
 
-    _build_java_worker_image(tmp_dir, ["java-jars/", "scala-jars/", "java-test-jars/", "dags/"])
+    _build_java_worker_image(
+        tmp_dir, ["java-jars/", "scala-jars/", "java-test-jars/", "dags/", "java-providers/"]
+    )
 
     # Four JavaCoordinators on the same worker image. The first three each serve their
     # own artifact bundle for the stub tasks of their queue (one bundle is one classpath).
@@ -531,9 +564,14 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
     )
     coordinator_config = json.dumps(
         {
+            # java_providers_path is where this coordinator runs a provider operator task of a Python Dag
+            # from: the SDK's generic runtime, which loads the java.localfile provider.
             "java-jdk": {
                 "classpath": "airflow.sdk.coordinators.java.JavaCoordinator",
-                "kwargs": {"task_handler_bundle_name": "java-task-handlers"},
+                "kwargs": {
+                    "task_handler_bundle_name": "java-task-handlers",
+                    "java_providers_path": "/opt/airflow/java-providers",
+                },
             },
             "scala-jdk": {
                 "classpath": "airflow.sdk.coordinators.java.JavaCoordinator",
@@ -586,6 +624,11 @@ def _setup_java_sdk_integration(dot_env_file, tmp_dir):
         f"AIRFLOW_CONN_TEST_HTTP='{test_http_conn}'\n"
         # Variable expected by the Java example bundle tasks.
         "AIRFLOW_VAR_MY_VARIABLE=test_value\n"
+        # The in-tree java.localfile provider, which the stock image does not ship.
+        f"_PIP_ADDITIONAL_REQUIREMENTS={' '.join(provider_paths)}\n"
+        # The connection `java_provider_operators` names, and the AWS endpoint of LocalStack.
+        "AIRFLOW_CONN_AWS_LOCALSTACK=aws://test:test@\n"
+        f"{LOCALSTACK_AWS_ENV}"
     )
     os.environ["ENV_FILE_PATH"] = str(dot_env_file)
     _write_state_store_retention_config(tmp_dir)
@@ -1156,7 +1199,7 @@ def spin_up_airflow_environment(tmp_path_factory: pytest.TempPathFactory):
         compose_file_names.extend(["kafka.yml", "providers-mount.yml"])
         _setup_event_driven_integration(dot_env_file, tmp_dir)
     elif E2E_TEST_MODE == "java_sdk":
-        compose_file_names.append("java.yml")
+        compose_file_names.extend(["localstack.yml", "java.yml", "providers-mount.yml"])
         _setup_java_sdk_integration(dot_env_file, tmp_dir)
     elif E2E_TEST_MODE == "go_sdk":
         compose_file_names.append("go.yml")

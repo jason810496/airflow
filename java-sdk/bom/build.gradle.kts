@@ -37,6 +37,9 @@ dependencies {
         api("org.apache.airflow:airflow-sdk-log4j2:$projectVersion")
         api("org.apache.airflow:airflow-sdk-processor:${projectVersion}")
         api("org.apache.airflow:airflow-sdk-slf4j:$projectVersion")
+        api("org.apache.airflow:airflow-provider-amazon:$projectVersion")
+        api("org.apache.airflow:airflow-provider-java-localfile:$projectVersion")
+        api("org.apache.airflow:airflow-provider-standard:$projectVersion")
     }
 }
 

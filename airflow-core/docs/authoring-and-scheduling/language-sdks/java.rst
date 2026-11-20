@@ -505,6 +505,52 @@ sent as written, so Jinja templates are not rendered.
 The task runs no Java code of yours, takes no inputs and cannot be a case of a switch. With ``deferrable``, it
 waits in the triggerer, which needs the standard provider installed.
 
+Provider operators
+~~~~~~~~~~~~~~~~~~
+
+The operators and sensors of a provider are available as typed wrappers, one artifact per provider, such as
+``org.apache.airflow:airflow-provider-amazon``. A wrapper is a class in the package of the Python module of the same
+path, and its ``builder()`` has one method per Python argument, in camel case. Pass what ``build()`` returns to
+``dag.task`` in place of a task class:
+
+.. code-block:: java
+
+    import org.apache.airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator;
+    import org.apache.airflow.providers.standard.operators.bash.BashOperator;
+
+    var report = dag.task("build_report", BuildReport.class);
+
+    dag.task(
+            "write_report",
+            S3CreateObjectOperator.builder()
+                .s3Bucket("reports")
+                .s3Key("runs/{{ run_id }}/report.json")
+                .data(report)
+                .build())
+        .config("queue", "default");
+    dag.task("run_bash", BashOperator.builder().bashCommand("echo done").build())
+        .config("queue", "default");
+
+A wrapper has no task body. The SDK writes the Python operator class and its arguments into the serialized Dag, and
+a Python worker builds the operator from there and runs it, so the worker needs the provider installed. Such a task
+takes the Dag's ``queue`` like any other task, and that queue routes it to the Java coordinator, which cannot run a
+Python operator. Name a ``queue`` that a Python worker serves, such as ``default``, with ``config("queue", ...)``. A
+task left on the Java queue fails and names the queue setting.
+
+* A templated argument takes a Jinja template, which the Python worker renders, or the handle of another task,
+  which also makes that task an upstream. Any other argument takes a value.
+* A duration is a ``java.time.Duration``, and a datetime is an ``OffsetDateTime``.
+* A provider task's result reaches a Java task the usual way, such as ``client.getXCom("write_report")``.
+* An argument JSON cannot carry, such as a callable, is left out of the wrapper, and an operator that requires one
+  has no wrapper.
+* ``OperatorTask.useOperator`` reaches an operator that has no wrapper, by its Python class path and the arguments
+  under their Python names. Nothing checks them before the task runs.
+
+Add the wrapper artifacts to the Dag's dependencies next to ``airflow-sdk``, such as
+``org.apache.airflow:airflow-provider-amazon``. They describe one version of each provider, so pin them to the
+provider version your deployment has installed. ``airflow-e2e-tests/java-provider-bundle`` uses the amazon and
+standard providers in one Dag.
+
 A complete example
 ~~~~~~~~~~~~~~~~~~
 
@@ -1080,6 +1126,73 @@ it:
     # [core] dag_ignore_file_syntax = regexp
     echo '.' > /opt/airflow/jars/sales-pipeline/.airflowignore
 
+Python Dag with a provider operator implemented in Java
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some providers, such as ``apache-airflow-providers-java-localfile``, implement their operators in Java. A Python Dag
+uses the Python wrapper that the provider ships, and sets the task's ``queue`` to one that ``queue_to_coordinator``
+routes to a ``JavaCoordinator``. It needs no bundle. A Java Dag uses the operators of the same provider through the
+artifact ``org.apache.airflow:airflow-provider-java-localfile``, and runs them from its own JAR.
+
+Give the coordinator one directory, ``java_providers_path``, with the SDK in ``sdk/`` and each provider in a directory
+of its own:
+
+.. code-block:: text
+
+    /opt/airflow/java-providers/
+      sdk/                          the SDK's JAR and the JARs it needs
+      java-localfile/airflow-provider-java-localfile-1.0.0.jar
+
+.. code-block:: ini
+
+    [sdk]
+    coordinators = {
+      "java": {
+        "classpath": "airflow.sdk.coordinators.java.JavaCoordinator",
+        "kwargs": {"java_providers_path": "/opt/airflow/java-providers"}
+      }
+    }
+    queue_to_coordinator = {"java": "java"}
+
+The coordinator starts the SDK's generic runtime from ``sdk/`` for each provider operator task, whether or not a
+bundle declares the Dag's ``dag_id``. The runtime loads the operator's class from the provider's directory, in a
+class loader of its own whose parent has the SDK. So the providers share the SDK's classes, and the dependencies of
+one provider do not clash with the dependencies of another. A provider is a directory of JARs, and its directory
+name is the first part of the module its Python wrapper names, such as ``java-localfile/``. Another task of the
+Python Dag, such as a stub task, runs in the bundle that holds the artifacts.
+
+Implementing an operator
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+An operator is a class that implements ``Operator`` and carries ``@ProviderOperator``. Each constructor argument is a
+field marked with ``@Param``. The runtime sets the fields from the task's arguments and then calls ``execute``,
+whose result is the task's ``return_value`` XCom:
+
+.. code-block:: java
+
+    @ProviderOperator(module = "airflow.providers.java.localfile.operators.file", description = "Check that a file exists.")
+    public class HasFileOperator implements Operator<Boolean> {
+      @Param(required = true, templated = true, description = "The path to look for.")
+      public String path;
+
+      @Param(description = "Skip the direct downstream tasks when nothing is at the path.")
+      public boolean skipDownstreamIfMissing = false;
+
+      @Override
+      public Boolean execute(OperatorContext context) {
+        boolean exists = Files.exists(Path.of(path));
+        if (!exists && skipDownstreamIfMissing) {
+          context.skipDownstream();
+        }
+        return exists;
+      }
+    }
+
+``context.client`` is the SDK's ``Client``, so an operator can read a Variable or a connection while it runs. The
+Python name of an argument is the field's name in snake case, or ``@Param(name = ...)``. A field's initial value is
+the argument's default. The ``generateOperatorSpec`` Gradle task of ``java-sdk/providers/localfile`` writes the spec
+that the Python wrapper and the wrappers of the other SDKs are generated from.
+
 Where the configuration is needed
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1138,6 +1251,11 @@ The ``kwargs`` of a ``coordinators`` entry are passed to
    * - ``jvm_args``
      - ``[]``
      - Extra JVM arguments, such as ``["-Xmx1g", "-Dsome.property=value"]``.
+   * - ``java_providers_path``
+     - *(unset)*
+     - A directory that holds the SDK in ``sdk/`` and each provider that implements operators in Java in a
+       directory of its own. A provider operator task of a Python Dag runs in the SDK's generic runtime from it.
+       When unset, such a task fails.
    * - ``main_class``
      - *(auto-detect)*
      - The entry-point class. When unset, the coordinator uses the JAR whose manifest sets ``Main-Class``, the

@@ -34,11 +34,14 @@ import org.apache.airflow.sdk.TriggerDagRun
 import org.apache.airflow.sdk.execution.comm.DagFileParseRequest
 import org.apache.airflow.sdk.internal.Field
 import org.apache.airflow.sdk.internal.SchemaFields
+import org.apache.airflow.sdk.provider.OperatorTask
 import java.nio.file.InvalidPathException
 import java.nio.file.Paths
 import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 
 // Serializes Dags to Airflow DagSerialization v3 JSON, mirroring the TypeScript
 // SDK's serde (ts-sdk/src/coordinator/serde.ts), which in turn matches Python's
@@ -135,8 +138,11 @@ private fun serializeTask(
 ): Map<String, Any?> {
   val data = linkedMapOf<String, Any?>("task_id" to taskId)
   val trigger = def.trigger
+  val operator = def.operator
   if (trigger != null) {
     writeTriggerDagRun(data, trigger)
+  } else if (operator != null) {
+    writeProviderOperator(data, operator)
   } else {
     data["task_type"] = def.definition.simpleName
     data["_task_module"] = def.definition.packageName
@@ -152,10 +158,11 @@ private fun serializeTask(
   // resolves per instance for a runtime outside Python, as `@task.stub` does on
   // the Python side. `get_arg_bindings` reads nothing without it.
   data["is_stub"] = true
-  // A task of a Dag written in a language SDK, as opposed to a task handler or a provider operator.
-  data["stub_kind"] = "dag_definition"
+  // A task of a Dag written in a language SDK is a dag_definition, unless it runs a provider operator,
+  // which the worker builds from the run context.
+  data["stub_kind"] = if (operator != null) "provider_operator" else "dag_definition"
   // Lets NotPreviouslySkippedDep re-skip a cleared downstream, as Python's SkipMixin does.
-  if (def.decider != null) data["_can_skip_downstream"] = true
+  if (def.decider != null || operator?.info?.canSkipDownstream == true) data["_can_skip_downstream"] = true
   // The worker picks a runtime by queue, so a trigger task takes the Dag's queue too.
   val config =
     if (dagQueue == null || "queue" in def.configValues) def.configValues else def.configValues + ("queue" to dagQueue)
@@ -170,6 +177,10 @@ private fun serializeTask(
       data[key] = unwrapTypeEncoding(serializeValue(value))
     }
   }
+  if (operator != null) {
+    // The worker builds the operator from these bindings alone, so a task option is an argument too.
+    data["_operator_kwargs"] = serializeOperatorKwargs(operator) + serializeSpecKwargs(config)
+  }
   if (!downstream.isNullOrEmpty()) {
     data["downstream_task_ids"] = downstream.sorted()
   }
@@ -178,6 +189,87 @@ private fun serializeTask(
     "__var" to data,
   )
 }
+
+/** The `value_schema` that tells the worker to read a literal back as a `timedelta`. */
+private val DURATION_SECONDS_SCHEMA = mapOf("type" to "number", "format" to "duration-seconds")
+
+/** The `value_schema` that tells the worker to read a literal back as an aware `datetime`. */
+private val DATE_TIME_SCHEMA = mapOf("type" to "string", "format" to "date-time")
+
+/**
+ * Writes a task declared from an [OperatorTask] as the Python operator class it names, as
+ * the generated wrappers of the other SDKs do. A Python worker cannot import a Java bundle, so the
+ * API server sends it `_task_module.task_type` and `_operator_kwargs` with the task's run context.
+ */
+private fun writeProviderOperator(
+  data: MutableMap<String, Any?>,
+  operator: OperatorTask<*>,
+) {
+  val info = operator.info
+  data["task_type"] = info.name
+  data["_task_module"] = info.module
+  data["language"] = "java"
+  info.implementationModule?.let { data["_operator_module"] = it }
+  data["template_fields"] = info.templated.toList()
+  if (info.templateExt.isNotEmpty()) data["template_ext"] = info.templateExt
+  if (info.templateFieldsRenderers.isNotEmpty()) data["template_fields_renderers"] = info.templateFieldsRenderers
+  info.uiColor?.let { data["ui_color"] = it }
+  info.uiFgcolor?.let { data["ui_fgcolor"] = it }
+  if (info.isSensor) data["_is_sensor"] = true
+  // A Python operator already is that class, and Python writes its name only when it differs.
+  info.operatorName?.takeIf { it != info.name }?.let { data["_operator_name"] = it }
+}
+
+private fun literalKwarg(
+  name: String,
+  value: Any?,
+  valueSchema: Map<String, Any?>? = null,
+): Map<String, Any?> =
+  linkedMapOf<String, Any?>("name" to name, "kind" to "literal", "value" to value).also {
+    if (valueSchema != null) it["value_schema"] = valueSchema
+  }
+
+/** A duration as the seconds Python reads back, a whole number when it is one. */
+private fun durationSeconds(value: Duration): Any = if (value.nano == 0) value.seconds else value.toNanos() / 1e9
+
+private fun isoDateTime(value: Any): String =
+  DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(
+    when (value) {
+      is Instant -> value.atOffset(ZoneOffset.UTC)
+      else -> value as OffsetDateTime
+    },
+  )
+
+/**
+ * The operator's own constructor arguments as argument bindings, in the order the operator declares
+ * its parameters. An upstream's result is an `xcom` binding, which a whole argument can be. A value
+ * JSON has no type for is written as a number or a string with the `value_schema` that tells the
+ * worker which Python type to read it back as.
+ */
+private fun serializeOperatorKwargs(operator: OperatorTask<*>): List<Map<String, Any?>> =
+  operator.kwargs.map { (name, value) ->
+    when (value) {
+      is TaskRef<*> -> mapOf("name" to name, "kind" to "xcom", "task_id" to value.def.id)
+      is Duration -> literalKwarg(name, durationSeconds(value), DURATION_SECONDS_SCHEMA)
+      is OffsetDateTime, is Instant -> literalKwarg(name, isoDateTime(value), DATE_TIME_SCHEMA)
+      else -> literalKwarg(name, value)
+    }
+  }
+
+/**
+ * The task options as `BaseOperator` constructor arguments, in the order of the schema, with the
+ * ones that equal the schema default left out.
+ */
+private fun serializeSpecKwargs(config: Map<String, Any>): List<Map<String, Any?>> =
+  SchemaFields.TASK.mapNotNull { (key, field) ->
+    val value = config[key] ?: return@mapNotNull null
+    if (key in OMITTED_TASK_KEYS || matchesSchemaDefault(field, value)) return@mapNotNull null
+    when (value) {
+      is Duration -> literalKwarg(key, durationSeconds(value), DURATION_SECONDS_SCHEMA)
+      is OffsetDateTime, is Instant -> literalKwarg(key, isoDateTime(value), DATE_TIME_SCHEMA)
+      else -> literalKwarg(key, unwrapTypeEncoding(serializeValue(value)))
+    }
+  }
 
 /** What Python's serializer writes for a `TriggerDagRunOperator`. */
 private const val TRIGGER_TASK_TYPE = "TriggerDagRunOperator"

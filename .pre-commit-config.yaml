@@ -1246,6 +1246,7 @@ repos:
           ^providers/amazon/src/airflow/providers/amazon/aws/operators/emr\.py$|
           ^providers/amazon/_generated/lang_sdk_operators\.json$|
           ^ts-sdk/providers/amazon/src/aws/operators/emr\.ts$|
+          ^java-sdk/providers/amazon/src/main/java/org/apache/airflow/providers/amazon/aws/operators/emr/EmrStartNotebookExecutionOperator\.java$|
           ^providers/.*/get_provider_info\.py$|
           ^providers/.*/provider\.yaml$|
           ^providers/apache/cassandra/src/airflow/providers/apache/cassandra/hooks/cassandra\.py$|

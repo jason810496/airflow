@@ -172,6 +172,7 @@ body:
         - imap
         - influxdb
         - informatica
+        - java-localfile
         - jdbc
         - jenkins
         - keycloak

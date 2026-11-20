@@ -425,6 +425,8 @@ pre-installed when Airflow is installed.
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | imap                | ``pip install 'apache-airflow[imap]'``               | IMAP hooks and sensors               |      *       |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
+| java-localfile      | ``pip install 'apache-airflow[java-localfile]'``     | Local file operators (Java)          |              |
++---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | jdbc                | ``pip install 'apache-airflow[jdbc]'``               | JDBC hooks and operators             |              |
 +---------------------+------------------------------------------------------+--------------------------------------+--------------+
 | keycloak            | ``pip install apache-airflow[keycloak]``             | Keycloak hooks and operators         |              |

@@ -147,6 +147,9 @@ internal class ArgValuesTest {
         ): String = throw NotImplementedError()
 
         override fun isDagPaused(dagId: String): Boolean = throw NotImplementedError()
+
+        override fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?> =
+          throw UnsupportedOperationException("not used in test")
       },
     )
 

@@ -156,6 +156,11 @@ less ~/.m2/repository/org/apache/airflow/airflow-sdk-gradle-plugin/*/airflow-sdk
 
 # The Gradle plugin's registration.
 less ~/.m2/repository/org/apache/airflow/sdk/org.apache.airflow.sdk.gradle.plugin/*/*.pom
+
+# The provider artifacts: the java.localfile operators, and the generated wrappers.
+less ~/.m2/repository/org/apache/airflow/airflow-provider-java-localfile/*/*.pom
+less ~/.m2/repository/org/apache/airflow/airflow-provider-standard/*/*.pom
+less ~/.m2/repository/org/apache/airflow/airflow-provider-amazon/*/*.pom
 ```
 
 Check that the coordinates, description, license, SCM, and organization fields
@@ -700,6 +705,10 @@ java-sdk/
 ├── jpl/          # Java Platform Logging provider (System.Logger, JEP 264); routes JPL
 │                 #   calls to the Airflow log store
 ├── log4j2/       # Log4j 2 appender; routes Log4j 2 events to the Airflow log store
+├── providers/    # Provider operators
+│   ├── localfile/  # java.localfile: operators implemented in Java, and their wrappers
+│   ├── standard/   # Generated wrappers of the standard provider's Python operators
+│   └── amazon/     # Generated wrappers of the amazon provider's Python operators
 ├── example/      # End-to-end example bundle (annotation + interface APIs, Java source)
 └── buildSrc/     # Shared Gradle convention plugins (Java version, lint, etc.)
 ```
@@ -710,6 +719,37 @@ The Python coordinator that launches the JVM subprocess lives outside this direc
 task-sdk/src/airflow/sdk/coordinators/java/   # JavaCoordinator (SubprocessCoordinator subclass)
 task-sdk/tests/coordinators/java/             # Python-side unit and integration tests
 ```
+
+### Provider operators
+
+The classes under `providers/` are generated or checked against specs, and tests fail when they are stale.
+
+* `providers/standard` and `providers/amazon` hold one wrapper class per Python operator. They are generated from
+  the specs at `providers/<provider>/_generated/lang_sdk_operators.json` by the script that also writes the wrappers
+  of `providers/localfile`. Run it from the repository root after a spec changes:
+
+  ```bash
+  python3 scripts/ci/lang_sdk_providers/generate_java_wrappers.py          # write
+  python3 scripts/ci/lang_sdk_providers/generate_java_wrappers.py --check  # fail when stale
+  ```
+
+* The operators of `providers/localfile` are written by hand with `@ProviderOperator` and `@Param`. The spec at
+  `providers/java/localfile/_generated/lang_sdk_operators.json` is generated from them, and the Python wrapper
+  provider `providers/java/localfile` and the Java wrappers of the operators are generated from the spec. After
+  changing an operator, run the three steps in order:
+
+  ```bash
+  ./gradlew :providers:localfile:generateOperatorSpec
+  python3 scripts/ci/lang_sdk_providers/generate_python_wrappers.py
+  python3 scripts/ci/lang_sdk_providers/generate_java_wrappers.py
+  ```
+
+  `./gradlew :providers:localfile:check` runs the spec check, and a pytest in `scripts/tests/ci/lang_sdk_providers`
+  runs the wrapper checks.
+
+* `./gradlew :providers:localfile:installProviderRuntime` assembles `providers/localfile/build/java-providers`,
+  which is a `java_providers_path` for the Java coordinator: the SDK in `sdk/`, and the provider in
+  `java-localfile/`. The e2e tests mount it into the worker.
 
 ### Testing
 

@@ -197,6 +197,11 @@ internal class SwitchDef : DeciderDef {
         "task that triggers a Dag run has none. Put the trigger downstream of an ordinary task and " +
         "let the switch choose that task, since Airflow skips the downstream of a skipped task"
     }
+    require(case.operator == null) {
+      "Switch '${decider.id}' cannot choose '${case.id}': a switch names its case by its class, and a " +
+        "task that runs a provider operator has none. Put it downstream of an ordinary task and let " +
+        "the switch choose that task, since Airflow skips the downstream of a skipped task"
+    }
     // A switch names its case by class, so two cases sharing one would be
     // indistinguishable.
     options.firstOrNull { it.definition == case.definition }?.let { first ->

@@ -55,6 +55,12 @@ log: FilteringBoundLogger = structlog.get_logger(logger_name="coordinators.java"
 # The first supervisor schema version whose runtime can answer a Dag parse request.
 _DAG_PARSING_SCHEMA_VERSION: Final = "2026-10-30"
 
+# The generic runtime that runs a provider operator task of a Dag this coordinator does not run itself.
+PROVIDER_RUNNER_MAIN_CLASS: Final = "org.apache.airflow.sdk.ProviderRunner"
+# Under ``java_providers_path``: the SDK's JARs, which the runtime starts from. Every other directory
+# holds the JARs of one provider.
+SDK_DIRECTORY: Final = "sdk"
+
 
 def _find_jars(items: Iterable[pathlib.Path]) -> Iterator[pathlib.Path]:
     """
@@ -325,6 +331,9 @@ class JavaCoordinator(SubprocessCoordinator):
         must be registered in ``[dag_processor] dag_bundle_config_list``. If
         unset, the task's own Dag bundle is used.
     :param main_class: Explicit entry point to execute with *java_executable*.
+    :param java_providers_path: A directory that holds the SDK and the providers that implement
+        operators in Java. A provider operator task of a Dag that is not a native Java Dag runs in the
+        SDK's generic runtime from it. If unset, such a task fails. See below for the layout.
     :param task_startup_timeout: Maximum time the coordinator waits for a task
         process to start, in seconds. The default is 10 seconds.
 
@@ -351,6 +360,21 @@ class JavaCoordinator(SubprocessCoordinator):
     picks the one that parses a bundle. A JAR whose Main-Class another JAR in the
     bundle also sets is rejected.
 
+    A task of a Python Dag may be a provider operator implemented in Java, such as one of
+    ``apache-airflow-providers-java-localfile``. Its ``stub_kind`` is ``provider_operator``, so
+    *java_providers_path* selects the generic runtime, whether or not a bundle declares the task's
+    ``dag_id``. The directory holds the SDK in ``sdk/`` and each provider in a directory of its own::
+
+        /opt/airflow/java-providers/
+          sdk/airflow-sdk-1.0.0.jar               the SDK and the JARs it runs with
+          java-localfile/airflow-provider-java-localfile-1.0.0.jar
+
+    The runtime starts with the JARs of ``sdk/`` on its classpath and loads each provider from its own
+    directory, in a class loader of its own whose parent has the SDK. So the providers share the SDK's
+    classes and keep their other dependencies apart. A task of a native Java Dag does not use this: the Dag's
+    own JAR holds the provider it uses. Any other task of a Python Dag, such as a task handler, runs the
+    bundle that holds the artifacts.
+
     The JVM cannot load a JAR whose path holds the classpath separator (``:`` on
     POSIX). The coordinator reaches a Dag bundle whose own path holds it through
     a symlink in the temporary directory, but a file or directory name inside
@@ -367,6 +391,7 @@ class JavaCoordinator(SubprocessCoordinator):
     java_executable: str = "java"
     jvm_args: list[str] = attrs.field(factory=list)
     main_class: str = ""
+    java_providers_path: str | None = None
 
     def _build_command(
         self, roots: Sequence[pathlib.Path], main_class: str, *, primary: pathlib.Path | None = None
@@ -385,6 +410,40 @@ class JavaCoordinator(SubprocessCoordinator):
         roots = self._get_scan_roots()
         jar = _JarInfo.find(roots, self.main_class)
         return self._build_command(roots, jar.main_class), jar.schema_version
+
+    def _build_provider_operator_command(self, *, what: TaskInstance) -> tuple[list[str], str | None]:
+        if self.java_providers_path is None:
+            raise TaskLaunchError(
+                f"Task {what.task_id!r} in Dag {what.dag_id!r} is a provider operator, which the Java "
+                "coordinator runs from java_providers_path, and it is not set. Set it to the directory "
+                f"that holds the SDK in {SDK_DIRECTORY}/ and each provider in a directory of its own.",
+                retryable=False,
+            )
+        root = pathlib.Path(self.java_providers_path)
+        sdk_root = root / SDK_DIRECTORY
+        schema_version = next(
+            (
+                metadata.schema_version
+                for jar in _find_jars([sdk_root])
+                if (metadata := _JarMetadata.from_jar(jar)) is not None and metadata.schema_version
+            ),
+            None,
+        )
+        if schema_version is None:
+            raise TaskLaunchError(
+                f"Cannot find a JAR with Airflow-Supervisor-Schema-Version metadata in {sdk_root}; install "
+                f"the Java SDK there, in java_providers_path {self.java_providers_path!r}.",
+                retryable=False,
+            )
+        return [
+            self.java_executable,
+            "-classpath",
+            _calculate_classpath([sdk_root]),
+            *self.jvm_args,
+            PROVIDER_RUNNER_MAIN_CLASS,
+            "--providers-path",
+            os.fspath(root.absolute()),
+        ], schema_version
 
     def _build_jar_command(self, path: pathlib.Path) -> tuple[list[str], str]:
         """

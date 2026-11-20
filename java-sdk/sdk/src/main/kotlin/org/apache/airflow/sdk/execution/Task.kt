@@ -98,10 +98,22 @@ internal object TaskRunner {
     bundle: Bundle,
     request: StartupDetails,
     client: Client,
+    providers: ProviderLoader = ProviderLoader(null),
   ): Any {
+    // A provider operator task carries what it runs in its run context, so the bundle, which is empty
+    // in the generic runtime, is not asked for it.
+    request.tiContext.providerOperator?.let { return ProviderOperatorRunner.run(request, client, it, providers) }
     val taskDef =
       bundle.taskDef(request.ti.dagId, request.ti.taskId)
         ?: return TaskResult.of(TaskState.State.REMOVED)
+    if (taskDef.operator != null) {
+      logger.error(
+        "Airflow sent no operator for a task that runs a provider operator; check that the Execution API is " +
+          "version 2027-02-28 or later",
+        mapOf("ti" to request.ti),
+      )
+      return TaskResult.failure(shouldRetry = false)
+    }
     taskDef.trigger?.let { trigger ->
       return try {
         TriggerRunner.run(trigger, request, client)
@@ -159,7 +171,8 @@ internal fun runTask(
   bundle: Bundle,
   request: StartupDetails,
   comm: CoordinatorComm,
-): Any = TaskRunner.runTask(bundle, request, Client(request, CoordinatorClient(comm)))
+  providers: ProviderLoader = ProviderLoader(null),
+): Any = TaskRunner.runTask(bundle, request, Client(request, CoordinatorClient(comm)), providers)
 
 internal fun runTask(
   bundle: Bundle,

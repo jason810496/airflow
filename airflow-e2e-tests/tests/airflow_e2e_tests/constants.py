@@ -92,6 +92,15 @@ JAVA_TEST_BUNDLE_LIBS_PATH = JAVA_TEST_BUNDLE_ROOT_PATH / "build" / "bundle"
 JAVA_NATIVE_BUNDLE_ROOT_PATH = AIRFLOW_ROOT_PATH / "airflow-e2e-tests" / "java-native-bundle"
 JAVA_NATIVE_BUNDLE_LIBS_PATH = JAVA_NATIVE_BUNDLE_ROOT_PATH / "build" / "bundle"
 
+# Java provider bundle paths: native Dags that use provider operators, and a Python Dag that uses the
+# Java-implemented java.localfile provider. The bundle's JAR goes into the Dag bundle too.
+JAVA_PROVIDER_BUNDLE_ROOT_PATH = AIRFLOW_ROOT_PATH / "airflow-e2e-tests" / "java-provider-bundle"
+JAVA_PROVIDER_BUNDLE_DAGS_PATH = JAVA_PROVIDER_BUNDLE_ROOT_PATH / "src" / "resources" / "dags"
+JAVA_PROVIDER_BUNDLE_LIBS_PATH = JAVA_PROVIDER_BUNDLE_ROOT_PATH / "build" / "bundle"
+# The directory a Java coordinator's ``java_providers_path`` names: the SDK in ``sdk/`` and the
+# java.localfile provider in ``java-localfile/``, which the ``installProviderRuntime`` Gradle task assembles.
+JAVA_PROVIDERS_RUNTIME_PATH = JAVA_SDK_ROOT_PATH / "providers" / "localfile" / "build" / "java-providers"
+
 # Go SDK E2E test paths
 GO_SDK_ROOT_PATH = AIRFLOW_ROOT_PATH / "go-sdk"
 GO_SDK_DAGS_PATH = GO_SDK_ROOT_PATH / "dags"

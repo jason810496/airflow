@@ -450,6 +450,9 @@ class TaskTest {
         ): String = throw UnsupportedOperationException("not used in test")
 
         override fun isDagPaused(dagId: String): Boolean = throw UnsupportedOperationException("not used in test")
+
+        override fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?> =
+          throw UnsupportedOperationException("not used in test")
       },
     )
 
@@ -591,6 +594,9 @@ class TaskTest {
     ): String = throw UnsupportedOperationException("not used in test")
 
     override fun isDagPaused(dagId: String): Boolean = throw UnsupportedOperationException("not used in test")
+
+    override fun renderTemplateFields(values: Map<String, Any?>): Map<String, Any?> =
+      throw UnsupportedOperationException("not used in test")
   }
 
   class SuccessTask : Task {

@@ -26,6 +26,8 @@ import org.apache.airflow.sdk.internal.checkConfigValue
 import org.apache.airflow.sdk.internal.deriveJoinNodeIds
 import org.apache.airflow.sdk.internal.deriveTaskId
 import org.apache.airflow.sdk.internal.validateTaskInput
+import org.apache.airflow.sdk.provider.OperatorTask
+import org.apache.airflow.sdk.provider.OperatorTaskPlaceholder
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.Throws
 
@@ -196,6 +198,38 @@ class DagDef(
   ): TaskRef<Void> {
     val def = TaskDef(id, trigger)
     addTask(def)
+    return TaskRef(def)
+  }
+
+  /**
+   * Declares a task that runs a provider operator, such as a wrapper's
+   * `builder().build()` returns.
+   *
+   * ```java
+   * var report = dag.task("build_report", BuildReport.class);
+   * dag.task("write_report",
+   *         S3CreateObjectOperator.builder().s3Bucket("reports").s3Key("report.json").data(report).build())
+   *     .config("queue", "default");
+   * ```
+   *
+   * The task runs no Java code of its own and takes no inputs. A task whose result is an
+   * argument of the operator becomes an upstream of it, so the operator reads that result.
+   * Like a Java task, it runs on the Dag's `queue` unless the task sets its own, which a
+   * Python operator needs: the Java runtime cannot run it.
+   *
+   * @param id Task identifier, unique within this Dag.
+   * @param operator The operator to run, and its arguments.
+   * @return The handle representing this task.
+   * @throws IllegalArgumentException if a task with the same ID is already
+   *    registered.
+   */
+  fun <R> task(
+    id: String,
+    operator: OperatorTask<R>,
+  ): TaskRef<R> {
+    val def = TaskDef(id, operator)
+    addTask(def)
+    operator.upstream.forEach { def.dependsOn(it.def) }
     return TaskRef(def)
   }
 
@@ -520,6 +554,18 @@ class TaskDef(
     this.trigger = trigger.snapshot()
   }
 
+  /**
+   * Declares a task that runs a provider operator instead of Java code.
+   *
+   * [DagDef.task] is the spelling user code uses.
+   *
+   * @param id Task identifier, unique within a [DagDef].
+   * @param operator The operator to run, and its arguments.
+   */
+  constructor(id: String, operator: OperatorTask<*>) : this(id, OperatorTaskPlaceholder::class.java) {
+    this.operator = operator
+  }
+
   init {
     validateTaskInput(definition)
   }
@@ -540,6 +586,9 @@ class TaskDef(
 
   /** The Dag run this task starts, for a task declared from a [TriggerDagRun]; null otherwise. */
   internal var trigger: TriggerDagRun? = null
+
+  /** The provider operator this task runs, for a task declared from an [OperatorTask]; null otherwise. */
+  internal var operator: OperatorTask<*>? = null
 
   /**
    * Sets one task-level configuration value.

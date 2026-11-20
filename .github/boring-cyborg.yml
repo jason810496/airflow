@@ -203,6 +203,9 @@ labelPRBasedOnFilePath:
   provider:informatica:
     - providers/informatica/**
 
+  provider:java-localfile:
+    - providers/java/localfile/**
+
   provider:jdbc:
     - providers/jdbc/**
 

@@ -34,7 +34,7 @@ import pytest
 from task_sdk.coordinators.java._jar_test_utils import make_jar
 from uuid6 import uuid7
 
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance
+from airflow.sdk.api.datamodels._generated import BundleInfo, StubKind, TaskInstance
 from airflow.sdk.coordinators._subprocess import _PopenActivitySubprocess
 from airflow.sdk.coordinators.java.coordinator import (
     JavaCoordinator,
@@ -55,7 +55,9 @@ if not AIRFLOW_V_3_3_PLUS:
     pytest.skip("Coordinator is only compatible with Airflow >= 3.3.0", allow_module_level=True)
 
 
-def _make_ti(dag_id: str = "test_dag", queue: str = "java") -> TaskInstance:
+def _make_ti(
+    dag_id: str = "test_dag", queue: str = "java", stub_kind: StubKind | None = None
+) -> TaskInstance:
     return TaskInstance(
         id=uuid7(),
         dag_version_id=uuid7(),
@@ -65,6 +67,7 @@ def _make_ti(dag_id: str = "test_dag", queue: str = "java") -> TaskInstance:
         try_number=1,
         map_index=-1,
         queue=queue,
+        stub_kind=stub_kind,
     )
 
 
@@ -495,6 +498,7 @@ class TestJavaCoordinatorAttributes:
         assert coordinator.java_executable == "java"
         assert coordinator.jvm_args == []
         assert coordinator.task_handler_bundle_name is None
+        assert coordinator.java_providers_path is None
         # main_class stays optional: the entrypoint is auto-detected from the bundle scan.
         assert coordinator.main_class == ""
 
@@ -507,6 +511,11 @@ class TestJavaCoordinatorAttributes:
         assert coordinator.java_executable == "/opt/java/bin/java"
         assert coordinator.jvm_args == ["-Xmx512m", "-Xms256m"]
         assert coordinator.task_handler_bundle_name == "java-task-handlers"
+
+    def test_java_providers_path_kwarg(self):
+        assert JavaCoordinator(java_providers_path="/opt/airflow/java-providers").java_providers_path == (
+            "/opt/airflow/java-providers"
+        )
 
     def test_build_command_scans_passed_roots_in_colocated_mode(self, tmp_path):
         _make_jar(tmp_path / "app.jar", main_class="com.example.TaskRunner", schema_version="2026-06-16")
@@ -752,6 +761,152 @@ class TestJavaCoordinatorExecuteNativeDag:
         ):
             self._execute("b.jar", mock_client, JavaCoordinator(main_class="com.example.A"))
 
+        mock_start.assert_not_called()
+
+
+@pytest.fixture
+def java_providers(tmp_path):
+    """A ``java_providers_path`` with the SDK and one provider, and the path to it."""
+    (tmp_path / "sdk").mkdir()
+    (tmp_path / "java-localfile").mkdir()
+    _make_jar(tmp_path / "sdk" / "airflow-sdk.jar", main_class=None, schema_version="2027-02-28")
+    _make_jar(tmp_path / "sdk" / "dependency.jar", main_class=None)
+    _make_jar(tmp_path / "java-localfile" / "airflow-provider-java-localfile.jar", main_class=None)
+    return tmp_path
+
+
+class TestJavaCoordinatorProviderOperatorCommand:
+    def _build(self, coordinator: JavaCoordinator):
+        return coordinator._build_provider_operator_command(
+            what=_make_ti(dag_id="python_dag", stub_kind=StubKind.PROVIDER_OPERATOR)
+        )
+
+    def test_runs_the_generic_runtime_from_the_sdk_directory_without_reading_a_bundle(self, java_providers):
+        coordinator = JavaCoordinator(
+            java_executable="/opt/java/bin/java",
+            jvm_args=["-Xmx256m"],
+            java_providers_path=str(java_providers),
+        )
+
+        command, schema_version = self._build(coordinator)
+
+        # Only the SDK's JARs are on the classpath: a provider is loaded from its own directory.
+        assert command == [
+            "/opt/java/bin/java",
+            "-classpath",
+            os.pathsep.join(
+                [
+                    str(java_providers / "sdk" / "airflow-sdk.jar"),
+                    str(java_providers / "sdk" / "dependency.jar"),
+                ]
+            ),
+            "-Xmx256m",
+            "org.apache.airflow.sdk.ProviderRunner",
+            "--providers-path",
+            str(java_providers),
+        ]
+        assert schema_version == "2027-02-28"
+
+    def test_without_a_java_providers_path_it_fails_without_a_retry(self):
+        with pytest.raises(TaskLaunchError) as raised:
+            self._build(JavaCoordinator())
+
+        assert raised.value.retryable is False
+        assert str(raised.value) == (
+            "Task 'task_1' in Dag 'python_dag' is a provider operator, which the Java coordinator runs "
+            "from java_providers_path, and it is not set. Set it to the directory that holds the SDK in "
+            "sdk/ and each provider in a directory of its own."
+        )
+
+    @pytest.mark.parametrize(
+        "sdk_jars", [{}, {"other.jar": None}], ids=["no-sdk-directory", "no-schema-version"]
+    )
+    def test_fails_without_a_retry_when_the_sdk_directory_has_no_schema_version(self, tmp_path, sdk_jars):
+        (tmp_path / "sdk").mkdir()
+        for name, schema_version in sdk_jars.items():
+            _make_jar(tmp_path / "sdk" / name, main_class=None, schema_version=schema_version)
+
+        with pytest.raises(TaskLaunchError, match="Airflow-Supervisor-Schema-Version") as raised:
+            self._build(JavaCoordinator(java_providers_path=str(tmp_path)))
+
+        assert raised.value.retryable is False
+
+
+class TestJavaCoordinatorExecuteProviderOperator:
+    """A provider operator task of a Python Dag runs the generic runtime, and no bundle is read."""
+
+    @pytest.fixture(autouse=True)
+    def _java_coordinator_config(self):
+        coordinators = {"java": {"classpath": "airflow.sdk.coordinators.java.JavaCoordinator"}}
+        reset_importer_registry()
+        with conf_vars({("sdk", "coordinators"): json.dumps(coordinators)}):
+            yield
+        reset_importer_registry()
+
+    @pytest.fixture
+    def mock_start(self, tmp_path):
+        _make_jar(tmp_path / "a.jar", main_class="com.example.A", schema_version="2026-06-16")
+        bundle = MagicMock(path=tmp_path, version="v1")
+        bundle.name = "dags-folder"
+        with (
+            patch("airflow.sdk.coordinators._subprocess.initialize_pinned_bundle", return_value=bundle),
+            patch("airflow.sdk.coordinators._subprocess.BundleVersionLock"),
+            patch.object(_PopenActivitySubprocess, "start") as mock_start,
+        ):
+            mock_start.return_value.wait.return_value = 0
+            yield mock_start
+
+    def _execute(self, rel_path: str, client, *, stub_kind, java_providers_path=None):
+        return JavaCoordinator(java_providers_path=java_providers_path).execute_task(
+            what=_make_ti(stub_kind=stub_kind),
+            dag_rel_path=rel_path,
+            bundle_info=BundleInfo(name="dags-folder", version="v1"),
+            client=client,
+            subprocess_logs_to_stdout=False,
+        )
+
+    def test_runs_the_generic_runtime_for_a_provider_operator_of_a_python_dag(
+        self, mock_start, mock_client, java_providers
+    ):
+        self._execute(
+            "dag.py",
+            mock_client,
+            stub_kind=StubKind.PROVIDER_OPERATOR,
+            java_providers_path=str(java_providers),
+        )
+
+        assert mock_start.call_args.kwargs["command"][-3:] == [
+            "org.apache.airflow.sdk.ProviderRunner",
+            "--providers-path",
+            str(java_providers),
+        ]
+        assert mock_start.call_args.kwargs["subprocess_schema_version"] == "2027-02-28"
+
+    @pytest.mark.parametrize("stub_kind", [None, StubKind.TASK_HANDLER])
+    def test_scans_the_bundle_for_any_task_that_is_not_a_provider_operator(
+        self, mock_start, mock_client, java_providers, stub_kind
+    ):
+        self._execute("dag.py", mock_client, stub_kind=stub_kind, java_providers_path=str(java_providers))
+
+        assert mock_start.call_args.kwargs["command"][-1] == "com.example.A"
+
+    def test_runs_the_jar_of_a_native_dag_even_for_a_provider_operator(
+        self, mock_start, mock_client, java_providers
+    ):
+        self._execute(
+            "a.jar",
+            mock_client,
+            stub_kind=StubKind.PROVIDER_OPERATOR,
+            java_providers_path=str(java_providers),
+        )
+
+        assert mock_start.call_args.kwargs["command"][-1] == "com.example.A"
+
+    def test_fails_a_provider_operator_without_a_java_providers_path(self, mock_start, mock_client):
+        with pytest.raises(TaskLaunchError, match="java_providers_path, and it is not set") as raised:
+            self._execute("dag.py", mock_client, stub_kind=StubKind.PROVIDER_OPERATOR)
+
+        assert raised.value.retryable is False
         mock_start.assert_not_called()
 
 

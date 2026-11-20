@@ -1,0 +1,297 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+// Generated from providers/amazon/_generated/lang_sdk_operators.json by
+// scripts/ci/lang_sdk_providers/generate_java_wrappers.py. Do not edit by hand.
+
+package org.apache.airflow.providers.amazon.aws.sensors.sqs;
+
+import java.util.Map;
+import org.apache.airflow.sdk.TaskRef;
+import org.apache.airflow.sdk.provider.OperatorBuilder;
+import org.apache.airflow.sdk.provider.OperatorInfo;
+
+/**
+ * Get messages from an Amazon SQS queue and then delete the messages from the queue.
+ *
+ * Runs {@code airflow.providers.amazon.aws.sensors.sqs.SqsSensor} of {@code
+ * apache-airflow-providers-amazon} on a Python worker, so give the task a queue that a Python
+ * worker serves.
+ *
+ * Not available from Java, because JSON cannot carry them: {@code message_filtering}.
+ */
+public final class SqsSensor {
+  /** The Python class path of the operator. */
+  public static final String CLASSPATH = "airflow.providers.amazon.aws.sensors.sqs.SqsSensor";
+
+  private static final OperatorInfo INFO =
+      OperatorInfo.of("airflow.providers.amazon.aws.sensors.sqs", "SqsSensor")
+          .params(
+              "sqs_queue",
+              "max_messages",
+              "num_batches",
+              "wait_time_seconds",
+              "visibility_timeout",
+              "message_filtering_match_values",
+              "message_filtering_config",
+              "delete_message_on_reception",
+              "deferrable",
+              "aws_conn_id",
+              "region_name",
+              "verify",
+              "botocore_config",
+              "region",
+              "poke_interval",
+              "timeout",
+              "soft_fail",
+              "mode",
+              "exponential_backoff",
+              "max_wait",
+              "silent_fail",
+              "never_fail")
+          .required("sqs_queue")
+          .templated(
+              "aws_conn_id",
+              "max_messages",
+              "message_filtering_config",
+              "region_name",
+              "sqs_queue",
+              "verify")
+          .uiColor("#e6f1f2")
+          .sensor();
+
+  private SqsSensor() {}
+
+  /** Starts building a task of this operator. */
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /** Builds a task of {@code SqsSensor}, to pass to {@code DagDef.task}. */
+  public static final class Builder extends OperatorBuilder<Builder, Object> {
+    private Builder() {
+      super(INFO);
+    }
+
+    /** The SQS queue url (templated) Templated. */
+    public Builder sqsQueue(Object value) {
+      return param("sqs_queue", value);
+    }
+
+    /**
+     * The maximum number of messages to retrieve for each poke (templated) Defaults to 5.
+     * Templated.
+     */
+    public Builder maxMessages(long value) {
+      return param("max_messages", value);
+    }
+
+    /**
+     * The maximum number of messages to retrieve for each poke (templated) Defaults to 5.
+     * Templated.
+     */
+    public Builder maxMessages(TaskRef<?> value) {
+      return param("max_messages", value);
+    }
+
+    /**
+     * The number of times the sensor will call the SQS API to receive messages (default: 1)
+     * Defaults to 1.
+     */
+    public Builder numBatches(long value) {
+      return param("num_batches", value);
+    }
+
+    /** The time in seconds to wait for receiving messages (default: 1 second) Defaults to 1. */
+    public Builder waitTimeSeconds(long value) {
+      return param("wait_time_seconds", value);
+    }
+
+    /**
+     * Visibility timeout, a period of time during which Amazon SQS prevents other consumers
+     * from receiving and processing the message.
+     */
+    public Builder visibilityTimeout(long value) {
+      return param("visibility_timeout", value);
+    }
+
+    /**
+     * Optional value/s for the message filter to match on. For example, with literal matching,
+     * if a message body matches any of the specified values then it is included. For JSONPath
+     * matching, the result of the JSONPath expression is used and may match any of the
+     * specified values.
+     */
+    public Builder messageFilteringMatchValues(Object value) {
+      return param("message_filtering_match_values", value);
+    }
+
+    /**
+     * Additional configuration to pass to the message filter. For example with JSONPath
+     * filtering you can pass a JSONPath expression string here, such as `'foo[*].baz'`.
+     * Messages with a Body which does not match are ignored. Templated.
+     */
+    public Builder messageFilteringConfig(Object value) {
+      return param("message_filtering_config", value);
+    }
+
+    /**
+     * Default to `True`, the messages are deleted from the queue as soon as being consumed.
+     * Otherwise, the messages remain in the queue after consumption and should be deleted
+     * manually. Defaults to true.
+     */
+    public Builder deleteMessageOnReception(boolean value) {
+      return param("delete_message_on_reception", value);
+    }
+
+    /**
+     * If True, the sensor will operate in deferrable mode. This mode requires aiobotocore
+     * module to be installed. (default: False, but can be overridden in config file by setting
+     * default_deferrable to True) Defaults to false.
+     */
+    public Builder deferrable(boolean value) {
+      return param("deferrable", value);
+    }
+
+    /**
+     * The Airflow connection used for AWS credentials. If this is `None` or empty then the
+     * default boto3 behaviour is used. If running Airflow in a distributed manner and
+     * aws_conn_id is None or empty, then default boto3 configuration would be used (and must
+     * be maintained on each worker node). Defaults to "aws_default". Templated.
+     */
+    public Builder awsConnId(String value) {
+      return param("aws_conn_id", value);
+    }
+
+    /**
+     * The Airflow connection used for AWS credentials. If this is `None` or empty then the
+     * default boto3 behaviour is used. If running Airflow in a distributed manner and
+     * aws_conn_id is None or empty, then default boto3 configuration would be used (and must
+     * be maintained on each worker node). Defaults to "aws_default". Templated.
+     */
+    public Builder awsConnId(TaskRef<?> value) {
+      return param("aws_conn_id", value);
+    }
+
+    /** AWS region_name. If not specified then the default boto3 behaviour is used. Templated. */
+    public Builder regionName(String value) {
+      return param("region_name", value);
+    }
+
+    /** AWS region_name. If not specified then the default boto3 behaviour is used. Templated. */
+    public Builder regionName(TaskRef<?> value) {
+      return param("region_name", value);
+    }
+
+    /**
+     * Whether or not to verify SSL certificates. See:
+     * https://boto3.amazonaws.com/v1/documentation/api/latest/reference/core/session.html
+     * Templated.
+     */
+    public Builder verify(Object value) {
+      return param("verify", value);
+    }
+
+    /**
+     * Configuration dictionary (key-values) for botocore client. See:
+     * https://botocore.amazonaws.com/v1/documentation/api/latest/reference/config.html
+     */
+    public Builder botocoreConfig(Map<String, Object> value) {
+      return param("botocore_config", value);
+    }
+
+    public Builder region(String value) {
+      return param("region", value);
+    }
+
+    /**
+     * Time that the job should wait in between each try. Can be `timedelta` or `float`
+     * seconds. Defaults to 60.
+     */
+    public Builder pokeInterval(double value) {
+      return param("poke_interval", value);
+    }
+
+    /**
+     * Time elapsed before the task times out and fails. Can be `timedelta` or `float` seconds.
+     * This should not be confused with `execution_timeout` of the `BaseOperator` class.
+     * `timeout` measures the time elapsed between the first poke and the current time (taking
+     * into account any reschedule delay between each poke), while `execution_timeout` checks
+     * the **running** time of the task (leaving out any reschedule delay). In case that the
+     * `mode` is `poke` (see below), both of them are equivalent (as the sensor is never
+     * rescheduled), which is not the case in `reschedule` mode.
+     */
+    public Builder timeout(double value) {
+      return param("timeout", value);
+    }
+
+    /**
+     * Set to true to mark the task as SKIPPED on failure. Mutually exclusive with never_fail.
+     * Defaults to false.
+     */
+    public Builder softFail(boolean value) {
+      return param("soft_fail", value);
+    }
+
+    /**
+     * How the sensor operates. Options are: `{ poke | reschedule }`, default is `poke`. When
+     * set to `poke` the sensor is taking up a worker slot for its whole execution time and
+     * sleeps between pokes. Use this mode if the expected runtime of the sensor is short or if
+     * a short poke interval is required. Note that the sensor will hold onto a worker slot and
+     * a pool slot for the duration of the sensor's runtime in this mode. When set to
+     * `reschedule` the sensor task frees the worker slot when the criteria is not yet met and
+     * it's rescheduled at a later time. Use this mode if the time before the criteria is met
+     * is expected to be quite long. The poke interval should be more than one minute to
+     * prevent too much load on the scheduler. Defaults to "poke".
+     */
+    public Builder mode(String value) {
+      return param("mode", value);
+    }
+
+    /**
+     * allow progressive longer waits between pokes by using exponential backoff algorithm
+     * Defaults to false.
+     */
+    public Builder exponentialBackoff(boolean value) {
+      return param("exponential_backoff", value);
+    }
+
+    /** maximum wait interval between pokes, can be `timedelta` or `float` seconds */
+    public Builder maxWait(double value) {
+      return param("max_wait", value);
+    }
+
+    /**
+     * If true, and poke method raises an exception different from AirflowSensorTimeout,
+     * AirflowTaskTimeout, AirflowSkipException and AirflowFailException, the sensor will log
+     * the error and continue its execution. Otherwise, the sensor task fails, and it can be
+     * retried based on the provided `retries` parameter. Defaults to false.
+     */
+    public Builder silentFail(boolean value) {
+      return param("silent_fail", value);
+    }
+
+    /**
+     * If true, and poke method raises an exception, sensor will be skipped. Mutually exclusive
+     * with soft_fail. Defaults to false.
+     */
+    public Builder neverFail(boolean value) {
+      return param("never_fail", value);
+    }
+  }
+}
