@@ -60,6 +60,7 @@ A Dag author sees the same thing in both cases: a typed operator class in their 
 6. **A Lang SDK runtime loads an operator it was not built with.** The coordinator starts a generic runtime for a task whose `stub_kind` is `provider_operator`, unless the task's Dag file is a Dag of the coordinator's own SDK, which already packs the implementation. The runtime starts knowing nothing about the operator; it learns which one to run from `TIRunContext.provider_operator` in its start-up details, then loads `_operator_module` from a location the administrator configures.
 7. **Templates always render in Python.** A Python worker renders them as it does for any task. A Lang SDK runtime sends its template values to the supervisor, which renders them in the task's helper process.
 8. **`stub_kind` says what a stub task runs.** `is_stub` says only that the API server sends the task's definition. `stub_kind` adds what the worker starts: `task_handler` for a `@task.stub` task, `dag_definition` for a task of a Dag written in a Lang SDK, and `provider_operator` for a task with `_operator_kwargs`. The scheduler copies it to the task instance next to `is_stub`, and the task instance a worker receives carries it, so a coordinator picks what to start per task rather than per Dag.
+9. **`useOperator` writes the task, and every wrapper calls it.** Each SDK has one generic call that takes a class path, the constructor arguments under their Python names and, for a Lang SDK implemented operator, its module. It is the only code in the SDK that writes a provider task. A generated wrapper adds types and maps the SDK's argument names to the Python ones, and an implementation defined in the SDK builds on it the same way. Authors can call it directly when no wrapper exists.
 
 ## Overview
 
@@ -394,6 +395,50 @@ It validates the container against `TIProviderOperator` and fails the call with 
 | Who builds the operator | Python task runner, from the class path | Lang SDK runtime, from its bundle or `_operator_module` |
 | Templates | Rendered by the task runner | Rendered by the supervisor's helper process |
 
+## Escape hatch: `useOperator`
+
+A generated wrapper exists only after a wrapper release for that provider. `useOperator` reaches any operator without one: the author names the class path and passes the constructor arguments under their Python names.
+
+```ts
+import { useOperator } from "@apache-airflow/ts-sdk";
+
+dag.task(
+  "write_report",
+  useOperator(
+    "airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator",
+    { s3_bucket: "reports", s3_key: "{{ ds }}/report.json", data: report },
+    { queue: "default" },
+  ),
+)();
+```
+
+A Python Dag uses it for an operator implemented in a Lang SDK, and also names the module:
+
+```python
+from airflow.sdk import use_operator
+
+use_operator(
+    "airflow.providers.vercel.ai.operators.text.GenerateTextOperator",
+    module="@apache-airflow/providers-vercel-ai/operators/text",
+    task_id="summarize",
+    kwargs={"model": "gpt-4o-mini", "prompt": "Summarize the orders of {{ ds }}."},
+    queue="typescript",
+)
+```
+
+Both write the same task as the generated wrappers above, with `stub_kind` set to `provider_operator`. A generated wrapper is a typed call to it:
+
+```ts
+export const S3CreateObjectOperator = (args: S3CreateObjectOperatorArgs, options?: TaskOptions) =>
+  useOperator(
+    "airflow.providers.amazon.aws.operators.s3.S3CreateObjectOperator",
+    { s3_bucket: args.s3Bucket, s3_key: args.s3Key, data: args.data, replace: args.replace },
+    options,
+  );
+```
+
+So the JSON has one writer per SDK, and a wrapper never writes it by hand. The cost of calling `useOperator` directly is that nothing checks the class path, the argument names or their types before the task runs: a mistake fails the task. The Dag processor could check them against the provider's spec when it parses the Dag; that is follow-up work.
+
 ## Releasing wrapper packages
 
 A provider release produces the spec, and a wrapper release turns the spec into one package per SDK. The release manager (RM) of a provider wave runs the spec generator, and the spec is committed with the provider's source. Who releases the wrapper packages from it is open, with two options:
@@ -412,12 +457,13 @@ flowchart TD
 - **Option A: same wave.** The provider RM also generates and publishes every wrapper package in the provider wave. Wrappers never lag behind their provider, but the provider RM needs the Node, Go and Java toolchains and publishing access to every package registry, and each wave republishes wrappers even when no operator signature changed.
 - **Option B: separate wrapper waves.** The provider RM only regenerates and commits the spec, which a prek hook already keeps current. A Lang SDK RM releases wrapper packages from the committed specs on its own cadence, such as one wrapper wave every two or three provider waves, or an ad-hoc wave when a provider adds an operator users are waiting for. The provider release process stays as it is, and spec changes from several waves ship together. It would amend ADR-0009's decision 8, which ships wrappers on the provider's own release cadence.
 
-Either way a wrapper package is versioned as the provider it was generated from, as [ADR-0009](0009-provider-operators-as-generated-dsl.md) decides, and the SDK's own version stays separate. A provider's major version bump does not force a wrapper upgrade: the wrapper only describes constructor signatures, so users upgrade it when the signature of an operator they use changes. Skew between the wrapper in the Dag and the provider installed on the worker warns and does not block.
+Either way a wrapper package is versioned as the provider it was generated from, as [ADR-0009](0009-provider-operators-as-generated-dsl.md) decides, and the SDK's own version stays separate. A provider's major version bump does not force a wrapper upgrade: the wrapper only describes constructor signatures, so users upgrade it when the signature of an operator they use changes. Skew between the wrapper in the Dag and the provider installed on the worker warns and does not block. A user is never blocked on a wrapper release, because `useOperator` reaches any operator of the installed provider.
 
 The same choice applies in the other direction. For a provider implemented in a Lang SDK, the spec comes from the implementation's release, and the Python wrapper is the package released from it.
 
 ## Consequences
 
+- **Authors can skip the wrappers.** `useOperator` runs any operator without a wrapper package, and loses type checks in exchange.
 - **Every SDK writes one task shape.** Any runtime that implements a class path can run a task from a Dag in any language, and adding an SDK takes one generator that reads any spec rather than one per pair of languages.
 - **No runtime decodes core serialization.** Limiting operator arguments to JSON is what lets a wrapper write argument bindings instead of Airflow's Python encoding. An operator whose required argument is not JSON gets no wrapper, as in ADR-0009.
 - **Authors set the queue.** The wrapper cannot know which workers a deployment runs, so the author routes the task. It takes the Dag's queue unless the author sets its own. A Lang SDK implemented operator that reaches a Python worker fails before it does any work.
