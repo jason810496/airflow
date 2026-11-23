@@ -41,43 +41,40 @@ A task's `_operator_module` is the file name of its plugin in `plugins/`.
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant DP as Dag processor
     participant S as Scheduler
     participant W as Worker supervisor
     participant C as Go coordinator
-    participant R as airflow-provider-runner
-    participant P as Plugin executable
+    participant R as Provider runner
+    participant P as Provider plugin
     participant API as API server
 
-    DP->>S: Serialized task: stub_kind=provider_operator, _operator_module, _operator_kwargs, queue
+    DP->>S: Store the provider task with stub_kind provider_operator
     S->>W: Queue the task instance
-    W->>API: ti_run
-    API-->>W: TIRunContext.provider_operator
-    W->>C: queue_to_coordinator picks the Go coordinator
-    Note over C: Not a native Go Dag file, and stub_kind is provider_operator
-    C->>R: runner --airflow-metadata, for the schema version (cached)
-    C-->>W: runner --plugins-dir=go_providers_path/plugins
-    W->>R: Start with --comm and --logs, send StartupDetails
-    Note over R: Operator not linked, so load plugins/_operator_module
-    R->>P: Start with the handshake cookie
-    P-->>R: Handshake with its address
-    R->>P: Describe(classpath)
-    P-->>R: Template fields and params
-    R->>W: Pull upstream XComs, render template fields
+    W->>API: Start the task with ti_run
+    API-->>W: Provider operator details
+    W->>C: Pick the Go coordinator by queue
+    Note over C: Python Dag file and a provider_operator task
+    C->>R: Read the supervisor schema version
+    C-->>W: Command of the provider runner
+    W->>R: Start the runner and send the startup details
+    Note over R: Operator not linked, so start its plugin
+    R->>P: Start the plugin executable named by the task
+    P-->>R: Handshake
+    R->>P: Describe the operator
+    P-->>R: Template fields and parameters
+    R->>W: Pull upstream results and render templates
     W-->>R: Final argument values
-    R->>P: Execute(classpath, args, task instance, Dag run, callback stream)
-    loop While the operator runs
-        P->>R: Callback, such as GetVariable, XCom or Log
-        R->>W: SDK client call
-        W->>API: Execution API request
-        API-->>W: Response
-        W-->>R: Response
-        R-->>P: Response
-    end
+    R->>P: Execute the operator with a callback stream
+    P->>R: Callback such as a Variable, an XCom or a log
+    R->>W: SDK client request
+    W->>API: Execution API request
+    API-->>W: Response
+    W-->>R: Response
+    R-->>P: Response
     P-->>R: Result as JSON
-    R->>W: Push return_value XCom, succeed the task
-    R->>P: Kill
+    R->>W: Push the return value XCom and succeed
+    R->>P: Stop the plugin
     R-->>W: Exit
     W->>API: Report the task state
 ```
@@ -86,7 +83,6 @@ sequenceDiagram
 
 ```mermaid
 sequenceDiagram
-    autonumber
     participant DP as Dag processor
     participant S as Scheduler
     participant W as Worker supervisor
@@ -95,22 +91,22 @@ sequenceDiagram
     participant API as API server
 
     DP->>B: Parse the Dag
-    Note over B: Importing the provider package registers its operators with Define
-    B-->>DP: Serialized task: stub_kind=provider_operator, _operator_module, _operator_kwargs, Dag queue
+    Note over B: Importing the provider package registers its operators
+    B-->>DP: Provider task with stub_kind provider_operator
     DP->>S: Store the serialized Dag
     S->>W: Queue the task instance
-    W->>API: ti_run
-    API-->>W: TIRunContext.provider_operator
-    W->>C: queue_to_coordinator picks the Go coordinator
-    Note over C: Native Go Dag file, so stub_kind is not checked
-    C-->>W: The Dag executable
-    W->>B: Start with --comm and --logs, send StartupDetails
+    W->>API: Start the task with ti_run
+    API-->>W: Provider operator details
+    W->>C: Pick the Go coordinator by queue
+    Note over C: Go Dag file, so run the Dag executable
+    C-->>W: Command of the Dag executable
+    W->>B: Start the executable and send the startup details
     Note over B: Operator linked, so it runs in this process
-    B->>W: Pull upstream XComs, render template fields
+    B->>W: Pull upstream results and render templates
     W-->>B: Final argument values
-    B->>W: Calls of the operator, such as GetVariable, XCom or Log
+    B->>W: Operator calls such as a Variable, an XCom or a log
     W->>API: Execution API requests
-    B->>W: Push return_value XCom, succeed the task
+    B->>W: Push the return value XCom and succeed
     B-->>W: Exit
     W->>API: Report the task state
 ```
