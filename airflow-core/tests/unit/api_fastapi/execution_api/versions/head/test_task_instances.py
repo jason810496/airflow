@@ -1223,12 +1223,12 @@ class TestTIRunState:
         assert response.status_code == 500
         assert response.json()["detail"]["reason"] == "invalid_arg_bindings"
 
-    def test_ti_run_returns_no_arg_bindings_for_mapped_stub(self, client, dag_maker):
-        """Mapped stubs keep the legacy ignored-args behavior until per-map-index delivery lands."""
-        with dag_maker("test_mapped_stub_ignored_args", serialized=True):
+    def test_ti_run_returns_param_bindings_for_mapped_stub(self, client, dag_maker):
+        """A mapped stub gets its param entries as written, for the supervisor to resolve."""
+        with dag_maker("test_mapped_stub_bindings", serialized=True):
 
             @task.stub
-            def transform(country: str): ...
+            def transform(country: str, limit: int = 10): ...
 
             transform.expand(country=["uk", "fr"])
 
@@ -1239,7 +1239,16 @@ class TestTIRunState:
 
         response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
         assert response.status_code == 200
-        assert "arg_bindings" not in response.json()
+        body = response.json()
+        assert body["arg_bindings"] == [
+            {"name": "country", "kind": "param", "value_schema": {"type": "string"}},
+            {
+                "name": "limit",
+                "kind": "param",
+                "value_schema": {"type": "integer", "format": "int64"},
+                "default": 10,
+            },
+        ]
 
     @pytest.mark.parametrize(
         ("decorator", "expected"),

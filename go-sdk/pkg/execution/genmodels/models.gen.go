@@ -1248,6 +1248,16 @@ type GetXComSequenceSlice struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// The expand argument of an enclosing mapped task group that a “param“ binding
+// reads.
+type GroupArg struct {
+	// GroupID corresponds to the JSON schema field "group_id".
+	GroupID string `msgpack:"group_id"`
+
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+}
+
 // Response to CreateHITLDetailPayload request.
 type HITLDetailRequestResult struct {
 	// AssignedUsers corresponds to the JSON schema field "assigned_users".
@@ -1322,6 +1332,22 @@ type InactiveAssetsResult struct {
 }
 
 type JsonValue interface{}
+
+// A Dag definition's own task's “expand_kwargs()“ dict, which the runtime
+// spreads into its arguments.
+//
+// Only a Dag definition writes one, and the sidecar resolves it on the runtime's
+// request.
+type KwargsArgBinding struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name interface{} `msgpack:"name,omitempty"`
+
+	// ValueSchema corresponds to the JSON schema field "value_schema".
+	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
+}
 
 // Lazily build information from the serialized DAG structure.
 //
@@ -1419,6 +1445,28 @@ type OKResponse struct {
 }
 
 type OutletEvents []map[string]interface{}
+
+// A parameter whose value differs per map index.
+//
+// The supervisor's Python sidecar resolves it from the Dag the worker parses:
+// before the runtime
+// starts for a Python Dag, and on the runtime's request for a Dag definition.
+type ParamArgBinding struct {
+	// Default corresponds to the JSON schema field "default".
+	Default interface{} `msgpack:"default,omitempty"`
+
+	// GroupArg corresponds to the JSON schema field "group_arg".
+	GroupArg *GroupArg `msgpack:"group_arg,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `msgpack:"name"`
+
+	// ValueSchema corresponds to the JSON schema field "value_schema".
+	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
+}
 
 type Params map[string]interface{}
 
@@ -1884,40 +1932,23 @@ type TaskInstance struct {
 	TryNumber int `msgpack:"try_number"`
 }
 
-type Warnings []interface{}
-
-type TriggerKwargs map[string]interface{}
-
-type VersionData map[string]interface{}
+type TaskInstanceState string
 
 const TaskInstanceStateAwaitingInput TaskInstanceState = "awaiting_input"
 const TaskInstanceStateDeferred TaskInstanceState = "deferred"
+const TaskInstanceStateFailed TaskInstanceState = "failed"
+const TaskInstanceStateQueued TaskInstanceState = "queued"
+const TaskInstanceStateRemoved TaskInstanceState = "removed"
+const TaskInstanceStateRestarting TaskInstanceState = "restarting"
+const TaskInstanceStateRunning TaskInstanceState = "running"
+const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
 const TaskInstanceStateSkipped TaskInstanceState = "skipped"
-const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
+const TaskInstanceStateSuccess TaskInstanceState = "success"
 const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
 const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
-const TaskInstanceStateFailed TaskInstanceState = "failed"
-
-const TaskInstanceStateRestarting TaskInstanceState = "restarting"
-const TaskInstanceStateSuccess TaskInstanceState = "success"
-const TaskInstanceStateRunning TaskInstanceState = "running"
-const TaskInstanceStateQueued TaskInstanceState = "queued"
+const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
 
 type TaskOutlets []AssetProfile
-
-const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
-const TaskInstanceStateRemoved TaskInstanceState = "removed"
-
-type TaskInstanceState string
-
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value string `msgpack:"value"`
-}
 
 // Response containing the first reschedule date for a task instance.
 type TaskRescheduleStartDate struct {
@@ -1927,12 +1958,6 @@ type TaskRescheduleStartDate struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
-
-type TaskStateState string
-
-const TaskStateStateFailed TaskStateState = "failed"
-const TaskStateStateSkipped TaskStateState = "skipped"
-const TaskStateStateRemoved TaskStateState = "removed"
 
 // Update a task's state.
 //
@@ -1958,6 +1983,28 @@ type TaskState struct {
 
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
+}
+
+type TaskStateState string
+
+const TaskStateStateFailed TaskStateState = "failed"
+const TaskStateStateRemoved TaskStateState = "removed"
+
+type TriggerKwargs map[string]interface{}
+
+type Warnings []interface{}
+
+type VersionData map[string]interface{}
+
+const TaskStateStateSkipped TaskStateState = "skipped"
+
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value string `msgpack:"value"`
 }
 
 // Response to GetTaskStateStore; wraps the generated API response for supervisor
@@ -2098,6 +2145,22 @@ type XComResult struct {
 
 	// Value corresponds to the JSON schema field "value".
 	Value interface{} `msgpack:"value"`
+}
+
+// A mapped upstream task's whole output, which the runtime reads as a lazy
+// sequence.
+type XComSequenceArgBinding struct {
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `msgpack:"name"`
+
+	// TaskID corresponds to the JSON schema field "task_id".
+	TaskID string `msgpack:"task_id"`
+
+	// ValueSchema corresponds to the JSON schema field "value_schema".
+	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
 }
 
 type XComSequenceIndexResult struct {

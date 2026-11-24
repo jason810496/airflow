@@ -346,6 +346,15 @@ class ExternalClearTargetPayload(BaseModel):
     recursion_depth: Annotated[int, Field(gt=0, title="Recursion Depth")]
 
 
+class GroupArg(BaseModel):
+    """
+    The expand argument of an enclosing mapped task group that a ``param`` binding reads.
+    """
+
+    group_id: Annotated[str, Field(title="Group Id")]
+    key: Annotated[str, Field(title="Key")]
+
+
 class HITLUser(BaseModel):
     """
     Schema for a Human-in-the-loop users.
@@ -1106,6 +1115,18 @@ class JobHeartbeatResponse(BaseModel):
     state: JobState
 
 
+class KwargsArgBinding(BaseModel):
+    """
+    A Dag definition's own task's ``expand_kwargs()`` dict, which the runtime spreads into its arguments.
+
+    Only a Dag definition writes one, and the sidecar resolves it on the runtime's request.
+    """
+
+    name: Annotated[str | None, Field(title="Name")] = None
+    value_schema: ArgValueSchema | None = None
+    kind: Annotated[Literal["kwargs"], Field(title="Kind")]
+
+
 class LiteralArgBinding(BaseModel):
     """
     One positional stub-task argument carrying an inline literal from the Dag file.
@@ -1116,6 +1137,21 @@ class LiteralArgBinding(BaseModel):
     kind: Annotated[Literal["literal"], Field(title="Kind")]
     value: JsonValue | None = None
     from_default: Annotated[bool | None, Field(title="From Default")] = False
+
+
+class ParamArgBinding(BaseModel):
+    """
+    A parameter whose value differs per map index.
+
+    The supervisor's Python sidecar resolves it from the Dag the worker parses: before the runtime
+    starts for a Python Dag, and on the runtime's request for a Dag definition.
+    """
+
+    name: Annotated[str, Field(title="Name")]
+    value_schema: ArgValueSchema | None = None
+    kind: Annotated[Literal["param"], Field(title="Kind")]
+    default: JsonValue | None = None
+    group_arg: GroupArg | None = None
 
 
 class TITerminalStatePayload(BaseModel):
@@ -1143,6 +1179,17 @@ class XComArgBinding(BaseModel):
     name: Annotated[str, Field(title="Name")]
     value_schema: ArgValueSchema | None = None
     kind: Annotated[Literal["xcom"], Field(title="Kind")]
+    task_id: Annotated[str, Field(title="Task Id")]
+
+
+class XComSequenceArgBinding(BaseModel):
+    """
+    A mapped upstream task's whole output, which the runtime reads as a lazy sequence.
+    """
+
+    name: Annotated[str, Field(title="Name")]
+    value_schema: ArgValueSchema | None = None
+    kind: Annotated[Literal["sequence"], Field(title="Kind")]
     task_id: Annotated[str, Field(title="Task Id")]
 
 
@@ -1227,8 +1274,15 @@ class DagRunContext(BaseModel):
     last_ti: TaskInstance | None = None
 
 
-class TaskArgBinding(RootModel[XComArgBinding | LiteralArgBinding]):
-    root: Annotated[XComArgBinding | LiteralArgBinding, Field(discriminator="kind", title="TaskArgBinding")]
+class TaskArgBinding(
+    RootModel[
+        XComArgBinding | LiteralArgBinding | XComSequenceArgBinding | ParamArgBinding | KwargsArgBinding
+    ]
+):
+    root: Annotated[
+        XComArgBinding | LiteralArgBinding | XComSequenceArgBinding | ParamArgBinding | KwargsArgBinding,
+        Field(discriminator="kind", title="TaskArgBinding"),
+    ]
 
 
 class DagCallbackRequest(BaseModel):

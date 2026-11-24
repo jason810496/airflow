@@ -17,16 +17,25 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from cadwyn import (
     RequestInfo,
     ResponseInfo,
     VersionChange,
+    VersionChangeWithSideEffects,
     convert_request_to_next_version_for,
     convert_response_to_previous_version_for,
     endpoint,
     schema,
 )
+from pydantic import Field
+from typing_extensions import TypeAliasType
 
+from airflow.api_fastapi.execution_api.datamodels.task_arg_binding import (
+    LiteralArgBinding,
+    XComArgBinding,
+)
 from airflow.api_fastapi.execution_api.datamodels.taskinstance import TIRunContext, TISuccessStatePayload
 from airflow.api_fastapi.execution_api.datamodels.variable import VariablePostBody, VariableResponse
 
@@ -102,4 +111,26 @@ class AddCallbackStateEndpoint(VersionChange):
 
     instructions_to_migrate_to_previous_version = (
         endpoint("/callbacks/{callback_id}/state", ["PATCH"]).didnt_exist,
+    )
+
+
+TaskArgBinding = TypeAliasType(
+    "TaskArgBinding",
+    Annotated[XComArgBinding | LiteralArgBinding, Field(discriminator="kind", title="TaskArgBinding")],
+)
+"""The ``TaskArgBinding`` union before this version, named alike so older schemas keep the definition name."""
+
+
+class AddMappedStubArgBindings(VersionChangeWithSideEffects):
+    """
+    Add the ``sequence``, ``param`` and ``kwargs`` bindings, for mapped stub tasks.
+
+    An older client keeps the earlier behavior for a mapped stub, which gets no ``arg_bindings``.
+    ``ti_run`` fails for any other stub whose bindings need this version.
+    """
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (
+        schema(TIRunContext).field("arg_bindings").had(type=list[TaskArgBinding] | None),
     )

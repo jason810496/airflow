@@ -365,6 +365,23 @@ describe("resolveArgs", () => {
     expect(getXComEntry).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a sequence", { name: "rows", kind: "sequence", task_id: "t" }, /binding kind "sequence"/],
+    ["a param", { name: "rows", kind: "param" }, /binding kind "param"/],
+    ["a kwargs entry", { kind: "kwargs" }, /"\*\*": binding kind "kwargs"/],
+  ])("refuses %s binding before pulling anything", async (_label, binding, error) => {
+    const { client, getXComEntry } = makeClient({ make_totals: { found: true, value: 1 } });
+    await expect(
+      resolveArgs([xcom("totals", "make_totals"), binding as never], {
+        client,
+        signal: new AbortController().signal,
+        logs: makeLogs().logs,
+        argNames: NO_RENAMES,
+      }),
+    ).rejects.toThrowError(error);
+    expect(getXComEntry).not.toHaveBeenCalled();
+  });
+
   it("gives up on an already-aborted task without pulling", async () => {
     // Arguments resolve before the handler runs, the one stretch of a task's
     // life with nothing else listening for termination.

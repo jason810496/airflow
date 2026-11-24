@@ -141,3 +141,21 @@ class TestBinding:
 
     def test_none_bindings_is_empty(self):
         assert _bound(None) == {}
+
+    @pytest.mark.parametrize(
+        ("binding", "match"),
+        [
+            pytest.param(
+                {"kind": "sequence", "task_id": "t"}, "binding kind 'sequence' needs", id="sequence"
+            ),
+            pytest.param({"kind": "param"}, "binding kind 'param' needs", id="param"),
+            pytest.param({"kind": "kwargs"}, "binding kind 'kwargs' needs", id="kwargs"),
+        ],
+    )
+    def test_mapped_task_binding_refused_before_any_pull(self, binding, match):
+        pulled = []
+        bindings = [_xc("events", "extract"), TaskArgBinding.model_validate({"name": "row", **binding})]
+
+        with pytest.raises(NotImplementedError, match=f"{match} mapped task support"):
+            _bound(bindings, lambda *args: pulled.append(args))
+        assert pulled == []

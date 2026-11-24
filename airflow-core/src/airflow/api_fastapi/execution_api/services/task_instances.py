@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from airflow.serialization.definitions.mappedoperator import is_mapped
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -54,17 +56,40 @@ def get_task(dag_bag: DBDagBag, ti: Any, *, session: Session) -> SerializedOpera
     return dag.task_dict.get(ti.task_id)
 
 
+class ArgBindingsNeedNewerClientError(ValueError):
+    """The stub task's arg bindings need a newer Execution API version than the client's."""
+
+
+_LEGACY_BINDING_KINDS = frozenset({"xcom", "literal"})
+
+
+def client_supports_mapped_arg_bindings() -> bool:
+    """Whether the request's negotiated API version can receive the bindings of a mapped stub task."""
+    from airflow.api_fastapi.execution_api.versions.v2027_02_28 import AddMappedStubArgBindings
+
+    return AddMappedStubArgBindings.is_applied
+
+
 def get_arg_bindings(task: SerializedOperator) -> list | None:
     """
     Return the TaskFlow arg spec of *task* if it is a stub task.
 
-    Mapped (``.expand()``) stubs never capture a parse-time spec, so they resolve to
-    ``None`` here and keep the legacy ignored-args behavior; per-map-index delivery
-    lands in a follow-up.
+    An older client keeps ignoring the arguments of a mapped stub, as it did before mapped stubs had
+    bindings.
+
+    :raises ArgBindingsNeedNewerClientError: for an unmapped stub whose bindings an older client cannot read.
     """
-    if not task.is_stub:
+    if not task.is_stub or (arg_bindings := task.arg_bindings) is None:
         return None
-    return task.arg_bindings
+    if client_supports_mapped_arg_bindings() or all(
+        binding["kind"] in _LEGACY_BINDING_KINDS for binding in arg_bindings
+    ):
+        return arg_bindings
+    if is_mapped(task):
+        return None
+    raise ArgBindingsNeedNewerClientError(
+        "The stub task's arguments need a client at Execution API version 2027-02-28 or later."
+    )
 
 
 def get_execution_timeout(task: SerializedOperator) -> float | None:

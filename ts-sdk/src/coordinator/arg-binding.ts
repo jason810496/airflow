@@ -33,6 +33,7 @@ import type { LogChannel } from "./log-channel.js";
 import type {
   ArgBindings,
   ArgValueSchema,
+  LiteralArgBinding,
   TaskArgBinding,
   XComArgBinding,
 } from "../generated/supervisor.js";
@@ -97,7 +98,10 @@ export async function resolveArgs(
   const names: string[] = [];
   const byFold = new Map<string, string>();
   let pullsUpstream = false;
+  const bindable: (XComArgBinding | LiteralArgBinding)[] = [];
   for (const binding of bindings) {
+    checkBindable(binding);
+    bindable.push(binding);
     const name = binding.name;
     const fold = foldArgName(name);
     const clash = byFold.get(fold);
@@ -109,7 +113,6 @@ export async function resolveArgs(
     }
     byFold.set(fold, name);
     names.push(name);
-    checkBindable(binding);
     pullsUpstream ||= binding.kind === "xcom";
   }
 
@@ -117,7 +120,7 @@ export async function resolveArgs(
   // waits for one round-trip rather than four.
   const resolveAll = (): Promise<[string, JsonValue][]> =>
     Promise.all(
-      bindings.map(async (binding): Promise<[string, JsonValue]> => [
+      bindable.map(async (binding): Promise<[string, JsonValue]> => [
         binding.name,
         binding.kind === "xcom"
           ? await pullXComArg(binding, deps.client)
@@ -136,12 +139,17 @@ function literalValue(value: unknown): JsonValue {
 }
 
 /** Refuse a binding this SDK cannot honour, before any of them is resolved. */
-function checkBindable(binding: TaskArgBinding): void {
+function checkBindable(
+  binding: TaskArgBinding,
+): asserts binding is XComArgBinding | LiteralArgBinding {
   const { name } = binding;
   if (binding.kind === "xcom") return;
   if (binding.kind === "literal") {
-    checkExactInteger(name, literalValue(binding.value), binding.value_schema);
+    checkExactInteger(binding.name, literalValue(binding.value), binding.value_schema);
     return;
+  }
+  if (binding.kind === "sequence" || binding.kind === "param" || binding.kind === "kwargs") {
+    throw mappedTaskNotImplemented(name ?? "**", `binding kind "${binding.kind}"`);
   }
   // Unreachable for the wire union as generated, so `binding` is `never` here.
   // A newer Airflow can add a kind, and skipping it would silently leave the
@@ -150,6 +158,13 @@ function checkBindable(binding: TaskArgBinding): void {
   throw new Error(
     `Task argument "${name}" has binding kind ${JSON.stringify(kind)}, which this version ` +
       "of @apache-airflow/ts-sdk cannot bind; upgrade it to match this Airflow release",
+  );
+}
+
+function mappedTaskNotImplemented(name: string, what: string): Error {
+  return new Error(
+    `Task argument "${name}": ${what} needs mapped task support, which this version of ` +
+      "@apache-airflow/ts-sdk does not implement",
   );
 }
 

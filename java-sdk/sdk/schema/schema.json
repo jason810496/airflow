@@ -3089,6 +3089,25 @@
       "title": "GetXComSequenceSlice",
       "type": "object"
     },
+    "GroupArg": {
+      "description": "The expand argument of an enclosing mapped task group that a ``param`` binding reads.",
+      "properties": {
+        "group_id": {
+          "title": "Group Id",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "key"
+      ],
+      "title": "GroupArg",
+      "type": "object"
+    },
     "HITLDetailRequestResult": {
       "description": "Response to CreateHITLDetailPayload request.",
       "properties": {
@@ -4903,6 +4922,44 @@
       "title": "ArgValueSchema",
       "type": "object"
     },
+    "KwargsArgBinding": {
+      "description": "A Dag definition's own task's ``expand_kwargs()`` dict, which the runtime spreads into its arguments.\n\nOnly a Dag definition writes one, and the sidecar resolves it on the runtime's request.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "value_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArgValueSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "kwargs",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "KwargsArgBinding",
+      "type": "object"
+    },
     "LiteralArgBinding": {
       "description": "One positional stub-task argument carrying an inline literal from the Dag file.",
       "properties": {
@@ -4950,10 +5007,66 @@
       "title": "LiteralArgBinding",
       "type": "object"
     },
+    "ParamArgBinding": {
+      "description": "A parameter whose value differs per map index.\n\nThe supervisor's Python sidecar resolves it from the Dag the worker parses: before the runtime\nstarts for a Python Dag, and on the runtime's request for a Dag definition.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArgValueSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "param",
+          "title": "Kind",
+          "type": "string"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "group_arg": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GroupArg"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "title": "ParamArgBinding",
+      "type": "object"
+    },
     "TaskArgBinding": {
       "discriminator": {
         "mapping": {
+          "kwargs": "#/$defs/KwargsArgBinding",
           "literal": "#/$defs/LiteralArgBinding",
+          "param": "#/$defs/ParamArgBinding",
+          "sequence": "#/$defs/XComSequenceArgBinding",
           "xcom": "#/$defs/XComArgBinding"
         },
         "propertyName": "kind"
@@ -4964,6 +5077,15 @@
         },
         {
           "$ref": "#/$defs/LiteralArgBinding"
+        },
+        {
+          "$ref": "#/$defs/XComSequenceArgBinding"
+        },
+        {
+          "$ref": "#/$defs/ParamArgBinding"
+        },
+        {
+          "$ref": "#/$defs/KwargsArgBinding"
         }
       ],
       "title": "TaskArgBinding"
@@ -5002,6 +5124,42 @@
         "task_id"
       ],
       "title": "XComArgBinding",
+      "type": "object"
+    },
+    "XComSequenceArgBinding": {
+      "description": "A mapped upstream task's whole output, which the runtime reads as a lazy sequence.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArgValueSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "sequence",
+          "title": "Kind",
+          "type": "string"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "task_id"
+      ],
+      "title": "XComSequenceArgBinding",
       "type": "object"
     },
     "AssetEventDagRunReference": {

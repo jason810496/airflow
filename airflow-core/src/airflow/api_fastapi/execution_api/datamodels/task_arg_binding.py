@@ -74,11 +74,58 @@ class LiteralArgBinding(_ArgBindingBase):
     """True when the value was filled from the stub signature's default rather than passed in the call."""
 
 
-# A named alias with an explicit title so the union lands in every schema as its own
-# named definition, which the supervisor-schema dump dedups with its task-sdk twin by title.
+class XComSequenceArgBinding(_ArgBindingBase):
+    """A mapped upstream task's whole output, which the runtime reads as a lazy sequence."""
+
+    kind: Literal["sequence"]
+
+    task_id: str
+    """Task whose ``return_value`` rows make up the sequence."""
+
+
+class GroupArg(BaseModel):
+    """The expand argument of an enclosing mapped task group that a ``param`` binding reads."""
+
+    group_id: str
+    key: str
+
+
+class ParamArgBinding(_ArgBindingBase):
+    """
+    A parameter whose value differs per map index.
+
+    The supervisor's Python sidecar resolves it from the Dag the worker parses: before the runtime
+    starts for a Python Dag, and on the runtime's request for a Dag definition.
+    """
+
+    kind: Literal["param"]
+
+    default: JsonValue | None = None
+    """The signature default, when the call leaves the parameter unset. Present only when there is one."""
+
+    group_arg: GroupArg | None = None
+    """Read this expand argument of an enclosing mapped task group."""
+
+
+class KwargsArgBinding(_ArgBindingBase):
+    """
+    A Dag definition's own task's ``expand_kwargs()`` dict, which the runtime spreads into its arguments.
+
+    Only a Dag definition writes one, and the sidecar resolves it on the runtime's request.
+    """
+
+    kind: Literal["kwargs"]
+
+    name: str | None = None  # type: ignore[assignment]
+    """None: the dict fills whichever parameters its keys name."""
+
+
 TaskArgBinding = TypeAliasType(
     "TaskArgBinding",
-    Annotated[XComArgBinding | LiteralArgBinding, Field(discriminator="kind", title="TaskArgBinding")],
+    Annotated[
+        XComArgBinding | LiteralArgBinding | XComSequenceArgBinding | ParamArgBinding | KwargsArgBinding,
+        Field(discriminator="kind", title="TaskArgBinding"),
+    ],
 )
 """One positional argument of a stub (foreign-runtime) task, in declaration order."""
 

@@ -57,15 +57,33 @@ def _bind_arguments(
     keyword consumer can leave them unclaimed. Set false to bind them explicitly.
 
     ``None`` (an argless call) yields nothing.
+
+    :raises NotImplementedError: if a binding needs mapped task support, checked for every binding
+        before any XCom is pulled.
     """
-    for binding in arg_bindings or ():
-        match binding.root:
+    bindings = [_check_bindable(binding) for binding in arg_bindings or ()]
+    for name, binding in bindings:
+        match binding:
             case LiteralArgBinding(from_default=True) if skip_defaults:
                 continue
-            case LiteralArgBinding(name=name, value=value):
+            case LiteralArgBinding(value=value):
                 yield name, value
-            case XComArgBinding(name=name, task_id=task_id):
+            case XComArgBinding(task_id=task_id):
                 yield name, xcom_resolver(task_id, BaseXCom.XCOM_RETURN_KEY)
+
+
+def _check_bindable(binding: TaskArgBinding) -> tuple[str, LiteralArgBinding | XComArgBinding]:
+    root = binding.root
+    if not isinstance(root, LiteralArgBinding | XComArgBinding):
+        raise _mapped_task_not_implemented(root.name, f"binding kind {root.kind!r}")
+    return root.name, root
+
+
+def _mapped_task_not_implemented(name: str | None, what: str) -> NotImplementedError:
+    return NotImplementedError(
+        f"Task argument {name!r}: {what} needs mapped task support, which the stub TaskHandler "
+        "does not implement yet"
+    )
 
 
 def call_handler(

@@ -82,3 +82,52 @@ class TestExecutionTimeoutBackwardCompat:
         response = client.patch(f"/execution/task-instances/{stub_ti.id}/run", json=RUN_PATCH_BODY)
         assert response.status_code == 200
         assert response.json()["execution_timeout"] == 90.0
+
+
+class TestMappedStubArgBindingsBackwardCompat:
+    def setup_method(self):
+        clear_db_runs()
+
+    def teardown_method(self):
+        clear_db_runs()
+
+    @pytest.mark.parametrize("version", ["2026-10-30", "2027-02-28"])
+    def test_mapped_binding_kinds_by_version(self, client, version):
+        response = client.get(f"/execution/openapi.json?version={version}")
+        assert response.status_code == 200
+        assert ("ParamArgBinding" in response.json()["components"]["schemas"]) == (version == "2027-02-28")
+
+    def test_old_version_keeps_ignoring_a_mapped_stubs_arguments(self, old_ver_client, dag_maker):
+        with dag_maker("test_mapped_stub_compat", serialized=True):
+
+            @task.stub
+            def transform(country: str): ...
+
+            transform.expand(country=["uk", "fr"])
+
+        ti = next(t for t in dag_maker.create_dagrun().get_task_instances() if t.map_index == 0)
+        ti.set_state(State.QUEUED)
+        dag_maker.session.flush()
+
+        response = old_ver_client.patch(f"/execution/task-instances/{ti.id}/run", json=RUN_PATCH_BODY)
+        assert response.status_code == 200
+        assert "arg_bindings" not in response.json()
+
+    def test_old_version_cannot_run_a_stub_reading_a_mapped_upstream(self, old_ver_client, dag_maker):
+        with dag_maker("test_reduce_stub_compat", serialized=True):
+
+            @task.stub
+            def produce(n: int): ...
+
+            @task.stub
+            def report(values: list): ...
+
+            report(produce.expand(n=[1, 2]))
+
+        ti = next(t for t in dag_maker.create_dagrun().get_task_instances() if t.task_id == "report")
+        ti.set_state(State.QUEUED)
+        dag_maker.session.flush()
+
+        response = old_ver_client.patch(f"/execution/task-instances/{ti.id}/run", json=RUN_PATCH_BODY)
+        assert response.status_code == 422
+        assert response.json()["detail"]["reason"] == "arg_bindings_need_newer_client"
