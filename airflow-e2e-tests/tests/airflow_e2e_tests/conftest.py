@@ -947,7 +947,11 @@ def _setup_ts_sdk_integration(dot_env_file, tmp_dir):
 
     # Both of the example bundle's Dags: one bundle.mjs provides for two dag_ids,
     # and the tests check that dispatch tells their same-named tasks apart.
-    for dag_file in ("typescript_example.py", "typescript_taskflow_example.py"):
+    for dag_file in (
+        "typescript_example.py",
+        "typescript_taskflow_example.py",
+        "typescript_mapping_stub_example.py",
+    ):
         copyfile(TS_SDK_EXAMPLE_PATH / "dags" / dag_file, tmp_dir / "dags" / dag_file)
 
     dag_bundle_config = _build_dag_bundle_config({"ts-task-handlers": "/opt/airflow/ts-bundles"})

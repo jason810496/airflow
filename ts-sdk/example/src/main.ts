@@ -27,6 +27,8 @@
 import { Bundle, getClient, getContext, NEVER_EXPIRE, TaskHandler } from "@apache-airflow/ts-sdk";
 
 import { loadDynamicDags } from "./dynamic.js";
+import { mappingStubHandlers } from "./mapping-stubs.js";
+import { dag as mappingDag } from "./mapping.js";
 import { dag as nativeDag } from "./native.js";
 import { buildSummaryMessage, report, summarize } from "./taskflow.js";
 
@@ -121,5 +123,7 @@ bundle.register(
   new TaskHandler("typescript_taskflow_example", "summarize", summarize),
   new TaskHandler("typescript_taskflow_example", "report", report),
   new TaskHandler("typescript_taskflow_example", "build_message", buildSummaryMessage),
+  mappingDag,
+  ...mappingStubHandlers,
 );
 await bundle.serve();
