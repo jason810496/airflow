@@ -887,3 +887,21 @@ def test_a_dag_with_a_loop_core_cannot_run_is_an_import_error(mock_normalize):
     assert [call.args[0] for call in mock_normalize.call_args_list] == [broken.data, ok.data]
     assert [dag.dag_id for dag in proc.parsing_result.serialized_dags] == ["ok"]
     assert proc.parsing_result.import_errors == {"dag.native": "ValueError: loop is broken"}
+
+
+
+@patch("airflow.dag_processing.lang_sdk_processor.check_mapped_tasks", autospec=True)
+def test_a_dag_with_a_mapping_shape_core_cannot_deliver_is_an_import_error(mock_check):
+    mock_check.side_effect = [ValueError("Task 't' has a zip() inside a zip()"), None]
+    broken, ok = _serialize_dag("broken"), _serialize_dag("ok")
+    proc = _make_process()
+
+    proc._handle_request(
+        DagFileParsingResult(fileloc="/b/dag.native", serialized_dags=[broken, ok]), MagicMock(), 1
+    )
+
+    assert [call.args[0] for call in mock_check.call_args_list] == [broken.data, ok.data]
+    assert [dag.dag_id for dag in proc.parsing_result.serialized_dags] == ["ok"]
+    assert proc.parsing_result.import_errors == {
+        "dag.native": "ValueError: Task 't' has a zip() inside a zip()"
+    }

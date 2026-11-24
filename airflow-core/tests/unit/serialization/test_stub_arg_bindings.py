@@ -472,6 +472,26 @@ class TestMappedStubArgBindings:
         with pytest.raises(ValueError, match="a list rather than a dict"):
             self.get_hook_fields(result.operator)
 
+    def test_expand_kwargs_literal_dict_holding_an_upstream_output_rejected(self):
+        with DAG(dag_id="d"):
+            result = stub(fn_transform).expand_kwargs([{"country": stub(fn_extract)()}])
+
+        with pytest.raises(ValueError, match="literal dict cannot hold one"):
+            self.get_hook_fields(result.operator)
+
+    def test_group_expand_kwargs_literal_dict_holding_an_upstream_output_rejected(self):
+        captured = {}
+
+        @task_group
+        def group(country):
+            captured["op"] = stub(fn_transform)(country, {})
+
+        with DAG(dag_id="d"):
+            group.expand_kwargs([{"country": stub(fn_extract)()}])
+
+        with pytest.raises(ValueError, match="literal dict cannot hold one"):
+            build_arg_bindings(captured["op"].operator)
+
     def test_mapped_stub_inside_mapped_task_group_unconstructible(self):
         """The SDK bans expansion inside an expanded group outright, so no guard is needed here."""
 
