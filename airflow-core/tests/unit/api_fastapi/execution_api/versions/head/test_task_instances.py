@@ -1836,13 +1836,10 @@ class TestTIRunState:
         with dag_maker("test_mapped_stub_expand_kwargs_literal", serialized=True, session=session):
 
             @task.stub
-            def extract(): ...
-
-            @task.stub
             def transform(country: str, extracted, retries_num: int = 3): ...
 
             transform.partial(extracted={"a": 1}).expand_kwargs(
-                [{"country": "uk"}, {"country": "fr", "extracted": extract(), "retries_num": 5}], strict=False
+                [{"country": "uk"}, {"country": "fr", "extracted": {"b": 2}, "retries_num": 5}], strict=False
             )
 
         dr = dag_maker.create_dagrun()

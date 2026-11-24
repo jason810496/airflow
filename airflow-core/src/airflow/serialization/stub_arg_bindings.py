@@ -309,6 +309,16 @@ def _validate_whole_value(value: Any, op: AbstractOperator, name: str) -> None:
         _ensure_json_literal(value, op.task_id, name)
 
 
+def _validate_kwargs_item(value: Any, task_id: str, name: str) -> None:
+    """Validate a value in a literal ``expand_kwargs()`` dict, which Python would pass on unresolved."""
+    if isinstance(value, XComArg):
+        raise ValueError(
+            f"@task.stub task {task_id!r} expand_kwargs() dict passes an upstream output as {name!r}; a "
+            "literal dict cannot hold one, so expand_kwargs() over that upstream's output instead"
+        )
+    _ensure_json_literal(value, task_id, name)
+
+
 def _validate_expand_value(value: OperatorExpandArgument, task_id: str, name: str) -> None:
     """Validate one expand argument, whose upstream output may be wrapped in map(), zip() or concat()."""
     if _validate_xcom_value(value, task_id, name):
@@ -374,7 +384,7 @@ def _validate_expand_kwargs(
                 "partial() already sets; pass strict=False to let the mapping override them"
             )
         for name, item in mapping.items():
-            _validate_whole_value(item, op, name)
+            _validate_kwargs_item(item, task_id, name)
 
 
 def _build_xcom_binding(value: PlainXComArg, name: str) -> XComBindingEntry:
@@ -404,7 +414,7 @@ def _build_group_arg_binding(value: MappedArgument, op: DecoratedOperator, name:
             if isinstance(mapping, XComArg):
                 _validate_xcom_mapping(mapping, op, name)
             elif value._key in mapping:
-                _validate_whole_value(mapping[value._key], op, name)
+                _validate_kwargs_item(mapping[value._key], op.task_id, name)
     return entry
 
 
