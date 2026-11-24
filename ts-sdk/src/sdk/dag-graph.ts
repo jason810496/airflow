@@ -24,10 +24,12 @@ import {
   getDagOrderEdges,
   getDagTaskGroups,
   getDagTaskInputs,
+  getDagTaskMappings,
   isTaskRef,
   type Dag,
   type TaskGroupRecord,
 } from "./dag.js";
+import { getSourceNode, getSourceTaskIds, isMappedTaskRef } from "./mapping.js";
 
 /**
  * Each task's direct downstream task IDs, with every group endpoint expanded, as
@@ -85,7 +87,19 @@ export function buildDagGraph(dag: Dag): DagGraph {
 
   for (const [taskId, inputs] of getDagTaskInputs(dag)) {
     for (const value of Object.values(inputs)) {
-      if (isTaskRef(value)) link(value.taskId, taskId);
+      if (isTaskRef(value) || isMappedTaskRef(value)) link(value.taskId, taskId);
+    }
+  }
+  // A mapped task also waits for every task its expand() or expandKwargs() sources read.
+  for (const [taskId, mapping] of getDagTaskMappings(dag)) {
+    const sources =
+      mapping.expandKwargs !== undefined
+        ? [mapping.expandKwargs]
+        : Object.values(mapping.expand ?? {});
+    for (const source of sources) {
+      const node = getSourceNode(source);
+      for (const upstream of node === undefined ? [] : getSourceTaskIds(node))
+        link(upstream, taskId);
     }
   }
   const orderEdges = getDagOrderEdges(dag);

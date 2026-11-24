@@ -31,6 +31,26 @@ import {
 } from "../generated/dag-schema-fields.js";
 import { brand, DUPLICATE_COPY_HINT, hasBrand } from "./brand.js";
 import type { JsonValue } from "./client-types.js";
+import {
+  addSourceMethods,
+  getSourceNode,
+  getSourceTaskIds,
+  isMappedTaskRef,
+  isSource,
+  makeMappedTaskRef,
+  type ConcatSource,
+  type ElementOf,
+  type ElementsOf,
+  type ElementsOrFill,
+  type Expandable,
+  type MapCallable,
+  type MappedTaskRef,
+  type MapSource,
+  type SourceNode,
+  type XComSequence,
+  type ZipOptions,
+  type ZipSource,
+} from "./mapping.js";
 import { getCurrentModuleSource } from "./module-source.js";
 import { isOperator, isOwnOperator, type Operator } from "./operator.js";
 import { getClient, type TaskFunction } from "./task.js";
@@ -137,7 +157,7 @@ export interface TaskSpec extends GeneratedTaskFields {
 // Carries a reference's return type without carrying a value. Not exported, so
 // the property cannot be read or written from outside; it exists only so
 // `TaskRef<boolean>` and `TaskRef<number>` are different types to the compiler.
-declare const RETURN_TYPE: unique symbol;
+export declare const RETURN_TYPE: unique symbol;
 
 /**
  * A reference to the result of one task, returned by calling that task.
@@ -202,7 +222,26 @@ export interface TaskRef<TReturn = unknown> extends Node {
    * order does.
    */
   after(...upstream: readonly Node[]): TaskRef<TReturn>;
+  /** Apply `fn` to each element, for a later `expand` (ts-sdk ADR-0004). */
+  map<U>(this: TaskRef<HasElements>, fn: MapCallable<ElementOf<TReturn>, U>): MapSource<U>;
+  /** Pair this reference's elements with the others', for a later `expand`. */
+  zip<const S extends readonly Expandable[]>(
+    this: TaskRef<HasElements>,
+    ...others: S
+  ): ZipSource<[ElementOf<TReturn>, ...ElementsOf<S>]>;
+  zip<const S extends readonly Expandable[], F extends JsonValue>(
+    this: TaskRef<HasElements>,
+    ...others: [...S, ZipOptions<F>]
+  ): ZipSource<[ElementOf<TReturn> | F, ...ElementsOrFill<S, F>]>;
+  /** Append the others' elements to this reference's, for a later `expand`. */
+  concat(
+    this: TaskRef<HasElements>,
+    ...others: readonly Expandable<ElementOf<TReturn>>[]
+  ): ConcatSource<ElementOf<TReturn>>;
 }
+
+/** A value with elements: an array or a record. */
+type HasElements = readonly unknown[] | Readonly<Record<string, unknown>>;
 
 /**
  * A scope that declares tasks under a shared id prefix, and carries edges as a
@@ -523,8 +562,56 @@ export type TaskInput<TValue> = TaskRef<TValue> | JsonCompatible<TValue>;
 
 /** The inputs of a task, keyed by the name of the argument each one supplies. */
 export type TaskInputs<TArgs> = {
-  [K in keyof TArgs]: TaskRef | JsonCompatible<TArgs[K]>;
+  [K in keyof TArgs]:
+    | TaskRef
+    | JsonCompatible<TArgs[K]>
+    // A mapped task is read whole, as a reduce, only where the argument is a sequence.
+    | (TArgs[K] extends XComSequence<infer E> ? MappedTaskRef<E> : never);
 };
+
+/** What one expanded argument of type `T` can be given. */
+export type ExpandSource<T> =
+  | readonly JsonCompatible<T>[]
+  | (T extends readonly [infer K extends string, infer V]
+      ? Readonly<Record<K, JsonCompatible<V>>> | TaskRef<Readonly<Record<K, V>>>
+      : never)
+  | TaskRef<readonly T[]>
+  | MappedTaskRef<T>
+  | MapSource<T>
+  | ZipSource<T>
+  | ConcatSource<T>;
+
+/** The inputs of an `expand` call: one source per expanded argument. */
+export type ExpandInputs<TArgs> = { [K in keyof TArgs]: ExpandSource<TArgs[K]> };
+
+/** What `expandKwargs` takes: elements that are each one instance's remaining arguments. */
+export type KwargsSource<TArgs> =
+  | readonly JsonCompatible<TArgs>[]
+  | TaskRef<readonly TArgs[]>
+  | MappedTaskRef<TArgs>
+  | MapSource<TArgs>;
+
+/** `never` for an argument type with no known keys, which turns every mapping method off. */
+type Keyed<TArgs> = string extends keyof TArgs ? never : TArgs;
+
+/** What `partial` returns. Only expanding it calls the task. */
+export interface PartialTask<TRest, TReturn> {
+  /** `never` once `partial` has taken every argument, so `expand({})` does not compile. */
+  expand(
+    inputs: keyof TRest extends never ? never : ExpandInputs<TRest>,
+  ): MappedTaskRef<NonNullable<TReturn>>;
+  expandKwargs(source: KwargsSource<TRest>): MappedTaskRef<NonNullable<TReturn>>;
+}
+
+/** A task factory that can also be mapped: one instance per element it expands over. */
+export interface MappableTaskFactory<TArgs extends object, TReturn> {
+  (inputs: TaskInputs<TArgs>): TaskRef<TReturn>;
+  expand(inputs: ExpandInputs<Keyed<TArgs>>): MappedTaskRef<NonNullable<TReturn>>;
+  expandKwargs(source: KwargsSource<Keyed<TArgs>>): MappedTaskRef<NonNullable<TReturn>>;
+  partial<const P extends Partial<TaskInputs<Keyed<TArgs>>>>(
+    inputs: P & Record<Exclude<keyof P, keyof TArgs>, never>,
+  ): PartialTask<Omit<TArgs, keyof P>, TReturn>;
+}
 
 /**
  * What `dag.task(...)` returns: call it to declare where the task sits in the Dag.
@@ -552,7 +639,7 @@ export type TaskFactory<TArgs extends object | void = void, TReturn = unknown> =
   void,
 ]
   ? () => TaskRef<TReturn>
-  : (inputs: TaskInputs<TArgs>) => TaskRef<TReturn>;
+  : MappableTaskFactory<TArgs & object, TReturn>;
 
 /**
  * The trailing argument of `dag.task()`: the task's own {@link TaskSpec}.
@@ -650,12 +737,24 @@ export async function skipTasks(
  * bindings therefore win over anything recorded here, and the two never have to
  * be reconciled: a native Dag's wiring is what produced its bindings.
  */
-export type RecordedInputs = Readonly<Record<string, TaskRef | JsonValue>>;
+export type RecordedInputs = Readonly<Record<string, TaskRef | MappedTaskRef | JsonValue>>;
+
+/**
+ * Internal: how a mapped task was called. `partial` holds its fixed arguments, keyed by name, and
+ * either `expand` the source of each expanded argument or `expandKwargs` the source of each
+ * instance's arguments.
+ */
+export interface MappingRecord {
+  readonly partial: RecordedInputs;
+  readonly expand?: Readonly<Record<string, unknown>>;
+  readonly expandKwargs?: unknown;
+}
 
 // Assigned inside Dag's static block: gives package-internal code access to
 // Dag's private state without public accessors on the class.
 let taskRecordsOf: (dag: Dag) => ReadonlyMap<string, TaskRecord>;
 let inputsOf: (dag: Dag) => ReadonlyMap<string, RecordedInputs>;
+let mappingsOf: (dag: Dag) => ReadonlyMap<string, MappingRecord>;
 let orderEdgesOf: (dag: Dag) => readonly OrderEdge[];
 let labellingsOf: (dag: Dag) => readonly EdgeLabelling[];
 let definedInOf: (dag: Dag) => string | undefined;
@@ -693,6 +792,7 @@ export class Dag {
   readonly spec: DagSpec;
   readonly #tasks = new Map<string, TaskRecord>();
   readonly #inputs = new Map<string, RecordedInputs>();
+  readonly #mappings = new Map<string, MappingRecord>();
   // Keyed by the two task ids, so declaring an edge twice records it once, and
   // insertion-ordered so the serialized Dag reads as written.
   readonly #orderEdges = new Map<string, OrderEdge>();
@@ -714,6 +814,7 @@ export class Dag {
   static {
     taskRecordsOf = (dag) => dag.#tasks;
     inputsOf = (dag) => dag.#inputs;
+    mappingsOf = (dag) => dag.#mappings;
     orderEdgesOf = (dag) => [...dag.#orderEdges.values()];
     labellingsOf = (dag) => [...dag.#labellings];
     definedInOf = (dag) => dag.#definedIn;
@@ -1113,7 +1214,7 @@ export class Dag {
       ...runs,
       spec: freezeSpec(spec, () => `The spec for Dag "${this.dagId}" task "${taskId}"`),
     });
-    return ((...inputs: unknown[]) => {
+    const factory = ((...inputs: unknown[]) => {
       // TypeScript already says so, but from plain JavaScript a second
       // argument would be dropped without a word.
       if (inputs.length > 1) {
@@ -1130,7 +1231,129 @@ export class Dag {
       }
       this.#wire(taskId, inputs[0]);
       return task;
+    }) as TaskFactory<TArgs, TReturn> & Record<string, unknown>;
+    const mapped = (partial: unknown, how: Pick<MappingRecord, "expand" | "expandKwargs">) => {
+      if (operator !== undefined) {
+        throw new Error(
+          `Task "${taskId}" of Dag "${this.dagId}" is a ${operator.label ?? operator.operatorName} ` +
+            "task, which cannot be mapped",
+        );
+      }
+      return this.#wireMapped(taskId, task, partial, how);
+    };
+    const expanders = (partial: unknown) => ({
+      expand: (inputs: unknown) =>
+        mapped(partial, { expand: this.#expandInputsOf(taskId, inputs) }),
+      expandKwargs: (source: unknown) => mapped(partial, { expandKwargs: source }),
+    });
+    return Object.assign(factory, {
+      ...expanders(undefined),
+      partial: (inputs: unknown) => {
+        if (!isPlainRecord(inputs) || isTaskRef(inputs)) {
+          throw new Error(
+            `partial() of task "${taskId}" of Dag "${this.dagId}" takes one object naming its inputs`,
+          );
+        }
+        return Object.freeze(expanders(inputs));
+      },
     }) as TaskFactory<TArgs, TReturn>;
+  }
+
+  #expandInputsOf(taskId: string, inputs: unknown): Record<string, unknown> {
+    if (
+      !isPlainRecord(inputs) ||
+      isTaskRef(inputs) ||
+      isMappedTaskRef(inputs) ||
+      isSource(inputs)
+    ) {
+      throw new Error(
+        `expand() of task "${taskId}" of Dag "${this.dagId}" takes one object naming the ` +
+          "arguments it expands over: myTask.expand({ path: files })",
+      );
+    }
+    if (Object.keys(inputs).length === 0) {
+      throw new Error(
+        `expand() of task "${taskId}" of Dag "${this.dagId}" names no argument to expand over`,
+      );
+    }
+    return inputs;
+  }
+
+  #wireMapped(
+    taskId: string,
+    task: TaskRef,
+    partial: unknown,
+    how: Pick<MappingRecord, "expand" | "expandKwargs">,
+  ): MappedTaskRef {
+    const fixed = this.#checkInputs(
+      taskId,
+      partial === undefined ? {} : (partial as Record<string, unknown>),
+    );
+    for (const [key, value] of Object.entries(how.expand ?? {})) {
+      if (key in fixed) {
+        throw new Error(
+          `Input "${key}" of task "${taskId}" is given by both partial() and expand(); give it once`,
+        );
+      }
+      this.#checkExpandValue(taskId, `Input "${key}"`, value, "expand");
+    }
+    if (how.expandKwargs !== undefined) {
+      this.#checkExpandValue(taskId, "expandKwargs()", how.expandKwargs, "expandKwargs");
+    }
+    // Recorded as the task's call, so it cannot be called a second time.
+    this.#wire(taskId, partial ?? {});
+    this.#mappings.set(taskId, { partial: fixed, ...how });
+    const mappedRef: MappedTaskRef = makeMappedTaskRef({
+      dagId: this.dagId,
+      taskId,
+      before: (...downstream: readonly Node[]) => {
+        task.before(...downstream);
+        return mappedRef;
+      },
+      after: (...upstream: readonly Node[]) => {
+        task.after(...upstream);
+        return mappedRef;
+      },
+    });
+    return Object.freeze(mappedRef);
+  }
+
+  #checkExpandValue(
+    taskId: string,
+    what: string,
+    value: unknown,
+    method: "expand" | "expandKwargs",
+  ): void {
+    const node = getSourceNode(value);
+    if (node !== undefined) {
+      for (const upstreamId of getSourceTaskIds(node)) this.#checkOwnTask(taskId, what, upstreamId);
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (method === "expandKwargs" && !value.every((item) => isPlainRecord(item))) {
+        throw new Error(
+          `${what} of task "${taskId}" has to be a list of objects, each one instance's arguments`,
+        );
+      }
+    } else if (method === "expandKwargs" || !isPlainRecord(value)) {
+      throw new Error(
+        `${what} of task "${taskId}" of Dag "${this.dagId}" has no elements to expand over; give ` +
+          "it a list, a record, a task's reference, or a map(), zip() or concat() result",
+      );
+    }
+    const nested = findNestedTaskRef(value, new WeakSet());
+    if (nested) {
+      throw new Error(
+        `${what} of task "${taskId}" holds a reference to "${nested.taskId}" inside a literal ` +
+          "value, which no instance can read; expand over that task's reference instead",
+      );
+    }
+  }
+
+  #checkOwnTask(taskId: string, what: string, upstreamId: string): void {
+    if (!this.#tasks.has(upstreamId)) {
+      throw new Error(`${what} of task "${taskId}" refers to unregistered task "${upstreamId}"`);
+    }
   }
 
   // TypeScript is bypassable — from plain JavaScript, or an `as TaskSpec` cast
@@ -1297,7 +1520,8 @@ export class Dag {
         for (const other of upstream) this.#addOrderEdge(other, task, "after");
         return task;
       },
-    };
+    } as TaskRef;
+    addSourceMethods(task, { kind: "ref", taskId });
     brand(task, "TaskRef");
     return Object.freeze(task);
   }
@@ -1463,6 +1687,20 @@ export class Dag {
             "into before() or after(); pass the reference itself",
         );
       }
+      if (isSource(value)) {
+        throw new Error(
+          `Input "${key}" of task "${taskId}" is a map(), zip() or concat() result, which only ` +
+            "expand() and expandKwargs() take",
+        );
+      }
+      if (isMappedTaskRef(value)) {
+        if (value.dagId !== this.dagId) {
+          throw new Error(
+            `Input "${key}" of task "${taskId}" comes from Dag "${value.dagId}", not "${this.dagId}"`,
+          );
+        }
+        continue;
+      }
       // Anything unbranded is a literal argument, including a look-alike
       // `{dagId, taskId}` object: only a real reference makes an edge.
       if (!isTaskRef(value)) {
@@ -1610,6 +1848,28 @@ export function getDagEdgeLabellings(dag: Dag): readonly EdgeLabelling[] {
  *  A task that has not been called is absent. */
 export function getDagTaskInputs(dag: Dag): ReadonlyMap<string, RecordedInputs> {
   return inputsOf(dag);
+}
+
+/** Internal: how each mapped task of a Dag was called, keyed by task ID. */
+export function getDagTaskMappings(dag: Dag): ReadonlyMap<string, MappingRecord> {
+  return mappingsOf(dag);
+}
+
+/**
+ * Internal: the `map()` callables a mapped task applies to argument `name`, in order, or `undefined`.
+ *
+ * An `expandKwargs` source has one set of callables for every argument, so `name` does not matter.
+ */
+export function getDagTaskMapCallables(
+  dag: Dag,
+  taskId: string,
+  name: string,
+): readonly ((value: never) => unknown)[] | undefined {
+  const mapping = mappingsOf(dag).get(taskId);
+  if (mapping === undefined) return undefined;
+  const source = mapping.expandKwargs !== undefined ? mapping.expandKwargs : mapping.expand?.[name];
+  const node: SourceNode | undefined = getSourceNode(source);
+  return node?.kind === "map" ? node.fns : undefined;
 }
 
 /** Internal: the source file the Dag was constructed from, captured from

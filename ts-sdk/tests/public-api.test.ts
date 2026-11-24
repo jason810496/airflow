@@ -310,10 +310,10 @@ describe("public API", () => {
   });
 
   it("keeps the Dag authoring signatures extensible via trailing specs", () => {
-    // Identity, plus the two order-only edge verbs; the handler and the value
-    // stay hidden.
+    // Identity, the two order-only edge verbs, and the sources a mapped task expands over;
+    // the handler and the value stay hidden.
     expectTypeOf<Extract<keyof TaskRef, string>>().toEqualTypeOf<
-      "dagId" | "taskId" | "before" | "after"
+      "dagId" | "taskId" | "before" | "after" | "map" | "zip" | "concat"
     >();
     expectTypeOf<TaskRef["dagId"]>().toEqualTypeOf<string>();
     expectTypeOf<TaskRef["taskId"]>().toEqualTypeOf<string>();
@@ -360,9 +360,11 @@ describe("public API", () => {
     // is called with its inputs named.
     expectTypeOf<TaskFactory>().toEqualTypeOf<() => TaskRef>();
     expectTypeOf<TaskFactory<void, boolean>>().toEqualTypeOf<() => TaskRef<boolean>>();
-    expectTypeOf<TaskFactory<{ rows: number }>>().toEqualTypeOf<
-      (inputs: { rows: TaskRef | number }) => TaskRef
-    >();
+    expectTypeOf<TaskFactory<{ rows: number }>>().toBeCallableWith({ rows: 1 });
+    expectTypeOf<TaskFactory<{ rows: number }>>().returns.toEqualTypeOf<TaskRef>();
+    expectTypeOf<TaskFactory<{ rows: number }>>().toHaveProperty("expand");
+    expectTypeOf<TaskFactory<{ rows: number }>>().toHaveProperty("expandKwargs");
+    expectTypeOf<TaskFactory<{ rows: number }>>().toHaveProperty("partial");
     expectTypeOf<ConstructorParameters<typeof Dag>>().toEqualTypeOf<[string, DagSpec?]>();
     // Overloaded, so the two forms are checked by calling them rather than by
     // matching one signature.
