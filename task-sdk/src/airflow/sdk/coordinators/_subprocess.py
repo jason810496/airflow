@@ -49,7 +49,7 @@ import structlog
 from airflow.dag_processing.bundles.base import BundleVersionLock  # noqa: SDK002
 from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstanceState
+from airflow.sdk.api.datamodels._generated import BundleInfo, TaskArgBinding, TaskInstanceState
 from airflow.sdk.bases.xcom import (
     XComCoordinate,
     build_loop_error,
@@ -496,6 +496,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     _comm_server: socket.socket
     _logs_server: socket.socket
     _default_execution_timeout: float | None = None
+    # A Dag definition's runtime has its own Dag, and sends it to have its bindings resolved.
+    _is_native_dag: bool = False
 
     @classmethod
     def start(  # type: ignore[override]
@@ -511,6 +513,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         subprocess_logs_to_stdout: bool = False,
         startup_timeout: float = 10.0,
         default_execution_timeout: float | None = None,
+        is_native_dag: bool = False,
         **kwargs,
     ) -> Self:
         process_log = logger or structlog.get_logger(logger_name="task").bind()
@@ -562,6 +565,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                     subprocess_schema_version=subprocess_schema_version,
                     subprocess_logs_to_stdout=subprocess_logs_to_stdout,
                     default_execution_timeout=default_execution_timeout,
+                    is_native_dag=is_native_dag,
                     # The supervisor signals the group; must agree with process_group=0 above.
                     new_process_group=True,
                     comm_server=comm_server,
@@ -601,6 +605,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         bundle_info,
         sentry_integration: str,
     ) -> None:
+        # The sidecar imports the Dag file from them to resolve a Python Dag's mapped stub task.
+        self._dag_rel_path = os.fspath(dag_rel_path)
+        self._bundle_info = bundle_info
         super()._on_child_started(
             ti=ti,
             dag_rel_path=dag_rel_path,
@@ -612,6 +619,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._arm_execution_timeout()
 
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
+    _dag_rel_path: str | None = attrs.field(default=None, init=False)
+    _bundle_info: BundleInfo | None = attrs.field(default=None, init=False)
 
     def _prepare_ti_context(self, ti: TaskInstance, ti_context: TIRunContext) -> TIRunContext | None:
         """
@@ -620,7 +629,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         Like ``XCom.delete``, this reads, deletes, then purges each XCom. A failure fails this try, as it
         does for a Python task.
 
-        Also fills in the worker's default ``execution_timeout`` when the task sets none.
+        Also fills in the worker's default ``execution_timeout`` when the task sets none, and has the
+        Python sidecar resolve the arguments of a Python Dag's stub task that differ per map index.
         """
         # ti_context.execution_timeout is what the API server read from the serialized Dag. A task that
         # sets none gets the worker's default, as a Python task does when the worker parses its Dag.
@@ -668,8 +678,93 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         # The supervisor has already deleted the listed XComs, so it sends the runtime an empty list.
         # If a runtime also deletes these XComs itself, the empty list keeps the runtime from deleting
         # them a second time.
-        return ti_context.model_copy(
-            update={"xcom_keys_to_clear": [], "execution_timeout": execution_timeout}
+        update: dict[str, Any] = {"xcom_keys_to_clear": [], "execution_timeout": execution_timeout}
+        if self._needs_arg_resolution(ti, ti_context):
+            if (arg_bindings := self._resolve_arg_bindings(ti, ti_context)) is None:
+                return None
+            update["arg_bindings"] = arg_bindings
+        prepared = ti_context.model_copy(update=update)
+        if self._runtime_lacks_mapped_arg_bindings(prepared):
+            reason = (
+                "The task's arguments need a runtime at supervisor schema version 2027-02-28 or later, "
+                f"but it is at {self._subprocess_schema_version}; upgrade its SDK"
+            )
+            self.process_log.error(reason)
+            self._pending_terminal_state_msg = TaskState(
+                state=TaskInstanceState.FAILED, end_date=datetime.now(tz=UTC), retry_reason=reason
+            )
+            self.kill(signal.SIGKILL)
+            return None
+        return prepared
+
+    def _needs_arg_resolution(self, ti: TaskInstance, ti_context: TIRunContext) -> bool:
+        if self._is_native_dag or not ti_context.arg_bindings:
+            return False
+        from airflow.sdk.coordinators._stub_mapping import needs_resolution
+
+        return needs_resolution(ti, ti_context.arg_bindings)
+
+    def _resolve_arg_bindings(
+        self, ti: TaskInstance, ti_context: TIRunContext
+    ) -> list[TaskArgBinding] | None:
+        """
+        Have the Python sidecar import the Dag file and resolve the task's arguments at this map index.
+
+        Returns None, having stopped the task, when they cannot be resolved or a ``map()`` callable
+        skipped the instance.
+        """
+        call = XComBackendCall(
+            hook="resolve_bindings",
+            value={
+                "ti": ti.model_dump(mode="json"),
+                # A binding's ``default`` means something by its presence alone, so unset keys stay out.
+                "ti_context": ti_context.model_dump(mode="json", exclude_unset=True),
+                "dag_rel_path": self._dag_rel_path,
+                "bundle_info": self._bundle_info.model_dump(mode="json") if self._bundle_info else None,
+            },
+        )
+        try:
+            result = self._run_xcom_backend_call(call)
+            if not isinstance(answer := result.value, dict):
+                raise TypeError(f"The sidecar answered {type(answer).__name__}, not a dict")
+            if "skipped" in answer:
+                self.process_log.info("A map() callable skipped the task", reason=answer["skipped"])
+                self._pending_terminal_state_msg = TaskState(
+                    state=TaskInstanceState.SKIPPED, end_date=datetime.now(tz=UTC)
+                )
+                self.kill(signal.SIGKILL)
+                return None
+            if not isinstance(bindings := answer.get("bindings"), list):
+                raise TypeError(f"The sidecar resolved the bindings to {type(bindings).__name__}, not a list")
+            return [TaskArgBinding.model_validate(binding) for binding in bindings]
+        except _TaskStoppedError as e:
+            if self._terminal_state != SERVER_TERMINATED:
+                self.process_log.error(
+                    "Stopped resolving the task's arguments; the task process has exited",
+                    exit_code=self._exit_code,
+                    error=e.error,
+                )
+            self.kill(signal.SIGKILL)
+        except Exception as e:
+            self.process_log.exception("Failed to resolve the task's arguments; not running the task")
+            self._fail_before_start(ti_context, f"Failed to resolve the task's arguments: {e}")
+        return None
+
+    def _runtime_lacks_mapped_arg_bindings(self, ti_context: TIRunContext) -> bool:
+        if (version := self._subprocess_schema_version) is None or not ti_context.arg_bindings:
+            return False
+        # Imported here, like the migrator's own cadwyn import, so a Python-only worker never pays for it.
+        from airflow.sdk.execution_time.schema.versions.v2027_02_28 import (
+            AddMappedStubArgBindingsToSupervisorTIRunContext,
+            is_mapped_arg_binding,
+        )
+
+        if get_schema_version_migrator().has_change(
+            version, AddMappedStubArgBindingsToSupervisorTIRunContext
+        ):
+            return False
+        return any(
+            is_mapped_arg_binding(binding.model_dump(mode="json")) for binding in ti_context.arg_bindings
         )
 
     def _fail_before_start(self, ti_context: TIRunContext, reason: str) -> None:
@@ -761,9 +856,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._start_xcom_backend_call(call, finish)
         return ResponseSent.ALREADY_SENT
 
-    def _run_xcom_backend_call(self, call: XComBackendCall) -> None:
+    def _run_xcom_backend_call(self, call: XComBackendCall) -> XComBackendResult:
         """
-        Run ``call`` and wait for it, for a caller with no request loop to return to.
+        Run ``call`` and wait for its result, for a caller with no request loop to return to.
 
         :raises _TaskStoppedError: when the task is stopped before the call returns or as it returns.
         :raises XComBackendError: when the call fails or is not answered in time.
@@ -784,6 +879,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             raise _TaskStoppedError(error)
         if error is not None:
             raise XComBackendError(error)
+        return answer[0]
 
     def _is_stopped(self) -> bool:
         # kill() can fail to stop the process, so a server stop counts on its own.
@@ -1275,6 +1371,7 @@ class SubprocessCoordinator(BaseCoordinator):
                 subprocess_schema_version=subprocess_schema_version,
                 startup_timeout=self.task_startup_timeout,
                 default_execution_timeout=default_execution_timeout,
+                is_native_dag=is_native,
             )
             exit_code = process.wait()
             return self.ExecutionResult(exit_code, process.final_state)

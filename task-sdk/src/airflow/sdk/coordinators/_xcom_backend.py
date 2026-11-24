@@ -31,7 +31,7 @@ import signal
 import time
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal, cast
 from uuid import UUID
 
 import attrs
@@ -43,10 +43,19 @@ from airflow.sdk.execution_time.comms import (
     ConnectionResult,
     ErrorResponse,
     GetConnection,
+    GetTICount,
     GetVariable,
+    GetXCom,
+    GetXComCount,
+    GetXComSequenceItem,
+    GetXComSequenceSlice,
     MaskSecret,
+    TICount,
     VariableResult,
+    XComCountResponse,
     XComResult,
+    XComSequenceIndexResult,
+    XComSequenceSliceResult,
 )
 from airflow.sdk.execution_time.supervisor import (
     ResponseSent,
@@ -91,10 +100,11 @@ class XComBackendCall(BaseModel):
     A call of an XCom backend hook, sent to the helper process.
 
     ``value`` is a value as the runtime sends it for ``store``, the XCom row for ``load`` and ``purge``,
-    and a list of rows for ``load_many``.
+    a list of rows for ``load_many``, and the task instance, its run context and its Dag file for
+    ``resolve_bindings``.
     """
 
-    hook: Literal["store", "load", "load_many", "purge", "exit"]
+    hook: Literal["store", "load", "load_many", "purge", "resolve_bindings", "exit"]
     key: str = ""
     value: JsonValue = None
     coordinate: _Coordinate | None = None
@@ -126,12 +136,30 @@ class AwaitXComBackendCall(BaseModel):
     type: Literal["AwaitXComBackendCall"] = "AwaitXComBackendCall"
 
 
+# Resolving a mapped stub's bindings reads XComs and counts task instances, as a Python task does.
 _ToXComBackendProcess = Annotated[
-    XComBackendCall | ConnectionResult | VariableResult | ErrorResponse,
+    XComBackendCall
+    | ConnectionResult
+    | VariableResult
+    | XComResult
+    | XComCountResponse
+    | XComSequenceIndexResult
+    | XComSequenceSliceResult
+    | TICount
+    | ErrorResponse,
     Field(discriminator="type"),
 ]
 _FromXComBackendProcess = Annotated[
-    AwaitXComBackendCall | XComBackendResult | GetConnection | GetVariable | MaskSecret,
+    AwaitXComBackendCall
+    | XComBackendResult
+    | GetConnection
+    | GetVariable
+    | MaskSecret
+    | GetXCom
+    | GetXComCount
+    | GetXComSequenceItem
+    | GetXComSequenceSlice
+    | GetTICount,
     Field(discriminator="type"),
 ]
 
@@ -286,7 +314,16 @@ class XComBackendProcess(WatchedSubprocess):
         return ResponseSent.ALREADY_SENT
 
     _request_handlers = {
-        **WatchedSubprocess._get_shared_request_handlers(GetConnection, GetVariable, MaskSecret),
+        **WatchedSubprocess._get_shared_request_handlers(
+            GetConnection,
+            GetVariable,
+            MaskSecret,
+            GetXCom,
+            GetXComCount,
+            GetXComSequenceItem,
+            GetXComSequenceSlice,
+            GetTICount,
+        ),
         **dict(
             [
                 register_request_method(AwaitXComBackendCall, _handle_await_call),
@@ -344,6 +381,26 @@ class _HookRunner:
     def load_many(self, call: XComBackendCall) -> XComBackendResult:
         rows = call.value if isinstance(call.value, list) else []
         return XComBackendResult(value=[self._load_row(call.key, row) for row in rows])
+
+    def resolve_bindings(self, call: XComBackendCall) -> XComBackendResult:
+        from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TIRunContext
+        from airflow.sdk.coordinators._stub_mapping import resolve_arg_bindings
+        from airflow.sdk.exceptions import AirflowSkipException
+        from airflow.sdk.execution_time.task_runner import load_dag_task
+
+        if not isinstance(call.value, dict):
+            raise ValueError(
+                "A resolve_bindings call needs the task instance, its run context and its Dag file"
+            )
+        ti = TaskInstance.model_validate(call.value["ti"])
+        ti_context = TIRunContext.model_validate(call.value["ti_context"])
+        bundle_info = BundleInfo.model_validate(call.value["bundle_info"])
+        task = load_dag_task(bundle_info, str(call.value["dag_rel_path"]), ti.dag_id, ti.task_id)
+        try:
+            bindings = resolve_arg_bindings(ti, ti_context, task)
+        except AirflowSkipException as e:
+            return XComBackendResult(value={"skipped": str(e)})
+        return XComBackendResult(value={"bindings": cast("JsonValue", bindings)})
 
     def purge(self, call: XComBackendCall) -> XComBackendResult:
         self.xcom.purge(XComResult(key=call.key, value=call.value))

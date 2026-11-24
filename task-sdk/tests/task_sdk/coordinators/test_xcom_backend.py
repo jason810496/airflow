@@ -32,8 +32,9 @@ import structlog
 from task_sdk import make_client
 from uuid6 import uuid7
 
-from airflow.sdk import Connection
+from airflow.sdk import DAG, Connection, task
 from airflow.sdk.api.client import Client
+from airflow.sdk.api.datamodels._generated import BundleInfo, TaskArgBinding, TaskInstance
 from airflow.sdk.bases.xcom import BaseXCom, XComCoordinate
 from airflow.sdk.coordinators._xcom_backend import (
     AwaitXComBackendCall,
@@ -462,3 +463,82 @@ class TestXComBackendProcessSendCall:
         on_result.assert_called_once_with(
             XComBackendResult(error="The XCom backend process exited before it was sent a call")
         )
+
+
+class TestResolveBindingsInTheProcess:
+    """The process imports a Python Dag's task and resolves its bindings, as a Python task resolves itself."""
+
+    @pytest.fixture
+    def requests(self) -> list[str]:
+        return []
+
+    @pytest.fixture
+    def backend_process(self, requests):
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
+            requests.append(f"{request.method} {request.url.path}")
+            if request.url.path == "/xcoms/d/r/nums/return_value":
+                return httpx2.Response(200, json={"key": "return_value", "value": [10, 20]})
+            return httpx2.Response(404, json={"detail": "not found"})
+
+        with DAG("d"):
+
+            @task
+            def nums():
+                return []
+
+            @task
+            def show(x): ...
+
+            mapped = show.expand(x=nums().map(lambda n: n + 1))
+
+        # The process forks with the patch in place, so it imports this task rather than a Dag file.
+        with (
+            patch(
+                "airflow.sdk.coordinators._xcom_backend.task_process_uses_exec",
+                autospec=True,
+                return_value=False,
+            ),
+            patch(
+                "airflow.sdk.execution_time.task_runner.load_dag_task",
+                autospec=True,
+                return_value=mapped.operator,
+            ),
+        ):
+            proc = XComBackendProcess.start(
+                id=uuid7(),
+                client=make_client(transport=httpx2.MockTransport(handle_request)),
+                logger=structlog.get_logger(logger_name="task"),
+                selector=selectors.DefaultSelector(),
+            )
+        yield proc
+        proc.stop()
+        proc.selector.close()
+
+    def test_resolves_the_element_of_this_map_index(self, backend_process, requests, make_ti_context):
+        ti = TaskInstance(
+            id=uuid7(),
+            task_id="show",
+            dag_id="d",
+            run_id="r",
+            try_number=1,
+            dag_version_id=uuid7(),
+            map_index=1,
+        )
+        ti_context = make_ti_context(dag_id="d", run_id="r").model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate({"name": "x", "kind": "param"})]}
+        )
+        call = XComBackendCall(
+            hook="resolve_bindings",
+            value={
+                "ti": ti.model_dump(mode="json"),
+                "ti_context": ti_context.model_dump(mode="json"),
+                "dag_rel_path": "mapped.py",
+                "bundle_info": BundleInfo(name="dags").model_dump(mode="json"),
+            },
+        )
+
+        result = _run_call(backend_process, [], call)
+
+        assert result.error is None
+        assert result.value == {"bindings": [{"name": "x", "kind": "literal", "value": 21}]}
+        assert requests == ["GET /xcoms/d/r/nums/return_value"]

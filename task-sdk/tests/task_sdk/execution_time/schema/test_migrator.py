@@ -412,6 +412,32 @@ class TestGetSchemaVersionMigrator:
         assert get_schema_version_migrator()._supervisor_version == bundle.versions[0].value
 
 
+class TestMappedStubArgBindingsChange:
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            pytest.param({"name": "totals", "kind": "sequence", "task_id": "transform"}, id="sequence"),
+            pytest.param({"name": "row", "kind": "param"}, id="param"),
+            pytest.param({"kind": "kwargs"}, id="kwargs"),
+        ],
+    )
+    def test_is_mapped_arg_binding(self, binding):
+        from airflow.sdk.execution_time.schema.versions.v2027_02_28 import is_mapped_arg_binding
+
+        assert is_mapped_arg_binding(binding)
+        assert not is_mapped_arg_binding({"name": "row", "kind": "xcom", "task_id": "extract"})
+        assert not is_mapped_arg_binding({"name": "row", "kind": "literal", "value": 1})
+
+    @pytest.mark.parametrize(("version", "expected"), [("2026-10-30", False), ("2027-02-28", True)])
+    def test_has_change(self, version, expected):
+        from airflow.sdk.execution_time.schema.versions.v2027_02_28 import (
+            AddMappedStubArgBindingsToSupervisorTIRunContext,
+        )
+
+        migrator = get_schema_version_migrator()
+        assert migrator.has_change(version, AddMappedStubArgBindingsToSupervisorTIRunContext) is expected
+
+
 class TestResolveBodyClass:
     """All branches of :func:`resolve_body_class` with the mock registry."""
 

@@ -44,7 +44,13 @@ from uuid6 import uuid7
 
 from airflow.dag_processing.bundles.base import BaseDagBundle, BundleVersion
 from airflow.sdk.api.client import Client, TaskInstanceOperations
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TaskInstanceState, TIRunContext
+from airflow.sdk.api.datamodels._generated import (
+    BundleInfo,
+    TaskArgBinding,
+    TaskInstance,
+    TaskInstanceState,
+    TIRunContext,
+)
 from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
 from airflow.sdk.coordinators._subprocess import (
@@ -57,6 +63,7 @@ from airflow.sdk.coordinators._subprocess import (
     _PopenActivitySubprocess,
     _ResourceTracker,
     _start_server,
+    _TaskStoppedError,
     log,
 )
 from airflow.sdk.coordinators._xcom_backend import (
@@ -2146,6 +2153,174 @@ class TestPopenActivitySubprocessXComBackend:
             proc._monitor_subprocess()
 
         backend.stop.assert_called_once_with()
+
+
+_PARAM_BINDING = {"name": "row", "kind": "param"}
+_RESOLVED_BINDING = {"name": "row", "kind": "literal", "value": "de"}
+_SEQUENCE_BINDING = {"name": "rows", "kind": "sequence", "task_id": "extract"}
+
+
+class TestPopenActivitySubprocessResolveArgBindings:
+    @pytest.fixture
+    def mapped_ti_context(self, make_ti_context):
+        return make_ti_context().model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate(_PARAM_BINDING)]}
+        )
+
+    @pytest.fixture
+    def proc(self, monkeypatch):
+        monkeypatch.setattr("airflow.sdk.execution_time.xcom.XCom", BaseXCom)
+        ti = _make_ti()
+        process = MagicMock(spec=ProcessTracker)
+        process.pid = 12345
+        proc = _PopenActivitySubprocess(
+            id=ti.id,
+            pid=12345,
+            process=process,
+            process_log=structlog.get_logger(logger_name="task"),
+            stdin=MagicMock(spec=socket.socket),
+            client=MagicMock(),
+            comm_server=MagicMock(spec=socket.socket),
+            logs_server=MagicMock(spec=socket.socket),
+        )
+        proc.ti = ti  # type: ignore[assignment]
+        proc._dag_rel_path = "dags/mapped.py"
+        proc._bundle_info = BundleInfo(name="dags", version="v1")
+        yield proc
+        proc.selector.close()
+
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_the_sidecar_resolves_a_python_dags_bindings_before_the_task_starts(
+        self, mock_call, proc, mapped_ti_context
+    ):
+        mock_call.return_value = XComBackendResult(value={"bindings": [_RESOLVED_BINDING]})
+
+        prepared = proc._prepare_ti_context(proc.ti, mapped_ti_context)
+
+        assert prepared is not None
+        assert [binding.model_dump(exclude_unset=True) for binding in prepared.arg_bindings] == [
+            _RESOLVED_BINDING
+        ]
+        (call,) = [c.args[1] for c in mock_call.call_args_list]
+        assert call.hook == "resolve_bindings"
+        assert call.value["ti"]["id"] == str(proc.ti.id)
+        assert call.value["ti_context"]["arg_bindings"] == [_PARAM_BINDING]
+        assert call.value["dag_rel_path"] == "dags/mapped.py"
+        assert call.value["bundle_info"]["name"] == "dags"
+
+    @pytest.mark.parametrize(
+        ("bindings", "map_index"),
+        [
+            pytest.param(None, 0, id="no-bindings"),
+            pytest.param([_RESOLVED_BINDING], 0, id="literal"),
+            pytest.param([_SEQUENCE_BINDING], -1, id="reduce-outside-a-mapped-group"),
+        ],
+    )
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_bindings_that_do_not_vary_per_map_index_need_no_sidecar(
+        self, mock_call, proc, make_ti_context, bindings, map_index
+    ):
+        proc.ti = proc.ti.model_copy(update={"map_index": map_index})  # type: ignore[assignment]
+        ti_context = make_ti_context().model_copy(
+            update={"arg_bindings": bindings and [TaskArgBinding.model_validate(b) for b in bindings]}
+        )
+
+        assert proc._prepare_ti_context(proc.ti, ti_context) is not None
+
+        mock_call.assert_not_called()
+
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_a_sequence_in_a_mapped_group_is_resolved(self, mock_call, proc, make_ti_context):
+        mock_call.return_value = XComBackendResult(value={"bindings": [_RESOLVED_BINDING]})
+        proc.ti = proc.ti.model_copy(update={"map_index": 1})  # type: ignore[assignment]
+        ti_context = make_ti_context().model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate(_SEQUENCE_BINDING)]}
+        )
+
+        assert proc._prepare_ti_context(proc.ti, ti_context) is not None
+
+        mock_call.assert_called_once()
+
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_a_dag_definitions_runtime_resolves_its_own_bindings(self, mock_call, proc, mapped_ti_context):
+        proc._is_native_dag = True
+
+        prepared = proc._prepare_ti_context(proc.ti, mapped_ti_context)
+
+        assert prepared is not None
+        assert [binding.model_dump(exclude_unset=True) for binding in prepared.arg_bindings] == [
+            _PARAM_BINDING
+        ]
+        mock_call.assert_not_called()
+
+    @patch.object(_PopenActivitySubprocess, "kill", autospec=True)
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_a_skip_from_a_map_callable_skips_the_task(self, mock_call, mock_kill, proc, mapped_ti_context):
+        mock_call.return_value = XComBackendResult(value={"skipped": "nothing to load"})
+
+        assert proc._prepare_ti_context(proc.ti, mapped_ti_context) is None
+
+        assert proc._pending_terminal_state_msg.state == TaskInstanceState.SKIPPED
+        mock_kill.assert_called_once_with(proc, signal.SIGKILL)
+
+    @patch.object(_PopenActivitySubprocess, "kill", autospec=True)
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_arguments_that_cannot_be_resolved_fail_the_try(
+        self, mock_call, mock_kill, proc, mapped_ti_context
+    ):
+        mock_call.side_effect = XComBackendError(
+            "ArgResolutionError: Argument 'row' has no value at map index 3"
+        )
+
+        assert proc._prepare_ti_context(proc.ti, mapped_ti_context) is None
+
+        assert proc._pending_terminal_state_msg.state == TaskInstanceState.FAILED
+        assert proc._pending_terminal_state_msg.retry_reason == (
+            "Failed to resolve the task's arguments: "
+            "ArgResolutionError: Argument 'row' has no value at map index 3"
+        )
+        mock_kill.assert_called_once_with(proc, signal.SIGKILL)
+
+    @patch.object(_PopenActivitySubprocess, "kill", autospec=True)
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_a_stopped_task_leaves_the_outcome_to_the_server(
+        self, mock_call, mock_kill, proc, mapped_ti_context
+    ):
+        mock_call.side_effect = _TaskStoppedError(None)
+        proc._terminal_state = SERVER_TERMINATED
+
+        assert proc._prepare_ti_context(proc.ti, mapped_ti_context) is None
+
+        assert proc._pending_terminal_state_msg is None
+        mock_kill.assert_called_once_with(proc, signal.SIGKILL)
+
+    @pytest.mark.parametrize(
+        ("version", "refused"),
+        [pytest.param("2026-10-30", True, id="older"), pytest.param("2027-02-28", False, id="current")],
+    )
+    @patch.object(_PopenActivitySubprocess, "kill", autospec=True)
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_a_runtime_too_old_for_the_resolved_bindings_does_not_start(
+        self, mock_call, mock_kill, proc, mapped_ti_context, version, refused
+    ):
+        mock_call.return_value = XComBackendResult(value={"bindings": [_SEQUENCE_BINDING]})
+        proc._subprocess_schema_version = version
+
+        prepared = proc._prepare_ti_context(proc.ti, mapped_ti_context)
+
+        assert (prepared is None) is refused
+        if refused:
+            assert (
+                "supervisor schema version 2027-02-28 or later"
+                in proc._pending_terminal_state_msg.retry_reason
+            )
+
+    @patch.object(_PopenActivitySubprocess, "_run_xcom_backend_call", autospec=True)
+    def test_an_older_runtime_runs_a_python_dags_resolved_bindings(self, mock_call, proc, mapped_ti_context):
+        mock_call.return_value = XComBackendResult(value={"bindings": [_RESOLVED_BINDING]})
+        proc._subprocess_schema_version = "2026-10-30"
+
+        assert proc._prepare_ti_context(proc.ti, mapped_ti_context) is not None
 
 
 class TestResolveArtifactBundle:

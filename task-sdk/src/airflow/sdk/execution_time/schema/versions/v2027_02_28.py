@@ -26,6 +26,8 @@ New bodies in this version:
 
 from __future__ import annotations
 
+from typing import Any
+
 from cadwyn import (
     RequestInfo,
     ResponseInfo,
@@ -107,3 +109,22 @@ class AddXComBackendErrorType(VersionChange):
         """Report the failure as a generic one to a runtime whose version has no type for it."""
         if response.body.get("error") == ErrorType.XCOM_BACKEND_ERROR.value:
             response.body["error"] = ErrorType.GENERIC_ERROR.value
+
+
+class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
+    """
+    Add the binding kinds of a mapped stub task: ``sequence``, ``param`` and ``kwargs``.
+
+    The supervisor-schema mirror of the execution API's ``AddMappedStubArgBindings``, named apart so
+    the two migrations are not confused. The supervisor does not start a task on an older runtime
+    when any binding needs this version, so no binding is dropped on the way down.
+    """
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = ()
+
+
+def is_mapped_arg_binding(binding: dict[str, Any]) -> bool:
+    """Whether *binding* is of a kind this version added."""
+    return binding["kind"] not in ("xcom", "literal")
