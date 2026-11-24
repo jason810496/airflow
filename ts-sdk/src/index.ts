@@ -41,10 +41,24 @@ export type {
   TaskGroupRef,
   TaskInput,
   TaskInputs,
+  ExpandInputs,
+  ExpandSource,
+  KwargsSource,
+  MappableTaskFactory,
+  PartialTask,
   TaskOptions,
   TaskRef,
   TaskSpec,
 } from "./sdk/dag.js";
+export type {
+  ConcatSource,
+  MapCallable,
+  MappedTaskRef,
+  MapSource,
+  XComSequence,
+  ZipOptions,
+  ZipSource,
+} from "./sdk/mapping.js";
 export type { TaskClient, TaskStateStore } from "./sdk/client.js";
 export type {
   ConnectionResult,

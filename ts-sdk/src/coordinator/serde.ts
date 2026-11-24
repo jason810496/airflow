@@ -45,15 +45,18 @@ import {
   getDagEdgeLabellings,
   getDagTaskGroups,
   getDagTaskInputs,
+  getDagTaskMappings,
   getDagTaskRecords,
   isTaskRef,
   UPSTREAM_JOIN_SUFFIX,
   type Dag,
+  type MappingRecord,
   type RecordedInputs,
   type TaskGroupRecord,
   type TaskRecord,
 } from "../sdk/dag.js";
 import { buildDagGraph, type DagGraph } from "../sdk/dag-graph.js";
+import { getSourceNode, isMappedTaskRef, type SourceNode } from "../sdk/mapping.js";
 import { describeType, toPlainJson } from "../sdk/plain-json.js";
 
 /** A serialized Dag: JSON, by the time it reaches the supervisor as msgpack. */
@@ -184,6 +187,7 @@ export function serializeDag(
 ): Record<string, SerializedValue> {
   const graph = buildDagGraph(dag);
   const inputs = getDagTaskInputs(dag);
+  const mappings = getDagTaskMappings(dag);
   const dagDependencies: SerializedValue[] = [];
   const data: Record<string, SerializedValue> = {
     dag_id: dag.dagId,
@@ -204,6 +208,7 @@ export function serializeDag(
         graph.downstreamTaskIds.get(taskId),
         inputs.get(taskId),
         dag.spec.queue,
+        mappings.get(taskId),
       );
     }),
     dag_dependencies: dagDependencies,
@@ -242,6 +247,7 @@ function serializeTask(
   downstream: ReadonlySet<string> | undefined,
   inputs: RecordedInputs | undefined,
   dagQueue: string | undefined,
+  mapping: MappingRecord | undefined,
 ): SerializedValue {
   const data: Record<string, SerializedValue> = {
     task_id: taskId,
@@ -265,8 +271,12 @@ function serializeTask(
     data["_operator_name"] = record.operator.operatorName;
     Object.assign(data, record.operator.serialize?.(label));
   }
-  const bindings = serializeArgBindings(inputs, label);
-  if (bindings) data["_arg_bindings"] = bindings;
+  if (mapping) {
+    Object.assign(data, serializeMapping(mapping, label));
+  } else {
+    const bindings = serializeArgBindings(inputs, label);
+    if (bindings) data["_arg_bindings"] = bindings;
+  }
   // Lets `NotPreviouslySkippedDep` re-skip a cleared downstream, as Python's SkipMixin does.
   if (record.canSkipDownstream) data["_can_skip_downstream"] = true;
   applySchemaFields(data, withDagQueue(record.spec, dagQueue), TASK_FIELD_RULES, label);
@@ -298,8 +308,110 @@ function serializeArgBindings(
   return entries.map(([name, value]): SerializedValue =>
     isTaskRef(value)
       ? { name, kind: "xcom", task_id: value.taskId }
-      : { name, kind: "literal", value: toPlainJson(value, `Input "${name}" of ${label}`) },
+      : isMappedTaskRef(value)
+        ? // A mapped task's whole output, which the runtime reads as a lazy sequence.
+          { name, kind: "sequence", task_id: value.taskId }
+        : { name, kind: "literal", value: toPlainJson(value, `Input "${name}" of ${label}`) },
   );
+}
+
+/**
+ * A mapped task's fields, as Python's `serialize_mapped_operator` writes them for a decorated task
+ * (ts-sdk ADR-0004, *Implementation notes*).
+ *
+ * Every argument the call gives becomes a `param` entry, `partial` keys first, which the API
+ * server resolves per map index. `expandKwargs` writes one `kwargs` entry last instead of naming
+ * its keys, since a handler's argument type is erased; a key no instance gives takes the handler's
+ * own default.
+ */
+function serializeMapping(mapping: MappingRecord, label: string): Record<string, SerializedValue> {
+  const opKwargs: Record<string, SerializedValue> = {};
+  for (const [name, value] of Object.entries(mapping.partial)) {
+    opKwargs[name] =
+      isTaskRef(value) || isMappedTaskRef(value)
+        ? encodeXComRef({ kind: "ref", taskId: value.taskId })
+        : serializeValue(toPlainJson(value, `partial() input "${name}" of ${label}`));
+  }
+  const bindings: SerializedValue[] = Object.keys(mapping.partial).map((name) => ({
+    name,
+    kind: "param",
+  }));
+  let expandInput: SerializedValue;
+  if (mapping.expandKwargs !== undefined) {
+    expandInput = {
+      type: "list-of-dicts",
+      value: encodeExpandValue(mapping.expandKwargs, `expandKwargs() of ${label}`),
+    };
+    bindings.push({ kind: "kwargs" });
+  } else {
+    const expand = mapping.expand ?? {};
+    const encoded: Record<string, SerializedValue> = {};
+    // A stored Dag may re-order the keys, and their order fixes the cross product's, as in Python.
+    const expandKeys = Object.keys(expand);
+    for (const [name, value] of Object.entries(expand)) {
+      encoded[name] = encodeExpandValue(toPairs(value), `expand() input "${name}" of ${label}`);
+      bindings.push(
+        expandKeys.length > 1
+          ? { name, kind: "param", expand_keys: expandKeys }
+          : { name, kind: "param" },
+      );
+    }
+    expandInput = { type: "dict-of-lists", value: { __type: "dict", __var: encoded } };
+  }
+  return {
+    _is_mapped: true,
+    _expand_input_attr: "op_kwargs_expand_input",
+    op_kwargs_expand_input: expandInput,
+    // A key partial() also sets fails the instance, as Python's strict expand_kwargs() does.
+    _disallow_kwargs_override: mapping.expandKwargs !== undefined,
+    partial_kwargs: { op_kwargs: { __type: "dict", __var: opKwargs }, op_args: [] },
+    _arg_bindings: bindings,
+  };
+}
+
+/**
+ * A literal record as its `[key, value]` pairs, which is what each instance receives. The stored Dag
+ * does not keep a dict's key order, so Airflow refuses to expand over one.
+ */
+function toPairs(value: unknown): unknown {
+  if (getSourceNode(value) !== undefined || isMappedTaskRef(value)) return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  return Object.entries(value);
+}
+
+function encodeExpandValue(value: unknown, what: string): SerializedValue {
+  const node = getSourceNode(value);
+  if (node !== undefined) return encodeXComRef(node);
+  return serializeValue(toPlainJson(value, what));
+}
+
+/** Python's encoded `XComArg`: an `xcomref` whose nested arguments are bare. */
+function encodeXComRef(node: SourceNode): SerializedValue {
+  return { __type: "xcomref", __var: encodeSourceNode(node) };
+}
+
+function encodeSourceNode(node: SourceNode): SerializedValue {
+  switch (node.kind) {
+    case "ref":
+      return { task_id: node.taskId, key: "return_value" };
+    case "map":
+      return {
+        type: "map",
+        arg: encodeSourceNode(node.arg),
+        // Shown in the UI only; Airflow never deserializes a callable.
+        callables: node.fns.map((fn) => fn.toString()),
+      };
+    case "zip": {
+      const zipped: Record<string, SerializedValue> = {
+        type: "zip",
+        args: node.args.map(encodeSourceNode),
+      };
+      if (node.padding !== undefined) zipped["fillvalue"] = node.padding.value;
+      return zipped;
+    }
+    case "concat":
+      return { type: "concat", args: node.args.map(encodeSourceNode) };
+  }
 }
 
 /**
