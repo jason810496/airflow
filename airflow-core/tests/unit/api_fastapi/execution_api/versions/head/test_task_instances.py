@@ -1251,6 +1251,39 @@ class TestTIRunState:
         ]
 
     @pytest.mark.parametrize(
+        ("task_id", "expected"),
+        [
+            pytest.param("extract", True, id="expanded-over"),
+            pytest.param("transform", False, id="mapped"),
+            pytest.param("report", False, id="not-expanded-over"),
+        ],
+    )
+    def test_ti_run_tells_a_stub_whether_to_measure_its_return_value(
+        self, client, dag_maker, task_id, expected
+    ):
+        with dag_maker("test_needs_mapped_length", serialized=True):
+
+            @task.stub
+            def extract(): ...
+
+            @task.stub
+            def transform(row: str): ...
+
+            @task.stub
+            def report(rows: list): ...
+
+            report(transform.expand(row=extract()))
+
+        dr = dag_maker.create_dagrun()
+        ti = next(t for t in dr.get_task_instances() if t.task_id == task_id)
+        ti.set_state(State.QUEUED)
+        dag_maker.session.flush()
+
+        response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+        assert response.status_code == 200
+        assert response.json()["needs_mapped_length"] is expected
+
+    @pytest.mark.parametrize(
         ("decorator", "expected"),
         [
             pytest.param(task.stub(execution_timeout=timedelta(seconds=90)), 90.0, id="stub-with-timeout"),

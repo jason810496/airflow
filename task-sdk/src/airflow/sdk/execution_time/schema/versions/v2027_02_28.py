@@ -113,7 +113,7 @@ class AddXComBackendErrorType(VersionChange):
 
 class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
     """
-    Add the binding kinds of a mapped stub task: ``sequence``, ``param`` and ``kwargs``.
+    Add the ``sequence``, ``param`` and ``kwargs`` binding kinds and ``needs_mapped_length``.
 
     The supervisor-schema mirror of the execution API's ``AddMappedStubArgBindings``, named apart so
     the two migrations are not confused. The supervisor does not start a task on an older runtime
@@ -122,7 +122,9 @@ class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
 
     description = __doc__
 
-    instructions_to_migrate_to_previous_version = ()
+    instructions_to_migrate_to_previous_version = (
+        schema(TIRunContext).field("needs_mapped_length").didnt_exist,
+    )
 
 
 def is_mapped_arg_binding(binding: dict[str, Any]) -> bool:

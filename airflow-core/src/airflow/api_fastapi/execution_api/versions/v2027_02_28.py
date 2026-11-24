@@ -123,7 +123,7 @@ TaskArgBinding = TypeAliasType(
 
 class AddMappedStubArgBindings(VersionChangeWithSideEffects):
     """
-    Add the ``sequence``, ``param`` and ``kwargs`` bindings, for mapped stub tasks.
+    Add the ``sequence``, ``param`` and ``kwargs`` bindings and ``needs_mapped_length``, for mapped stub tasks.
 
     An older client keeps the earlier behavior for a mapped stub, which gets no ``arg_bindings``.
     ``ti_run`` fails for any other stub whose bindings need this version.
@@ -133,4 +133,10 @@ class AddMappedStubArgBindings(VersionChangeWithSideEffects):
 
     instructions_to_migrate_to_previous_version = (
         schema(TIRunContext).field("arg_bindings").had(type=list[TaskArgBinding] | None),
+        schema(TIRunContext).field("needs_mapped_length").didnt_exist,
     )
+
+    @convert_response_to_previous_version_for(TIRunContext)  # type: ignore[arg-type]
+    def remove_needs_mapped_length(response: ResponseInfo) -> None:  # type: ignore[misc]
+        """Strip ``needs_mapped_length`` from the run context for older clients."""
+        response.body.pop("needs_mapped_length", None)

@@ -51,6 +51,7 @@ from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
 from airflow.sdk.api.datamodels._generated import BundleInfo, TaskArgBinding, TaskInstanceState
 from airflow.sdk.bases.xcom import (
+    BaseXCom,
     XComCoordinate,
     build_loop_error,
     build_own_coordinate,
@@ -67,7 +68,13 @@ from airflow.sdk.coordinators._xcom_backend import (
     runs_in_helper,
     send_unless_exited,
 )
-from airflow.sdk.exceptions import AirflowConfigException, ErrorType
+from airflow.sdk.definitions.mappedoperator import is_mappable_value
+from airflow.sdk.exceptions import (
+    AirflowConfigException,
+    ErrorType,
+    UnmappableXComTypePushed,
+    XComForMappingNotPushed,
+)
 from airflow.sdk.execution_time.bundles import initialize_pinned_bundle
 from airflow.sdk.execution_time.comms import (
     ArgBindingsResult,
@@ -79,6 +86,7 @@ from airflow.sdk.execution_time.comms import (
     ResolveArgBindings,
     RetryTask,
     SetXCom,
+    SucceedTask,
     TaskState,
     XComResult,
     XComSequenceIndexResult,
@@ -119,7 +127,7 @@ if TYPE_CHECKING:
     from airflow.dag_processing.bundles.base import BaseDagBundle  # noqa: SDK002
     from airflow.sdk.api.client import Client
     from airflow.sdk.api.datamodels._generated import TaskInstance, TIRunContext
-    from airflow.sdk.bases.xcom import BaseXCom, _OwnTaskInstance
+    from airflow.sdk.bases.xcom import _OwnTaskInstance
     from airflow.sdk.coordinators._xcom_backend import XComBackendResult
     from airflow.sdk.execution_time.comms import SetTaskStateStore
     from airflow.sdk.execution_time.supervisor import RequestResult
@@ -622,6 +630,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
 
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
     _dag_rel_path: str | None = attrs.field(default=None, init=False)
+    # Set when a mapped task expands over this task's return value, which the supervisor then measures.
+    _needs_mapped_length: bool = attrs.field(default=False, init=False)
+    _pushed_mapped_length: bool = attrs.field(default=False, init=False)
     _bundle_info: BundleInfo | None = attrs.field(default=None, init=False)
     # What the runtime started with; the sidecar resolves a Dag definition's bindings from it.
     _ti_context: TIRunContext | None = attrs.field(default=None, init=False)
@@ -679,10 +690,15 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 self.process_log.exception("Failed to clear XCom; not running the task", key=key)
                 self._fail_before_start(ti_context, f"Failed to clear XCom {key!r}: {e}")
                 return None
+        self._needs_mapped_length = bool(ti_context.needs_mapped_length)
         # The supervisor has already deleted the listed XComs, so it sends the runtime an empty list.
         # If a runtime also deletes these XComs itself, the empty list keeps the runtime from deleting
         # them a second time.
-        update: dict[str, Any] = {"xcom_keys_to_clear": [], "execution_timeout": execution_timeout}
+        update: dict[str, Any] = {
+            "xcom_keys_to_clear": [],
+            "execution_timeout": execution_timeout,
+            "needs_mapped_length": None,
+        }
         if self._needs_arg_resolution(ti, ti_context):
             if (arg_bindings := self._resolve_arg_bindings(ti, ti_context)) is None:
                 return None
@@ -894,6 +910,16 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     def _handle_set_xcom(
         self, msg: SetXCom, log: FilteringBoundLogger, req_id: int
     ) -> RequestResult | ResponseSent:
+        if self._is_mapped_over(msg):
+            if not is_mappable_value(msg.value):
+                unmappable = UnmappableXComTypePushed(msg.value)
+                self.send_msg(
+                    None, request_id=req_id, error=_build_request_error(unmappable, ErrorType.GENERIC_ERROR)
+                )
+                return ResponseSent.ALREADY_SENT
+            # Measured before the XCom backend stores the value, so nothing measures a storage path.
+            msg = msg.model_copy(update={"mapped_length": len(msg.value)})
+            self._pushed_mapped_length = True
         xcom = _get_xcom_backend()
         if not (is_stored_through_backend(msg.key) and not _is_extra_link(msg.key) and runs_in_helper(xcom)):
             return handle_set_xcom(self.client, msg)
@@ -994,6 +1020,30 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             return result, XComBackendCall(hook="purge", key=msg.key, value=row.value)
         return result, None
 
+    def _is_mapped_over(self, msg: SetXCom) -> bool:
+        """Whether *msg* pushes this task's return value, which a mapped task expands over."""
+        ti = cast("_OwnTaskInstance", self.ti)
+        return (
+            self._needs_mapped_length
+            and msg.key == BaseXCom.XCOM_RETURN_KEY
+            and is_own_xcom(ti, msg.dag_id, msg.run_id, msg.task_id, msg.resolved_map_index)
+        )
+
+    def _handle_finished_task(
+        self, msg: SucceedTask, log: FilteringBoundLogger, req_id: int
+    ) -> RequestResult:
+        if not self._needs_mapped_length or self._pushed_mapped_length:
+            return super()._handle_finished_task(msg, log, req_id)
+        # A Python task fails the same way, or its mapped downstream fails with no reason given.
+        reason = str(XComForMappingNotPushed())
+        end_date = msg.end_date or datetime.now(tz=UTC)
+        self._send_terminal_state_msg(
+            RetryTask(end_date=end_date, retry_reason=reason)
+            if self._should_retry
+            else TaskState(state=TaskInstanceState.FAILED, end_date=end_date, retry_reason=reason)
+        )
+        return None, {}
+
     def _handle_resolve_arg_bindings(
         self, msg: ResolveArgBindings, log: FilteringBoundLogger, req_id: int
     ) -> ResponseSent:
@@ -1025,6 +1075,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         **ActivitySubprocess._request_handlers,
         **dict(
             [
+                register_request_method(SucceedTask, _handle_finished_task),
                 register_request_method(DeleteXCom, _handle_delete_xcom),
                 register_request_method(ResolveArgBindings, _handle_resolve_arg_bindings),
                 register_request_method(GetXCom, _handle_get_xcom),

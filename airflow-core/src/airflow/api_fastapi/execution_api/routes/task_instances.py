@@ -92,8 +92,10 @@ from airflow.api_fastapi.execution_api.security import (
 from airflow.api_fastapi.execution_api.services.task_instances import (
     ArgBindingsNeedNewerClientError,
     client_supports_arg_bindings,
+    client_supports_mapped_arg_bindings,
     get_arg_bindings,
     get_execution_timeout,
+    get_needs_mapped_length,
     get_task,
 )
 from airflow.api_fastapi.execution_api.versions.v2026_10_30 import IdentifyArchivedTaskStateUpdates
@@ -421,6 +423,9 @@ def ti_run(
                             "message": "The serialized TaskFlow arg spec for this stub task is not valid.",
                         },
                     )
+
+            if client_supports_mapped_arg_bindings():
+                context.needs_mapped_length = get_needs_mapped_length(serialized_task)
 
             # The runtime cannot read the execution_timeout set on a Python stub, so it gets it here.
             # A Python task enforces its own and sends that to the supervisor.

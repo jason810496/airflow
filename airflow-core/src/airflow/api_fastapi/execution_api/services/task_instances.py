@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from airflow.serialization.definitions.baseoperator import SerializedBaseOperator
 from airflow.serialization.definitions.mappedoperator import is_mapped
 
 if TYPE_CHECKING:
@@ -90,6 +91,14 @@ def get_arg_bindings(task: SerializedOperator) -> list | None:
     raise ArgBindingsNeedNewerClientError(
         "The stub task's arguments need a client at Execution API version 2027-02-28 or later."
     )
+
+
+def get_needs_mapped_length(task: SerializedOperator) -> bool:
+    """Whether a mapped task expands over the return value of *task*, which is not mapped itself."""
+    # A mapped task's instances are counted, so only an unmapped task's value is measured.
+    if not isinstance(task, SerializedBaseOperator):
+        return False
+    return next(task.iter_mapped_dependants(), None) is not None
 
 
 def get_execution_timeout(task: SerializedOperator) -> float | None:

@@ -1880,6 +1880,9 @@ type TIRunContext struct {
 	// MultiTeam corresponds to the JSON schema field "multi_team".
 	MultiTeam bool `msgpack:"multi_team,omitempty"`
 
+	// NeedsMappedLength corresponds to the JSON schema field "needs_mapped_length".
+	NeedsMappedLength interface{} `msgpack:"needs_mapped_length,omitempty"`
+
 	// NextKwargs corresponds to the JSON schema field "next_kwargs".
 	NextKwargs *NextKwargs `msgpack:"next_kwargs,omitempty"`
 
@@ -1991,21 +1994,22 @@ type TaskInstance struct {
 	TryNumber int `msgpack:"try_number"`
 }
 
+type TaskInstanceState string
+
 const TaskInstanceStateAwaitingInput TaskInstanceState = "awaiting_input"
 const TaskInstanceStateDeferred TaskInstanceState = "deferred"
+const TaskInstanceStateFailed TaskInstanceState = "failed"
+const TaskInstanceStateQueued TaskInstanceState = "queued"
+const TaskInstanceStateRemoved TaskInstanceState = "removed"
+const TaskInstanceStateRestarting TaskInstanceState = "restarting"
+const TaskInstanceStateRunning TaskInstanceState = "running"
+const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
 const TaskInstanceStateSkipped TaskInstanceState = "skipped"
-const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
+const TaskInstanceStateSuccess TaskInstanceState = "success"
+
 const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
 const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
-const TaskInstanceStateFailed TaskInstanceState = "failed"
-const TaskInstanceStateRestarting TaskInstanceState = "restarting"
-const TaskInstanceStateSuccess TaskInstanceState = "success"
-const TaskInstanceStateRunning TaskInstanceState = "running"
-const TaskInstanceStateQueued TaskInstanceState = "queued"
-const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
-const TaskInstanceStateRemoved TaskInstanceState = "removed"
-
-type TaskInstanceState string
+const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
 
 // Variable schema for responses with fields that are needed for Runtime.
 type VariableResponse struct {
@@ -2016,13 +2020,13 @@ type VariableResponse struct {
 	Value string `msgpack:"value"`
 }
 
-type TriggerKwargs map[string]interface{}
+type VersionData map[string]interface{}
 
 type TaskOutlets []AssetProfile
 
 type Warnings []interface{}
 
-type VersionData map[string]interface{}
+type TriggerKwargs map[string]interface{}
 
 // Response containing the first reschedule date for a task instance.
 type TaskRescheduleStartDate struct {

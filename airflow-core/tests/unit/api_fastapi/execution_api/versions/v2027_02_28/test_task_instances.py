@@ -96,6 +96,8 @@ class TestMappedStubArgBindingsBackwardCompat:
         response = client.get(f"/execution/openapi.json?version={version}")
         assert response.status_code == 200
         assert ("ParamArgBinding" in response.json()["components"]["schemas"]) == (version == "2027-02-28")
+        context = response.json()["components"]["schemas"]["TIRunContext"]["properties"]
+        assert ("needs_mapped_length" in context) == (version == "2027-02-28")
 
     def test_old_version_keeps_ignoring_a_mapped_stubs_arguments(self, old_ver_client, dag_maker):
         with dag_maker("test_mapped_stub_compat", serialized=True):
@@ -112,6 +114,7 @@ class TestMappedStubArgBindingsBackwardCompat:
         response = old_ver_client.patch(f"/execution/task-instances/{ti.id}/run", json=RUN_PATCH_BODY)
         assert response.status_code == 200
         assert "arg_bindings" not in response.json()
+        assert "needs_mapped_length" not in response.json()
 
     def test_old_version_cannot_run_a_stub_reading_a_mapped_upstream(self, old_ver_client, dag_maker):
         with dag_maker("test_reduce_stub_compat", serialized=True):

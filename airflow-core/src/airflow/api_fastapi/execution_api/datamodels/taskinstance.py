@@ -568,6 +568,13 @@ class TIRunContext(BaseModel):
     ``None`` for regular tasks and for stub tasks that declare no parameters.
     """
 
+    needs_mapped_length: bool | None = None
+    """
+    Set only for a language SDK task: True when a mapped task expands over its return value.
+
+    The supervisor then measures the value, as a Python task measures its own. None for a Python task.
+    """
+
     execution_timeout: float | None = Field(
         default=None,
         description=(
