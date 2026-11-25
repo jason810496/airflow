@@ -36,6 +36,11 @@ import type {
   DeleteVariable,
   GetXCom,
   SetXCom,
+  GetXComCount,
+  GetXComSequenceItem,
+  GetXComSequenceSlice,
+  ApplyMap,
+  SetRenderedMapIndex,
   GetConnection,
   SkipDownstreamTasks,
   TriggerDagRun,
@@ -119,6 +124,27 @@ export interface CoordinatorClient extends TaskClient {
    * output fails the task, while one that pushed null binds null.
    */
   getXComEntry(opts: GetXComOpts): Promise<XComEntry>;
+
+  /** How many rows a mapped task's output has: the length of the sequence a reduce reads. */
+  getXComCount(taskId: string): Promise<number>;
+  /** Row `offset` of a mapped task's output, in map-index order. */
+  getXComSequenceItem(taskId: string, offset: number): Promise<JsonValue>;
+  /** Rows `start` up to `stop` of a mapped task's output, in map-index order. */
+  getXComSequenceSlice(
+    taskId: string,
+    start: number | null,
+    stop: number | null,
+  ): Promise<JsonValue[]>;
+  /**
+   * Have the supervisor's Python sidecar run a Python Dag's `map()` callables on argument `name`.
+   * A stub TaskHandler has no callables of its own.
+   */
+  applyMap(
+    name: string,
+    value: JsonValue,
+  ): Promise<{ readonly skipped: boolean; readonly value: JsonValue }>;
+  /** The label `setRenderedMapIndex` last set, which the task's final message must carry. */
+  getRenderedMapIndex(): string | undefined;
 
   /** Mark direct downstream tasks of the running task as skipped; none is a no-op. */
   skipDownstreamTasks(taskIds: readonly string[]): Promise<void>;
@@ -322,6 +348,7 @@ export function createCoordinatorClient(
     },
   };
 
+  let renderedMapIndex: string | undefined;
   const client: CoordinatorClient = {
     // ---- Variables ----
 
@@ -413,6 +440,77 @@ export function createCoordinatorClient(
       };
       await rpc("SetXCom", null, msg, () => undefined, "throw");
     },
+
+    async getXComCount(taskId: string): Promise<number> {
+      const msg: GetXComCount = { type: "GetXComCount", ...resolveXComTarget({ taskId }, ctx) };
+      const len = await rpc(
+        "GetXComCount",
+        "XComCountResponse",
+        msg,
+        (body) => body!.len as number,
+        "throw",
+      );
+      return len ?? 0;
+    },
+
+    async getXComSequenceItem(taskId: string, offset: number): Promise<JsonValue> {
+      const msg: GetXComSequenceItem = {
+        type: "GetXComSequenceItem",
+        ...resolveXComTarget({ taskId }, ctx),
+        offset,
+      };
+      const value = await rpc(
+        "GetXComSequenceItem",
+        "XComSequenceIndexResult",
+        msg,
+        (body) => (body!.root ?? null) as JsonValue,
+        "throw",
+      );
+      return value ?? null;
+    },
+
+    async getXComSequenceSlice(
+      taskId: string,
+      start: number | null,
+      stop: number | null,
+    ): Promise<JsonValue[]> {
+      const msg: GetXComSequenceSlice = {
+        type: "GetXComSequenceSlice",
+        ...resolveXComTarget({ taskId }, ctx),
+        start,
+        stop,
+        step: null,
+      };
+      const rows = await rpc(
+        "GetXComSequenceSlice",
+        "XComSequenceSliceResult",
+        msg,
+        (body) => (body!.root ?? []) as JsonValue[],
+        "throw",
+      );
+      return rows ?? [];
+    },
+
+    async applyMap(name: string, value: JsonValue) {
+      const msg: ApplyMap = { type: "ApplyMap", name, value };
+      const result = await rpc(
+        "ApplyMap",
+        "MapResult",
+        msg,
+        (body) => ({ skipped: body!.skipped === true, value: (body!.value ?? null) as JsonValue }),
+        "throw",
+      );
+      return result ?? { skipped: false, value: null };
+    },
+
+    async setRenderedMapIndex(label: string): Promise<void> {
+      assertKey(label, "rendered map index");
+      const msg: SetRenderedMapIndex = { type: "SetRenderedMapIndex", rendered_map_index: label };
+      await rpc("SetRenderedMapIndex", null, msg, () => undefined, "throw");
+      renderedMapIndex = label;
+    },
+
+    getRenderedMapIndex: () => renderedMapIndex,
 
     // ---- Control flow ----
 

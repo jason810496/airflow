@@ -19,12 +19,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { foldArgName, resolveArgs, type BoundArgs } from "../../src/coordinator/arg-binding.js";
+import {
+  foldArgName,
+  resolveArgs,
+  type BoundArgs,
+  type MapOutcome,
+} from "../../src/coordinator/arg-binding.js";
 import type { CoordinatorClient, XComEntry } from "../../src/coordinator/client.js";
 import type { LogChannel } from "../../src/coordinator/log-channel.js";
 import type { ArgBindings } from "../../src/generated/supervisor.js";
 import { Bundle } from "../../src/sdk/bundle.js";
-import type { GetXComOpts } from "../../src/sdk/client-types.js";
+import type { GetXComOpts, JsonValue } from "../../src/sdk/client-types.js";
+import type { XComSequence } from "../../src/sdk/mapping.js";
+import { SkipError } from "../../src/sdk/skip.js";
 import { Dag } from "../../src/sdk/dag.js";
 
 function literal(name: string, value: unknown, extra: Record<string, unknown> = {}) {
@@ -365,6 +372,31 @@ describe("resolveArgs", () => {
     expect(getXComEntry).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "a tuple",
+      { name: "rows", kind: "tuple", parts: [] },
+      /"rows" has binding kind "tuple", which the supervisor reads/,
+    ],
+    ["a nameless binding", { kind: "literal", value: 1 }, /binding kind "literal" has no name/],
+    [
+      "an apply_map binding for a task with no callables",
+      { name: "rows", kind: "literal", value: 1, apply_map: true },
+      /"rows" has map\(\) callables, but this task has none/,
+    ],
+  ])("refuses %s before pulling anything", async (_label, binding, error) => {
+    const { client, getXComEntry } = makeClient({ make_totals: { found: true, value: 1 } });
+    await expect(
+      resolveArgs([xcom("totals", "make_totals"), binding as never], {
+        client,
+        signal: new AbortController().signal,
+        logs: makeLogs().logs,
+        argNames: NO_RENAMES,
+      }),
+    ).rejects.toThrowError(error);
+    expect(getXComEntry).not.toHaveBeenCalled();
+  });
+
   it("gives up on an already-aborted task without pulling", async () => {
     // Arguments resolve before the handler runs, the one stretch of a task's
     // life with nothing else listening for termination.
@@ -446,31 +478,6 @@ describe("resolveArgs", () => {
     );
   });
 
-  it.each([
-    ['binding kind "sequence"', { name: "totals", kind: "sequence", task_id: "make_totals" }],
-    ['binding kind "tuple"', { name: "totals", kind: "tuple", parts: [] }],
-    ["map_index", xcom("totals", "make_totals", { map_index: 0 })],
-    ["element_index", xcom("totals", "make_totals", { element_index: 1 })],
-    ["apply_map", xcom("totals", "make_totals", { apply_map: true })],
-    ["apply_map", literal("totals", 1, { apply_map: true })],
-    ["kwarg", literal("totals", 1, { kwarg: "totals" })],
-    ["fallback", literal("totals", 1, { fallback: { kind: "literal", value: 2 } })],
-  ])("refuses %s as not implemented, before pulling anything", async (what, binding) => {
-    const { client, getXComEntry } = makeClient({ make_totals: { found: true, value: 1 } });
-    await expect(
-      resolveArgs([binding] as ArgBindings, {
-        client,
-        signal: new AbortController().signal,
-        logs: makeLogs().logs,
-        argNames: NO_RENAMES,
-      }),
-    ).rejects.toThrowError(
-      `Task argument "totals": ${what} needs mapped task support, which this version of ` +
-        "@apache-airflow/ts-sdk does not implement; version 1.1.0 will add it",
-    );
-    expect(getXComEntry).not.toHaveBeenCalled();
-  });
-
   describe("with explicit renames", () => {
     it("binds a name the Python side never used", async () => {
       const { args } = await bind([literal("run_label", "nightly")], {
@@ -545,5 +552,104 @@ describe("resolveArgs", () => {
     expect(() => {
       delete (args as { region_code?: string }).region_code;
     }).toThrowError(/bound arguments are read-only/);
+  });
+});
+
+describe("a mapped task's bindings", () => {
+  function deps(applyMap?: (name: string, value: JsonValue) => Promise<MapOutcome>) {
+    const getXComCount = vi.fn(async () => 3);
+    const getXComSequenceItem = vi.fn(async (_taskId: string, offset: number) => offset * 10);
+    const getXComSequenceSlice = vi.fn(async () => [0, 10]);
+    const client = {
+      getXComCount,
+      getXComSequenceItem,
+      getXComSequenceSlice,
+    } as unknown as CoordinatorClient;
+    return {
+      client,
+      getXComSequenceItem,
+      deps: {
+        client,
+        signal: new AbortController().signal,
+        logs: makeLogs().logs,
+        argNames: NO_RENAMES,
+        ...(applyMap === undefined ? {} : { applyMap }),
+      },
+    };
+  }
+
+  it("reads a sequence lazily, in map-index order", async () => {
+    const { deps: d, getXComSequenceItem } = deps();
+    const { args } = await resolveArgs(
+      [{ name: "sizes", kind: "sequence", task_id: "measure" }],
+      d,
+    );
+    const sizes = (args as { sizes: XComSequence<number> }).sizes;
+
+    expect(getXComSequenceItem).not.toHaveBeenCalled();
+    expect(await sizes.length()).toBe(3);
+    expect(await sizes.at(-1)).toBe(20);
+    expect(await sizes.slice(0, 2)).toEqual([0, 10]);
+    const all: number[] = [];
+    for await (const size of sizes) all.push(size);
+    expect(all).toEqual([0, 10, 20]);
+    await expect(sizes.at(3)).rejects.toThrowError(RangeError);
+  });
+
+  it("applies map() callables, then takes kwarg, then the fallback, running them once", async () => {
+    const applyMap = vi.fn(async (_name: string, value: JsonValue) => ({
+      skipped: false,
+      value: { path: (value as string[])[0]! },
+    }));
+    const { deps: d } = deps(applyMap);
+    const pair = ["a.csv", 3];
+
+    const { args, names } = await resolveArgs(
+      [
+        literal("path", pair, { apply_map: true, kwarg: "path" }),
+        literal("bucket", pair, {
+          apply_map: true,
+          kwarg: "bucket",
+          fallback: { kind: "literal", value: "raw" },
+        }),
+      ],
+      d,
+    );
+
+    expect(names).toEqual(["path", "bucket"]);
+    expect({ ...args }).toEqual({ path: "a.csv", bucket: "raw" });
+    expect(applyMap).toHaveBeenCalledTimes(1);
+  });
+
+  it("spreads an expandKwargs() element into the handler's arguments", async () => {
+    const { deps: d } = deps();
+    const { args, names } = await resolveArgs(
+      [literal("bucket", "raw"), literal("**", { path: "a.csv", min: 10 }, { spread: true })],
+      d,
+    );
+
+    expect(names).toEqual(["bucket", "path", "min"]);
+    expect({ ...args }).toEqual({ bucket: "raw", path: "a.csv", min: 10 });
+  });
+
+  it("fails an element that sets an argument partial() also sets", async () => {
+    const { deps: d } = deps();
+    await expect(
+      resolveArgs([literal("bucket", "raw"), literal("**", { bucket: "eu" }, { spread: true })], d),
+    ).rejects.toThrowError(/sets "bucket", which partial\(\) already sets/);
+  });
+
+  it("skips the instance when a map() callable skips it", async () => {
+    const { deps: d } = deps(async () => ({ skipped: true, value: null }));
+    await expect(resolveArgs([literal("row", 1, { apply_map: true })], d)).rejects.toThrowError(
+      SkipError,
+    );
+  });
+
+  it("fails a missing key with no fallback", async () => {
+    const { deps: d } = deps();
+    await expect(resolveArgs([literal("path", {}, { kwarg: "path" })], d)).rejects.toThrowError(
+      /has no key "path"/,
+    );
   });
 });

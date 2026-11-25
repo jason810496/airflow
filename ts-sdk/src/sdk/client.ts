@@ -103,6 +103,11 @@ export interface TaskClient {
   setXCom(opts: SetXComOpts): Promise<void>;
 
   /**
+   * Label this instance of a mapped task in the UI, as `map_index_template` does for a Python task.
+   */
+  setRenderedMapIndex(label: string): Promise<void>;
+
+  /**
    * Key/value state private to this task instance.
    *
    * See {@link TaskStateStore}.
