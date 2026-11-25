@@ -36,7 +36,7 @@
 //        - DagFileParseRequest → respond with DagFileParsingResult, exit
 //        - StartupDetails      → run task, respond Succeed or Fail, exit
 //
-import { resolveArgs, type BoundArgs } from "./arg-binding.js";
+import { resolveArgs, type BoundArgs, type MapOutcome } from "./arg-binding.js";
 import { createCoordinatorClient, XCOM_RETURN_KEY, type CoordinatorClient } from "./client.js";
 import { CommChannel } from "./comm-channel.js";
 import { LogChannel } from "./log-channel.js";
@@ -55,8 +55,15 @@ import {
   type StartupDetails,
 } from "./protocol.js";
 import { getArgNames } from "../sdk/arg-names.js";
-import { bundleDags, bundleDagTaskIds, getBundleTask, type Bundle } from "../sdk/bundle.js";
-import { finalizeDag } from "../sdk/dag.js";
+import {
+  bundleDags,
+  bundleDagTaskIds,
+  getBundleTask,
+  type Bundle,
+  type BundleTask,
+} from "../sdk/bundle.js";
+import { finalizeDag, getDagTaskMapCallables, type Dag } from "../sdk/dag.js";
+import { SkipError } from "../sdk/skip.js";
 import { SERIALIZATION_VERSION } from "../generated/dag-schema-fields.js";
 import { computeRelativeFileloc, serializeDag } from "./serde.js";
 import { buildOperatorContext, runOperator } from "./operator-runner.js";
@@ -366,8 +373,21 @@ async function handleTask(
 
   const ctx = buildContext(details, signal);
   const client = createCoordinatorClient(comm, ctx, ti.id, clientLogs);
+  const outcome = await runTask(task, details, ctx, client, logs);
+  // The supervisor reports the final message's label, so one set earlier would otherwise be cleared.
+  const label = client.getRenderedMapIndex();
+  return label === undefined ? outcome : { ...outcome, rendered_map_index: label };
+}
+
+async function runTask(
+  task: BundleTask,
+  details: StartupDetails,
+  ctx: TaskContext,
+  client: CoordinatorClient,
+  logs: LogChannel,
+): Promise<OperatorOutcome> {
   if (task.kind === "handler") {
-    return runHandler(details, task.fn, ctx, client, logs);
+    return runHandler(details, task.fn, ctx, client, logs, task.dag);
   }
 
   // How an operator ends the task as a failure: log the reason, then report the task
@@ -390,6 +410,43 @@ async function handleTask(
   }
 }
 
+/**
+ * The bindings to bind (ADR-0016). A Dag definition's `param` and `kwargs` entries vary per map index,
+ * so the supervisor's Python sidecar resolves them from the Dag this runtime sends. A stub
+ * TaskHandler's bindings arrive resolved.
+ */
+async function getArgBindings(
+  details: StartupDetails,
+  dag: Dag | undefined,
+  client: CoordinatorClient,
+): Promise<Parameters<typeof resolveArgs>[0]> {
+  const bindings = details.ti_context?.arg_bindings;
+  if (dag === undefined || !bindings?.some((b) => b.kind === "param" || b.kind === "kwargs")) {
+    return bindings;
+  }
+  // Resolution reads only the tasks and task groups, not where the file is.
+  return client.resolveArgBindings(serializeDag(dag, "", ".") as { [k: string]: JsonValue });
+}
+
+/** How a Dag definition's `map()` callables run (ADR-0016, decision 6): its own, found by the argument's name. */
+function buildApplyMap(dag: Dag | undefined, taskId: string) {
+  if (dag === undefined) return undefined;
+  return async (name: string, value: JsonValue): Promise<MapOutcome> => {
+    const callables = getDagTaskMapCallables(dag, taskId, name);
+    if (callables === undefined) {
+      throw new Error(`Task argument "${name}" has map() callables, but the Dag declares none`);
+    }
+    try {
+      let mapped: unknown = value;
+      for (const fn of callables) mapped = (fn as (element: unknown) => unknown)(mapped);
+      return { skipped: false, value: mapped as JsonValue };
+    } catch (err) {
+      if (err instanceof SkipError) return { skipped: true, value: null };
+      throw err;
+    }
+  };
+}
+
 /** Run the author's handler: bind its arguments, call it, push what it returns. */
 async function runHandler(
   details: StartupDetails,
@@ -397,16 +454,20 @@ async function runHandler(
   ctx: TaskContext,
   client: CoordinatorClient,
   logs: LogChannel,
+  dag: Dag | undefined,
 ): Promise<RuntimeSucceedTask | RuntimeRetryTask | RuntimeTaskState> {
+  const applyMap = buildApplyMap(dag, details.ti.task_id);
   let bound: BoundArgs;
   try {
-    bound = await resolveArgs(details.ti_context?.arg_bindings, {
+    bound = await resolveArgs(await getArgBindings(details, dag, client), {
       client,
       signal: ctx.signal,
       logs,
       argNames: getArgNames(handler),
+      ...(applyMap === undefined ? {} : { applyMap }),
     });
   } catch (err) {
+    if (err instanceof SkipError) return skipResponse(logs, ctx, err);
     // Before the handler ran, so nothing it might have written is at stake.
     const message = (err as Error).message ?? String(err);
     logs.error("Cannot bind this task's call arguments", {
@@ -438,6 +499,7 @@ async function runHandler(
     };
     return response;
   } catch (err) {
+    if (err instanceof SkipError) return skipResponse(logs, ctx, err);
     const message = (err as Error).message ?? String(err);
     logs.error("Task failed", {
       task_id: ctx.taskId,
@@ -450,6 +512,11 @@ async function runHandler(
     });
     return buildFailureResponse(details, message);
   }
+}
+
+function skipResponse(logs: LogChannel, ctx: TaskContext, err: SkipError): RuntimeTaskState {
+  logs.info("Task skipped", { task_id: ctx.taskId, reason: err.message });
+  return { type: "TaskState", state: "skipped", end_date: new Date().toISOString() };
 }
 
 async function sendSupervisorResponse(
@@ -504,6 +571,7 @@ function buildContext(details: StartupDetails, signal: AbortSignal): TaskContext
     runId: details.ti.run_id,
     tryNumber: details.ti.try_number,
     mapIndex: details.ti.map_index ?? -1,
+    expandedTiCount: details.ti_context.expanded_ti_count ?? null,
     conf: (details.ti_context.dag_run?.conf ?? {}) as TaskContext["conf"],
     signal,
   };

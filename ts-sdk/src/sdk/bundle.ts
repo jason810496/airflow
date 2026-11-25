@@ -219,7 +219,12 @@ export function validateOwnBundle(value: unknown, accessor: string): asserts val
  * with no handler: its options come from the factory the task was declared with.
  */
 export type BundleTask =
-  | { readonly kind: "handler"; readonly fn: TaskFunction }
+  | {
+      readonly kind: "handler";
+      readonly fn: TaskFunction;
+      /** The TypeScript Dag the task is declared in, which holds its `map()` callables. */
+      readonly dag?: Dag;
+    }
   | { readonly kind: "operator"; readonly operator: Operator<never, unknown>; readonly dag: Dag };
 
 /** Internal: the task `taskId` of Dag `dagId`, or `undefined` when this bundle does not provide it. */
@@ -238,7 +243,7 @@ export function getBundleTask(
   const record = getDagTaskRecords(dag).get(taskId);
   if (record === undefined) return undefined;
   if (record.operator) return { kind: "operator", operator: record.operator, dag };
-  return { kind: "handler", fn: record.fn };
+  return { kind: "handler", fn: record.fn, dag };
 }
 
 /** Internal: finalize every Dag this bundle declared in TypeScript, so no task

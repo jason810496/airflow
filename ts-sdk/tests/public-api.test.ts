@@ -411,6 +411,7 @@ describe("public API", () => {
       readonly runId: string;
       readonly tryNumber: number;
       readonly mapIndex: number;
+      readonly expandedTiCount: number | null;
       readonly conf: Readonly<Record<string, JsonValue>>;
       readonly signal: AbortSignal;
     }>();

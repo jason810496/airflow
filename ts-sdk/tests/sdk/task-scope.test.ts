@@ -35,6 +35,7 @@ function makeScope(taskId: string): TaskScope {
     runId: "r1",
     tryNumber: 1,
     mapIndex: -1,
+    expandedTiCount: null,
     conf: {},
     signal: new AbortController().signal,
   };

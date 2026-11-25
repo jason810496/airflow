@@ -39,6 +39,11 @@ export interface TaskContext<TConf = Readonly<Record<string, JsonValue>>> {
   readonly tryNumber: number;
   /** -1 for non-mapped tasks, 0..N-1 for mapped instances. */
   readonly mapIndex: number;
+  /**
+   * How many instances this expansion has, for "instance 3 of 10"; `null` for a task that is not
+   * mapped. Read-only: it plays no part in which element an instance gets.
+   */
+  readonly expandedTiCount: number | null;
   /** `conf` of the Dag run, or `{}` when the run has none. */
   readonly conf: TConf;
   /**

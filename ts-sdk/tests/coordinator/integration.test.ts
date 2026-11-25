@@ -42,6 +42,7 @@ import { Bundle } from "../../src/sdk/bundle.js";
 import { withArgNames } from "../../src/sdk/arg-names.js";
 import { TaskHandler } from "../../src/sdk/task-handler.js";
 import { getClient, getContext } from "../../src/sdk/task.js";
+import { SkipError } from "../../src/sdk/skip.js";
 
 /** The arguments `py_dag.bound`'s Python call site passes, as its handler
  *  spells them. Folding absorbs the snake_case on the wire. */
@@ -485,6 +486,121 @@ describe("coordinator runtime integration", () => {
 
     expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
     expect(observed).toEqual({ regionCode: "uk", threshold: 0.75, dryRun: false });
+  });
+
+  /** Answer `ResolveArgBindings` with *bindings*, as the supervisor's sidecar would. */
+  function resolvedBy(bindings: unknown[]): Responder {
+    return (msgType) =>
+      msgType === "ResolveArgBindings" ? { body: { type: "ArgBindingsResult", bindings } } : null;
+  }
+
+  it("has the sidecar resolve a Dag definition's bindings, then applies its own map() callables", async () => {
+    let observed: unknown = null;
+    const listFiles = testDag.task("list_files", async (): Promise<string[]> => [" a.csv "]);
+    const measure = testDag.task("measure", async ({ path }: { path: string }) => {
+      observed = { path, ctx: getContext().expandedTiCount };
+      return path.length;
+    });
+    measure.expand({ path: listFiles().map((path) => path.trim()) });
+
+    const details = makeStartupDetails("measure", "test_dag", "r1", {
+      expanded_ti_count: 1,
+      arg_bindings: [{ name: "path", kind: "param" }],
+    }) as { ti: { map_index: number } };
+    details.ti.map_index = 0;
+    const result = await driveSupervisor(
+      details,
+      resolvedBy([{ name: "path", kind: "literal", value: " a.csv ", apply_map: true }]),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(observed).toEqual({ path: "a.csv", ctx: 1 });
+    const request = result.runtimeRequests.find((r) => r.type === "ResolveArgBindings")!;
+    expect(request.body["dag"]).toMatchObject({ dag_id: "test_dag" });
+  });
+
+  it("skips the instance a TypeScript map() callable skips", async () => {
+    const listFiles = testDag.task("list_files", async (): Promise<string[]> => ["a.csv"]);
+    const measure = testDag.task("measure", async ({ path }: { path: string }) => path);
+    measure.expand({
+      path: listFiles().map((): string => {
+        throw new SkipError("not this one");
+      }),
+    });
+
+    const result = await driveSupervisor(
+      makeStartupDetails("measure", "test_dag", "r1", {
+        arg_bindings: [{ name: "path", kind: "param" }],
+      }),
+      resolvedBy([{ name: "path", kind: "literal", value: "a.csv", apply_map: true }]),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "skipped" });
+  });
+
+  it("fails the task when the sidecar cannot resolve a Dag definition's bindings", async () => {
+    const measure = testDag.task("measure", async ({ path }: { path: string }) => path);
+    measure.expand({ path: ["a.csv"] });
+
+    const result = await driveSupervisor(
+      makeStartupDetails("measure", "test_dag", "r1", {
+        arg_bindings: [{ name: "path", kind: "param" }],
+      }),
+      (msgType) =>
+        msgType === "ResolveArgBindings"
+          ? { body: null, error: { error: "GENERIC_ERROR", detail: { message: "no item" } } }
+          : null,
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "failed" });
+  });
+
+  it("binds a stub TaskHandler's bindings as they arrive, resolved by the supervisor", async () => {
+    let observed: unknown = null;
+    bundle.register(
+      new TaskHandler("py_dag", "transform", async ({ row }: { row: string }) => {
+        observed = row;
+        return row;
+      }),
+    );
+
+    const result = await driveSupervisor(
+      makeStartupDetails("transform", "py_dag", "r1", {
+        arg_bindings: [{ name: "row", kind: "literal", value: "de" }],
+      }),
+    );
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "SucceedTask" });
+    expect(observed).toBe("de");
+    expect(result.runtimeRequests.map((r) => r.type)).not.toContain("ResolveArgBindings");
+  });
+
+  it("skips the instance when a handler throws SkipError", async () => {
+    bundle.register(
+      new TaskHandler("py_dag", "transform", async () => {
+        throw new SkipError("nothing to do");
+      }),
+    );
+
+    const result = await driveSupervisor(makeStartupDetails("transform", "py_dag"));
+
+    expect(result.firstResponse!.body).toMatchObject({ type: "TaskState", state: "skipped" });
+  });
+
+  it("carries the rendered map index a handler set on its final message", async () => {
+    bundle.register(
+      new TaskHandler("py_dag", "transform", async () => {
+        await getClient().setRenderedMapIndex("a.csv");
+        return 1;
+      }),
+    );
+
+    const result = await driveSupervisor(makeStartupDetails("transform", "py_dag"));
+
+    expect(result.firstResponse!.body).toMatchObject({
+      type: "SucceedTask",
+      rendered_map_index: "a.csv",
+    });
   });
 
   it("resolves an upstream output its Dag's call passed, before the handler runs", async () => {

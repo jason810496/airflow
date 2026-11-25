@@ -32,11 +32,18 @@ import { XCOM_RETURN_KEY, type CoordinatorClient } from "./client.js";
 import type { LogChannel } from "./log-channel.js";
 import type {
   ArgBindings,
+  ArgBindingsResult,
   ArgValueSchema,
-  LiteralArgBinding,
+  ResolvedLiteralArgBinding,
   TaskArgBinding,
   XComArgBinding,
+  XComSequenceArgBinding,
 } from "../generated/supervisor.js";
+import { SkipError } from "../sdk/skip.js";
+import { makeXComSequence } from "./xcom-sequence.js";
+
+/** The name of a `spread` binding, whose element fills several arguments. */
+const SPREAD_NAME = "**";
 import type { JsonValue } from "../sdk/client-types.js";
 
 /** What Airflow stamps on an argument the Dag declared as a Python `int`. */
@@ -71,6 +78,12 @@ export interface BoundArgs {
 
 const EMPTY_ARGS: BoundArgs = { args: Object.freeze({}), names: Object.freeze([]) };
 
+/** What running a binding's `map()` callables gave: the argument, or a skip of the instance. */
+export interface MapOutcome {
+  readonly skipped: boolean;
+  readonly value: JsonValue;
+}
+
 /** What {@link resolveArgs} needs beyond the spec itself. */
 export interface ArgBindingDeps {
   readonly client: CoordinatorClient;
@@ -79,15 +92,28 @@ export interface ArgBindingDeps {
   readonly logs: LogChannel;
   /** Renames the handler declared with `withArgNames`, which beat folding. */
   readonly argNames: ReadonlyMap<string, string>;
+  /**
+   * Run argument `name`'s `map()` callables on `value`, the Dag definition's own. `undefined` for a
+   * stub TaskHandler, whose Python callables the supervisor's sidecar already ran.
+   */
+  readonly applyMap?: (name: string, value: JsonValue) => Promise<MapOutcome>;
 }
+
+/** Bindings this SDK binds: the supervisor's sidecar resolves every `param` and `kwargs` entry first. */
+type BindableBinding = XComArgBinding | ResolvedLiteralArgBinding | XComSequenceArgBinding;
+
+/** What `ti_context.arg_bindings` or the sidecar's `ArgBindingsResult` holds. */
+type InputBinding = TaskArgBinding | ArgBindingsResult["bindings"][number];
 
 /**
  * Resolve `ti_context.arg_bindings` into the object a task handler receives.
  *
  * A binding this SDK cannot honour fails the task before the handler can write anything.
+ *
+ * @throws SkipError when a `map()` callable skips this instance.
  */
 export async function resolveArgs(
-  bindings: ArgBindings | undefined,
+  bindings: ArgBindings | ArgBindingsResult["bindings"] | undefined,
   deps: ArgBindingDeps,
 ): Promise<BoundArgs> {
   // Absent for an Airflow too old to send a spec, and for a task called with no
@@ -95,42 +121,123 @@ export async function resolveArgs(
   if (bindings == null || bindings.length === 0) return EMPTY_ARGS;
 
   // Checked in full before anything is pulled, leaving no half-resolved call behind.
-  const names: string[] = [];
   const byFold = new Map<string, string>();
   let pullsUpstream = false;
-  const bindable: (XComArgBinding | LiteralArgBinding)[] = [];
+  const bindable: BindableBinding[] = [];
   for (const binding of bindings) {
-    checkBindable(binding);
+    checkBindable(binding, deps);
     bindable.push(binding);
-    const name = binding.name;
-    const fold = foldArgName(name);
-    const clash = byFold.get(fold);
-    if (clash !== undefined) {
-      throw new Error(
-        `Task arguments "${clash}" and "${name}" both fold to "${fold}", so a handler cannot ` +
-          "name them apart; rename one in the @task.stub signature",
-      );
-    }
-    byFold.set(fold, name);
-    names.push(name);
+    if (!(binding.kind === "literal" && binding.spread)) addName(byFold, binding.name);
     pullsUpstream ||= binding.kind === "xcom";
   }
 
   // Every upstream pull in flight at once, so a task called with four of them
   // waits for one round-trip rather than four.
-  const resolveAll = (): Promise<[string, JsonValue][]> =>
+  const resolveAll = (): Promise<unknown[]> =>
     Promise.all(
-      bindable.map(async (binding): Promise<[string, JsonValue]> => [
-        binding.name,
-        binding.kind === "xcom"
-          ? await pullXComArg(binding, deps.client)
-          : literalValue(binding.value),
-      ]),
+      bindable.map(async (binding): Promise<unknown> => {
+        switch (binding.kind) {
+          case "xcom":
+            return pullXComArg(binding, deps.client);
+          case "sequence":
+            return makeXComSequence(deps.client, binding.task_id);
+          case "literal":
+            return literalValue(binding.value);
+        }
+      }),
     );
   // Literals need no request, so only a call that pulls races the abort signal.
-  const entries = pullsUpstream ? await abortable(resolveAll, deps.signal) : await resolveAll();
+  const resolved = pullsUpstream ? await abortable(resolveAll, deps.signal) : await resolveAll();
 
-  return { args: makeArgsProxy(names, byFold, new Map(entries), deps), names };
+  // ADR-0016's runtime steps, per binding: the map() callables, then kwarg, then fallback, then spread.
+  const names: string[] = [];
+  const values = new Map<string, unknown>();
+  const applied = new Map<string, Promise<MapOutcome>>();
+  for (const [index, binding] of bindable.entries()) {
+    let value = resolved[index];
+    if (binding.kind === "literal" && binding.apply_map) {
+      value = await applyMapOnce(binding, value as JsonValue, applied, deps);
+    }
+    if (binding.kind === "literal" && binding.kwarg != null) {
+      value = takeKwarg(binding, value);
+    }
+    if (binding.kind === "literal" && binding.spread) {
+      if (!isRecord(value)) {
+        throw new Error(
+          `This instance's expandKwargs() element is ${describe(value)}, not an object of arguments`,
+        );
+      }
+      for (const [key, item] of Object.entries(value)) {
+        if (values.has(key)) {
+          throw new Error(
+            `This instance's expandKwargs() element sets "${key}", which partial() already sets; ` +
+              "give each argument once",
+          );
+        }
+        addName(byFold, key);
+        names.push(key);
+        values.set(key, item);
+      }
+      continue;
+    }
+    names.push(binding.name);
+    values.set(binding.name, value);
+  }
+
+  return { args: makeArgsProxy(names, byFold, values, deps), names };
+}
+
+function addName(byFold: Map<string, string>, name: string): void {
+  const fold = foldArgName(name);
+  const clash = byFold.get(fold);
+  if (clash !== undefined) {
+    throw new Error(
+      `Task arguments "${clash}" and "${name}" both fold to "${fold}", so a handler cannot ` +
+        "name them apart; rename one in the @task.stub signature",
+    );
+  }
+  byFold.set(fold, name);
+}
+
+/**
+ * Run a binding's `map()` callables once per instance, even when several arguments share them, as
+ * an `expandKwargs()` element's do.
+ */
+async function applyMapOnce(
+  binding: ResolvedLiteralArgBinding,
+  value: JsonValue,
+  applied: Map<string, Promise<MapOutcome>>,
+  deps: ArgBindingDeps,
+): Promise<JsonValue> {
+  const shared = binding.kwarg != null || binding.spread;
+  const key = `${shared ? SPREAD_NAME : binding.name}\u0000${JSON.stringify(value)}`;
+  let outcome = applied.get(key);
+  if (outcome === undefined) {
+    outcome = deps.applyMap!(binding.name, value);
+    applied.set(key, outcome);
+  }
+  const { skipped, value: mapped } = await outcome;
+  if (skipped)
+    throw new SkipError(`A map() callable of argument "${binding.name}" skipped this instance`);
+  return mapped;
+}
+
+function takeKwarg(binding: ResolvedLiteralArgBinding, value: unknown): unknown {
+  const kwarg = binding.kwarg!;
+  if (isRecord(value) && Object.hasOwn(value, kwarg)) return value[kwarg];
+  if (binding.fallback != null) return literalValue(binding.fallback.value);
+  throw new Error(
+    `Task argument "${binding.name}" has no value: this instance's expandKwargs() element has no ` +
+      `key "${kwarg}", and neither partial() nor the signature gives one`,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function describe(value: unknown): string {
+  return value === null ? "null" : Array.isArray(value) ? "an array" : `a ${typeof value}`;
 }
 
 /** Airflow omits `value` for a literal whose value is null. */
@@ -140,16 +247,29 @@ function literalValue(value: unknown): JsonValue {
 
 /** Refuse a binding this SDK cannot honour, before any of them is resolved. */
 function checkBindable(
-  binding: TaskArgBinding,
-): asserts binding is XComArgBinding | LiteralArgBinding {
+  binding: InputBinding,
+  deps: ArgBindingDeps,
+): asserts binding is BindableBinding {
   const { name } = binding;
-  if (binding.kind === "xcom") return;
+  if (binding.kind === "xcom" || binding.kind === "sequence") return;
   if (binding.kind === "literal") {
-    checkExactInteger(binding.name, literalValue(binding.value), binding.value_schema);
+    const literal: ResolvedLiteralArgBinding = binding;
+    if (literal.apply_map) {
+      if (deps.applyMap === undefined) {
+        throw new Error(
+          `Task argument "${name}" has map() callables, but this task has none to run`,
+        );
+      }
+    } else if (literal.kwarg == null && !literal.spread) {
+      checkExactInteger(literal.name, literalValue(literal.value), literal.value_schema);
+    }
     return;
   }
-  if (binding.kind === "sequence" || binding.kind === "param" || binding.kind === "kwargs") {
-    throw mappedTaskNotImplemented(name ?? "**", `binding kind "${binding.kind}"`);
+  if (binding.kind === "param" || binding.kind === "kwargs") {
+    throw new Error(
+      `Task argument "${name ?? SPREAD_NAME}" has binding kind "${binding.kind}", which the ` +
+        "supervisor's Python sidecar resolves before the task binds it; this Airflow did not",
+    );
   }
   // Unreachable for the wire union as generated, so `binding` is `never` here.
   // A newer Airflow can add a kind, and skipping it would silently leave the
@@ -158,13 +278,6 @@ function checkBindable(
   throw new Error(
     `Task argument "${name}" has binding kind ${JSON.stringify(kind)}, which this version ` +
       "of @apache-airflow/ts-sdk cannot bind; upgrade it to match this Airflow release",
-  );
-}
-
-function mappedTaskNotImplemented(name: string, what: string): Error {
-  return new Error(
-    `Task argument "${name}": ${what} needs mapped task support, which this version of ` +
-      "@apache-airflow/ts-sdk does not implement",
   );
 }
 
@@ -242,7 +355,7 @@ function abortError(signal: AbortSignal): Error {
 function makeArgsProxy(
   names: readonly string[],
   byFold: ReadonlyMap<string, string>,
-  values: ReadonlyMap<string, JsonValue>,
+  values: ReadonlyMap<string, unknown>,
   deps: ArgBindingDeps,
 ): object {
   const { argNames, logs } = deps;
