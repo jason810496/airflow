@@ -44,7 +44,13 @@ from uuid6 import uuid7
 
 from airflow.dag_processing.bundles.base import BaseDagBundle, BundleVersion
 from airflow.sdk.api.client import Client, TaskInstanceOperations
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstance, TaskInstanceState, TIRunContext
+from airflow.sdk.api.datamodels._generated import (
+    BundleInfo,
+    TaskArgBinding,
+    TaskInstance,
+    TaskInstanceState,
+    TIRunContext,
+)
 from airflow.sdk.bases.xcom import BaseXCom
 from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
 from airflow.sdk.coordinators._subprocess import (
@@ -2188,6 +2194,126 @@ class TestPopenActivitySubprocessXComBackend:
             proc._monitor_subprocess()
 
         backend.stop.assert_called_once_with()
+
+    @pytest.fixture
+    def read_extract(self, make_proc):
+        """A supervisor whose upstream task ``extract`` returned *value*, stored through the backend."""
+
+        def make(value: Any, schema_version: str | None = None) -> _PopenActivitySubprocess:
+            _RefXCom.stored["ref://extract"] = value
+            path = "/xcoms/tutorial_dag/run_1/extract/return_value"
+            proc = make_proc(
+                _RefXCom, _FakeApi({("GET", path): (200, {"key": "return_value", "value": "ref://extract"})})
+            )
+            proc._subprocess_schema_version = schema_version
+            return proc
+
+        return make
+
+    @pytest.mark.parametrize(
+        ("value", "binding", "received"),
+        [
+            pytest.param(
+                ["uk ", " fr"],
+                {"kind": "xcom", "task_id": "extract", "element_index": 1},
+                {"value": " fr"},
+                id="list-element",
+            ),
+            pytest.param(
+                {"uk": 1, "fr": 2},
+                {"kind": "xcom", "task_id": "extract", "element_index": 1},
+                {"value": ["fr", 2]},
+                id="dict-pair",
+            ),
+            pytest.param(
+                [{"row": "uk"}, {}],
+                {
+                    "kind": "xcom",
+                    "task_id": "extract",
+                    "element_index": 1,
+                    "kwarg": "row",
+                    "fallback": {"kind": "xcom", "task_id": "extract", "element_index": 0},
+                },
+                {"value": {"row": "uk"}},
+                id="kwarg-falls-back",
+            ),
+            pytest.param(
+                ["a", "b"],
+                {
+                    "kind": "tuple",
+                    "parts": [
+                        {"kind": "xcom", "task_id": "extract", "element_index": 0},
+                        {"kind": "literal", "value": "?"},
+                    ],
+                    "apply_map": True,
+                    "kwarg": "row",
+                    "fallback": {"kind": "xcom", "task_id": "extract", "element_index": 1},
+                },
+                {
+                    "value": ["a", "?"],
+                    "apply_map": True,
+                    "kwarg": "row",
+                    "fallback": {"kind": "literal", "value": "b"},
+                },
+                id="map-left-to-the-runtime",
+            ),
+        ],
+    )
+    def test_prepare_reads_the_upstream_values_of_the_arguments(
+        self, read_extract, make_ti_context, value, binding, received
+    ):
+        proc = read_extract(value)
+        ti_context = make_ti_context().model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate({"name": "row", **binding})]}
+        )
+
+        prepared = proc._prepare_ti_context(proc.ti, ti_context)
+
+        assert prepared is not None
+        (sent,) = [b.model_dump(mode="json", exclude_unset=True) for b in prepared.arg_bindings or ()]
+        assert sent == {"name": "row", "kind": "literal", **received}
+
+    @patch("airflow.sdk.execution_time.supervisor.WatchedSubprocess.kill", autospec=True)
+    def test_prepare_fails_the_task_when_an_argument_has_no_value(
+        self, mock_kill, read_extract, make_ti_context
+    ):
+        proc = read_extract([{"other": 1}])
+        binding = {"name": "row", "kind": "xcom", "task_id": "extract", "element_index": 0, "kwarg": "row"}
+        ti_context = make_ti_context().model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate(binding)]}
+        )
+
+        assert proc._prepare_ti_context(proc.ti, ti_context) is None
+        mock_kill.assert_called_once()
+        assert isinstance(proc._pending_terminal_state_msg, TaskState)
+        assert proc._pending_terminal_state_msg.retry_reason == (
+            "Failed to read the task's arguments: Argument 'row' is missing: expand_kwargs() did not set it"
+        )
+
+    @pytest.mark.parametrize(
+        ("apply_map", "started"),
+        [pytest.param(False, True, id="literal"), pytest.param(True, False, id="map-left-to-the-runtime")],
+    )
+    @patch("airflow.sdk.execution_time.supervisor.WatchedSubprocess.kill", autospec=True)
+    def test_an_older_runtime_runs_a_task_whose_arguments_are_read_to_literals(
+        self, mock_kill, read_extract, make_ti_context, apply_map, started
+    ):
+        proc = read_extract(["uk", "fr"], schema_version="2026-10-30")
+        binding = {
+            "name": "row",
+            "kind": "xcom",
+            "task_id": "extract",
+            "element_index": 0,
+            "apply_map": apply_map,
+        }
+        ti_context = make_ti_context().model_copy(
+            update={"arg_bindings": [TaskArgBinding.model_validate(binding)]}
+        )
+
+        prepared = proc._prepare_ti_context(proc.ti, ti_context)
+
+        assert (prepared is not None) is started
+        assert mock_kill.called is not started
 
 
 class TestPopenActivitySubprocessMappedLength:

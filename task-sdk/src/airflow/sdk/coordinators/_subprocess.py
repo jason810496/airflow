@@ -49,7 +49,13 @@ import structlog
 from airflow.dag_processing.bundles.base import BundleVersionLock  # noqa: SDK002
 from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
-from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstanceState
+from airflow.sdk.api.datamodels._generated import (
+    BundleInfo,
+    TaskArgBinding,
+    TaskInstanceState,
+    XComRef,
+    XComResponse,
+)
 from airflow.sdk.bases.xcom import (
     BaseXCom,
     XComCoordinate,
@@ -60,6 +66,7 @@ from airflow.sdk.bases.xcom import (
     is_stored_through_backend,
 )
 from airflow.sdk.configuration import conf
+from airflow.sdk.coordinators._arg_bindings import has_upstream_values, read_arg_bindings
 from airflow.sdk.coordinators._dag_importer import find_claiming_importer
 from airflow.sdk.coordinators._xcom_backend import (
     XComBackendCall,
@@ -629,9 +636,11 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         Delete the XComs in ``ti_context.xcom_keys_to_clear`` so the launched runtime does not have to.
 
         Like ``XCom.delete``, this reads, deletes, then purges each XCom. A failure fails this try, as it
-        does for a Python task. A runtime too old to read the task's arguments also fails this try.
+        does for a Python task.
 
-        Also fills in the worker's default ``execution_timeout`` when the task sets none.
+        Also reads each upstream value the task's arguments name, so the runtime receives only ``literal``
+        and ``sequence`` bindings. An argument with no value, or a runtime too old to read the arguments,
+        fails this try. Also fills in the worker's default ``execution_timeout`` when the task sets none.
         """
         # ti_context.execution_timeout is what the API server read from the serialized Dag. A task that
         # sets none gets the worker's default, as a Python task does when the worker parses its Dag.
@@ -640,17 +649,6 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         if execution_timeout is None:
             execution_timeout = self._default_execution_timeout
         self._execution_timeout_seconds = execution_timeout
-        if self._runtime_lacks_mapped_arg_bindings(ti_context):
-            reason = (
-                "The task's arguments need a runtime at supervisor schema version 2027-02-28 or later, "
-                f"but it is at {self._subprocess_schema_version}; upgrade its SDK"
-            )
-            self.process_log.error(reason)
-            self._pending_terminal_state_msg = TaskState(
-                state=TaskInstanceState.FAILED, end_date=datetime.now(tz=UTC), retry_reason=reason
-            )
-            self.kill(signal.SIGKILL)
-            return None
         for key in ti_context.xcom_keys_to_clear or ():
             self.process_log.debug("Clearing XCom with key", key=key)
             try:
@@ -687,6 +685,44 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 self.process_log.exception("Failed to clear XCom; not running the task", key=key)
                 self._fail_before_start(ti_context, f"Failed to clear XCom {key!r}: {e}")
                 return None
+        arg_bindings = ti_context.arg_bindings
+        if has_upstream_values(arg_bindings):
+            try:
+                arg_bindings = read_arg_bindings(
+                    arg_bindings or (), lambda ref: self._read_upstream_value(ti, ref)
+                )
+            except _TaskStoppedError as e:
+                if self._terminal_state == SERVER_TERMINATED:
+                    # wait() reports that the server stopped this try.
+                    self.process_log.warning(
+                        "Stopped reading the task's arguments; the server stopped the task", error=e.error
+                    )
+                    self.kill(signal.SIGKILL)
+                    return None
+                self.process_log.error(
+                    "Stopped reading the task's arguments; the task process has exited",
+                    exit_code=self._exit_code,
+                    error=e.error,
+                )
+                self._fail_before_start(
+                    ti_context, f"The task process exited with code {self._exit_code} before the task started"
+                )
+                return None
+            except Exception as e:
+                self.process_log.exception("Failed to read the task's arguments; not running the task")
+                self._fail_before_start(ti_context, f"Failed to read the task's arguments: {e}")
+                return None
+        if self._runtime_lacks_mapped_arg_bindings(arg_bindings):
+            reason = (
+                "The task's arguments need a runtime at supervisor schema version 2027-02-28 or later, "
+                f"but it is at {self._subprocess_schema_version}; upgrade its SDK"
+            )
+            self.process_log.error(reason)
+            self._pending_terminal_state_msg = TaskState(
+                state=TaskInstanceState.FAILED, end_date=datetime.now(tz=UTC), retry_reason=reason
+            )
+            self.kill(signal.SIGKILL)
+            return None
         self._needs_mapped_length = bool(ti_context.needs_mapped_length)
         # The supervisor has already deleted the listed XComs, so it sends the runtime an empty list.
         # If a runtime also deletes these XComs itself, the empty list keeps the runtime from deleting
@@ -696,6 +732,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 "xcom_keys_to_clear": [],
                 "execution_timeout": execution_timeout,
                 "needs_mapped_length": None,
+                "arg_bindings": arg_bindings,
             }
         )
 
@@ -710,8 +747,17 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         )
         self.kill(signal.SIGKILL)
 
-    def _runtime_lacks_mapped_arg_bindings(self, ti_context: TIRunContext) -> bool:
-        if (version := self._subprocess_schema_version) is None or not ti_context.arg_bindings:
+    def _read_upstream_value(self, ti: TaskInstance, ref: XComRef) -> Any:
+        """Read the ``return_value`` row *ref* names, through the configured XCom backend."""
+        map_index = -1 if ref.map_index is None else ref.map_index
+        xcom = self.client.xcoms.get(ti.dag_id, ti.run_id, ref.task_id, BaseXCom.XCOM_RETURN_KEY, map_index)
+        if not isinstance(xcom, XComResponse) or xcom.value is None or not _is_loaded_through_backend():
+            return getattr(xcom, "value", None)
+        call = XComBackendCall(hook="load", key=BaseXCom.XCOM_RETURN_KEY, value=xcom.value)
+        return self._run_xcom_backend_call(call).value
+
+    def _runtime_lacks_mapped_arg_bindings(self, arg_bindings: list[TaskArgBinding] | None) -> bool:
+        if (version := self._subprocess_schema_version) is None or not arg_bindings:
             return False
         # Imported here, like the migrator's own cadwyn import, so a Python-only worker never pays for it.
         from airflow.sdk.execution_time.schema.versions.v2027_02_28 import (
@@ -723,9 +769,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             version, AddMappedStubArgBindingsToSupervisorTIRunContext
         ):
             return False
-        return any(
-            is_mapped_arg_binding(binding.model_dump(mode="json")) for binding in ti_context.arg_bindings
-        )
+        return any(is_mapped_arg_binding(binding.model_dump(mode="json")) for binding in arg_bindings)
 
     def wait(self) -> int:
         code = super().wait()
@@ -805,7 +849,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._start_xcom_backend_call(call, finish)
         return ResponseSent.ALREADY_SENT
 
-    def _run_xcom_backend_call(self, call: XComBackendCall) -> None:
+    def _run_xcom_backend_call(self, call: XComBackendCall) -> XComBackendResult:
         """
         Run ``call`` and wait for it, for a caller with no request loop to return to.
 
@@ -828,6 +872,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             raise _TaskStoppedError(error)
         if error is not None:
             raise XComBackendError(error)
+        return answer[0]
 
     def _is_stopped(self) -> bool:
         # kill() can fail to stop the process, so a server stop counts on its own.
