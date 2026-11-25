@@ -1235,6 +1235,49 @@ class TestTIRunState:
         assert response.status_code == 500
         assert response.json()["detail"]["reason"] == "invalid_arg_bindings"
 
+    @pytest.mark.parametrize(
+        ("task_id", "expected"),
+        [
+            pytest.param("extract", True, id="expanded-over"),
+            pytest.param("fixed", False, id="mapped"),
+            pytest.param("report", False, id="not-expanded-over"),
+            pytest.param("group.split", True, id="mapped-task-group-member"),
+        ],
+    )
+    def test_ti_run_tells_a_stub_whether_to_measure_its_return_value(
+        self, client, dag_maker, task_id, expected
+    ):
+        with dag_maker("test_needs_mapped_length", serialized=True):
+
+            @task.stub
+            def extract(): ...
+
+            @task.stub
+            def transform(row: str): ...
+
+            @task.stub
+            def report(rows: list): ...
+
+            @task.stub
+            def split(row: str): ...
+
+            @task_group
+            def group(row: str):
+                return split(row)
+
+            report(transform.expand(row=extract()))
+            transform.override(task_id="per_part").expand(row=group.expand(row=["a", "b"]))
+            transform.override(task_id="fixed").expand(row=["a"])
+
+        dr = dag_maker.create_dagrun()
+        ti = next(t for t in dr.get_task_instances() if t.task_id == task_id)
+        ti.set_state(State.QUEUED)
+        dag_maker.session.flush()
+
+        response = client.patch(f"/execution/task-instances/{ti.id}/run", json=self.RUN_PAYLOAD)
+        assert response.status_code == 200
+        assert response.json()["needs_mapped_length"] is expected
+
     def test_ti_run_resolves_mapped_stub_literal_expand(self, client, dag_maker):
         """Expanding a stub over a literal list resolves each map index to its element server-side."""
         with dag_maker("test_mapped_stub_literal", serialized=True):
@@ -1861,7 +1904,7 @@ class TestTIRunState:
         response = self._run_stub_ti(client, tis[1], session=session)
         assert response.status_code == 200
         assert response.json()["arg_bindings"][1:] == [
-            {"name": "extracted", "kind": "xcom", "task_id": "extract"},
+            {"name": "extracted", "kind": "literal", "value": {"b": 2}},
             {
                 "name": "retries_num",
                 "kind": "literal",

@@ -51,6 +51,7 @@ from airflow.sdk._shared.module_loading import import_string
 from airflow.sdk.api.client import ServerResponseError
 from airflow.sdk.api.datamodels._generated import BundleInfo, TaskInstanceState
 from airflow.sdk.bases.xcom import (
+    BaseXCom,
     XComCoordinate,
     build_loop_error,
     build_own_coordinate,
@@ -67,7 +68,13 @@ from airflow.sdk.coordinators._xcom_backend import (
     runs_in_helper,
     send_unless_exited,
 )
-from airflow.sdk.exceptions import AirflowConfigException, ErrorType
+from airflow.sdk.definitions.mappedoperator import is_mappable_value
+from airflow.sdk.exceptions import (
+    AirflowConfigException,
+    ErrorType,
+    UnmappableXComTypePushed,
+    XComForMappingNotPushed,
+)
 from airflow.sdk.execution_time.bundles import initialize_pinned_bundle
 from airflow.sdk.execution_time.comms import (
     DeleteXCom,
@@ -77,6 +84,7 @@ from airflow.sdk.execution_time.comms import (
     GetXComSequenceSlice,
     RetryTask,
     SetXCom,
+    SucceedTask,
     TaskState,
     XComResult,
     XComSequenceIndexResult,
@@ -117,7 +125,7 @@ if TYPE_CHECKING:
     from airflow.dag_processing.bundles.base import BaseDagBundle  # noqa: SDK002
     from airflow.sdk.api.client import Client
     from airflow.sdk.api.datamodels._generated import TaskInstance, TIRunContext
-    from airflow.sdk.bases.xcom import BaseXCom, _OwnTaskInstance
+    from airflow.sdk.bases.xcom import _OwnTaskInstance
     from airflow.sdk.coordinators._xcom_backend import XComBackendResult
     from airflow.sdk.execution_time.comms import SetTaskStateStore
     from airflow.sdk.execution_time.supervisor import RequestResult
@@ -612,6 +620,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._arm_execution_timeout()
 
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
+    # Set when a mapped task expands over this task's return value, which the supervisor then measures.
+    _needs_mapped_length: bool = attrs.field(default=False, init=False)
+    _pushed_mapped_length: bool = attrs.field(default=False, init=False)
 
     def _prepare_ti_context(self, ti: TaskInstance, ti_context: TIRunContext) -> TIRunContext | None:
         """
@@ -676,11 +687,16 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 self.process_log.exception("Failed to clear XCom; not running the task", key=key)
                 self._fail_before_start(ti_context, f"Failed to clear XCom {key!r}: {e}")
                 return None
+        self._needs_mapped_length = bool(ti_context.needs_mapped_length)
         # The supervisor has already deleted the listed XComs, so it sends the runtime an empty list.
         # If a runtime also deletes these XComs itself, the empty list keeps the runtime from deleting
         # them a second time.
         return ti_context.model_copy(
-            update={"xcom_keys_to_clear": [], "execution_timeout": execution_timeout}
+            update={
+                "xcom_keys_to_clear": [],
+                "execution_timeout": execution_timeout,
+                "needs_mapped_length": None,
+            }
         )
 
     def _fail_before_start(self, ti_context: TIRunContext, reason: str) -> None:
@@ -820,6 +836,14 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     def _handle_set_xcom(
         self, msg: SetXCom, log: FilteringBoundLogger, req_id: int
     ) -> RequestResult | ResponseSent:
+        if self._is_mapped_over(msg):
+            if not is_mappable_value(msg.value):
+                error = _build_request_error(UnmappableXComTypePushed(msg.value), ErrorType.GENERIC_ERROR)
+                self.send_msg(None, request_id=req_id, error=error)
+                return ResponseSent.ALREADY_SENT
+            # Measured before the XCom backend stores the value, so nothing measures a storage path.
+            msg = msg.model_copy(update={"mapped_length": len(msg.value)})
+            self._pushed_mapped_length = True
         xcom = _get_xcom_backend()
         if not (is_stored_through_backend(msg.key) and not _is_extra_link(msg.key) and runs_in_helper(xcom)):
             return handle_set_xcom(self.client, msg)
@@ -839,6 +863,32 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             lambda stored: handle_set_xcom(self.client, msg.model_copy(update={"value": stored.value})),
             req_id,
         )
+
+    def _is_mapped_over(self, msg: SetXCom) -> bool:
+        """Whether *msg* pushes this task's return value, which a mapped task expands over."""
+        ti = cast("_OwnTaskInstance", self.ti)
+        return (
+            self._needs_mapped_length
+            and msg.key == BaseXCom.XCOM_RETURN_KEY
+            and is_own_xcom(ti, msg.dag_id, msg.run_id, msg.task_id, msg.resolved_map_index)
+        )
+
+    def _handle_finished_task(
+        self, msg: SucceedTask, log: FilteringBoundLogger, req_id: int
+    ) -> RequestResult:
+        if not self._needs_mapped_length or self._pushed_mapped_length:
+            return super()._handle_finished_task(msg, log, req_id)
+        # A Python task fails the same way, or its mapped downstream fails with no reason given.
+        reason = str(XComForMappingNotPushed())
+        end_date = msg.end_date or datetime.now(tz=UTC)
+        self._task_end_time_monotonic = time.monotonic()
+        self._rendered_map_index = msg.rendered_map_index
+        self._send_terminal_state_msg(
+            RetryTask(end_date=end_date, retry_reason=reason)
+            if self._should_retry
+            else TaskState(state=TaskInstanceState.FAILED, end_date=end_date, retry_reason=reason)
+        )
+        return None, {}
 
     def _handle_get_xcom(
         self, msg: GetXCom, log: FilteringBoundLogger, req_id: int
@@ -924,6 +974,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         **ActivitySubprocess._request_handlers,
         **dict(
             [
+                register_request_method(SucceedTask, _handle_finished_task),
                 register_request_method(DeleteXCom, _handle_delete_xcom),
                 register_request_method(GetXCom, _handle_get_xcom),
                 register_request_method(GetXComSequenceItem, _handle_get_xcom_sequence_item),
@@ -934,12 +985,14 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     }
 
 
-def _build_request_error(exc: Exception) -> ErrorResponse:
-    """Report ``exc`` to the runtime as an XCom backend failure, unless the API server rejected the request."""
+def _build_request_error(
+    exc: Exception, error_type: ErrorType = ErrorType.XCOM_BACKEND_ERROR
+) -> ErrorResponse:
+    """Report ``exc`` to the runtime as *error_type*, unless the API server rejected the request."""
     if isinstance(exc, ServerResponseError):
         return ErrorResponse.from_server_error(exc)
     return ErrorResponse(
-        error=ErrorType.XCOM_BACKEND_ERROR,
+        error=error_type,
         detail={"status_code": None, "message": str(exc), "exception_type": type(exc).__name__},
     )
 

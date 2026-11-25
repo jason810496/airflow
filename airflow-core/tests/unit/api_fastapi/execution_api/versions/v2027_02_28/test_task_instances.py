@@ -92,6 +92,7 @@ def test_xcom_arg_binding_schema_by_version(client, version):
     binding = schemas["XComArgBinding"]["properties"]
     for field in ("map_index", "element_index", "apply_map", "kwarg", "fallback"):
         assert (field in binding) == (version == "2027-02-28")
+    assert ("needs_mapped_length" in schemas["TIRunContext"]["properties"]) == (version == "2027-02-28")
     kinds = set(schemas["TaskArgBinding"]["discriminator"]["mapping"])
     assert kinds == (
         {"xcom", "literal", "sequence", "tuple"} if version == "2027-02-28" else {"xcom", "literal"}
@@ -124,6 +125,25 @@ class TestMappedStubArgBindingsBackwardCompat:
         response = old_ver_client.patch(f"/execution/task-instances/{ti.id}/run", json=RUN_PATCH_BODY)
         assert response.status_code == 200
         assert "arg_bindings" not in response.json()
+
+    def test_old_version_gets_no_needs_mapped_length(self, old_ver_client, dag_maker):
+        with dag_maker("test_needs_mapped_length_compat", serialized=True):
+
+            @task.stub
+            def extract(): ...
+
+            @task.stub
+            def transform(row: str): ...
+
+            transform.expand(row=extract())
+
+        ti = dag_maker.create_dagrun().get_task_instance("extract")
+        ti.set_state(State.QUEUED)
+        dag_maker.session.flush()
+
+        response = old_ver_client.patch(f"/execution/task-instances/{ti.id}/run", json=RUN_PATCH_BODY)
+        assert response.status_code == 200
+        assert "needs_mapped_length" not in response.json()
 
     @pytest.fixture
     def reduce_ti(self, dag_maker):

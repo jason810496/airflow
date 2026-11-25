@@ -109,6 +109,8 @@ class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
     """
     Add ``arg_bindings`` for mapped stub tasks, the ``sequence`` and ``tuple`` kinds, and the per-index binding fields.
 
+    Also add ``needs_mapped_length``.
+
     The supervisor-schema mirror of the execution API's ``AddMappedStubArgBindings``, named apart so
     the two migrations are not confused. The supervisor does not start a task on an older runtime
     when any binding needs this version, so no binding is dropped on the way down.
@@ -125,6 +127,7 @@ class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
             for binding in (XComArgBinding, LiteralArgBinding, XComSequenceArgBinding, TupleArgBinding)
             for field in ("apply_map", "kwarg", "fallback")
         ),
+        schema(TIRunContext).field("needs_mapped_length").didnt_exist,
     )
 
 

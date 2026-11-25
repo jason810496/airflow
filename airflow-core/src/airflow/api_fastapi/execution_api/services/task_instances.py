@@ -24,6 +24,7 @@ from airflow.api_fastapi.execution_api.services.stub_arg_bindings import (
     UndeliverableMappedArgBindingsError,
     derive_mapped_arg_bindings,
 )
+from airflow.serialization.definitions.baseoperator import SerializedBaseOperator
 from airflow.serialization.definitions.mappedoperator import is_mapped
 
 if TYPE_CHECKING:
@@ -100,6 +101,14 @@ def get_arg_bindings(
 
 def _dump(binding: TaskArgBinding | dict[str, Any]) -> dict[str, Any]:
     return binding if isinstance(binding, dict) else binding.model_dump(exclude_unset=True)
+
+
+def get_needs_mapped_length(task: SerializedOperator) -> bool:
+    """Whether a mapped task expands over the return value of *task*, as Python's ``_push_xcom_if_needed`` decides."""
+    # A mapped task's rows are counted, so only an unmapped task's value is measured.
+    if not isinstance(task, SerializedBaseOperator):
+        return False
+    return next(task.iter_mapped_dependants(), None) is not None
 
 
 def get_execution_timeout(task: SerializedOperator) -> float | None:

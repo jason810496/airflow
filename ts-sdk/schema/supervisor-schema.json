@@ -5804,6 +5804,18 @@
           "default": null,
           "title": "Arg Bindings"
         },
+        "needs_mapped_length": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Needs Mapped Length"
+        },
         "execution_timeout": {
           "anyOf": [
             {

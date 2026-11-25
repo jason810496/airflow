@@ -72,8 +72,10 @@ from airflow.sdk.execution_time.comms import (
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    RetryTask,
     SetTaskStateStore,
     SetXCom,
+    SucceedTask,
     TaskState,
 )
 from airflow.sdk.execution_time.coordinator import BaseCoordinator, TaskLaunchError
@@ -2186,6 +2188,90 @@ class TestPopenActivitySubprocessXComBackend:
             proc._monitor_subprocess()
 
         backend.stop.assert_called_once_with()
+
+
+class TestPopenActivitySubprocessMappedLength:
+    @pytest.fixture
+    def proc(self, monkeypatch):
+        monkeypatch.setattr("airflow.sdk.execution_time.xcom.XCom", BaseXCom)
+        ti = _make_ti()
+        process = MagicMock(spec=ProcessTracker)
+        process.pid = 12345
+        proc = _PopenActivitySubprocess(
+            id=ti.id,
+            pid=12345,
+            process=process,
+            process_log=structlog.get_logger(logger_name="task"),
+            stdin=MagicMock(spec=socket.socket),
+            client=MagicMock(),
+            comm_server=MagicMock(spec=socket.socket),
+            logs_server=MagicMock(spec=socket.socket),
+        )
+        proc.ti = ti  # type: ignore[assignment]
+        proc._needs_mapped_length = True
+        yield proc
+        proc.selector.close()
+
+    @staticmethod
+    def _set_return_value(value, task_id: str = "task_1") -> SetXCom:
+        return SetXCom(
+            key="return_value", value=value, dag_id="tutorial_dag", run_id="run_1", task_id=task_id
+        )
+
+    def test_prepare_takes_the_flag_off_the_context(self, proc, make_ti_context):
+        proc._needs_mapped_length = False
+        ti_context = make_ti_context().model_copy(update={"needs_mapped_length": True})
+
+        prepared = proc._prepare_ti_context(proc.ti, ti_context)
+
+        assert prepared.needs_mapped_length is None
+        assert proc._needs_mapped_length is True
+
+    @patch("airflow.sdk.coordinators._subprocess.handle_set_xcom", autospec=True, return_value=(None, {}))
+    def test_the_return_value_is_measured(self, mock_set_xcom, proc):
+        proc._handle_request(self._set_return_value(["a", "b", "c"]), log, 1)
+
+        assert mock_set_xcom.call_args.args[1].mapped_length == 3
+        assert proc._pushed_mapped_length is True
+
+    @patch("airflow.sdk.coordinators._subprocess.handle_set_xcom", autospec=True, return_value=(None, {}))
+    def test_another_tasks_value_is_not_measured(self, mock_set_xcom, proc):
+        proc._handle_request(self._set_return_value(["a"], task_id="other"), log, 1)
+
+        assert mock_set_xcom.call_args.args[1].mapped_length is None
+        assert proc._pushed_mapped_length is False
+
+    @patch.object(_PopenActivitySubprocess, "send_msg", autospec=True)
+    @patch("airflow.sdk.coordinators._subprocess.handle_set_xcom", autospec=True)
+    def test_a_value_that_cannot_be_mapped_over_is_refused(self, mock_set_xcom, mock_send, proc):
+        proc._handle_request(self._set_return_value("abc"), log, 1)
+
+        mock_set_xcom.assert_not_called()
+        error = mock_send.call_args.kwargs["error"]
+        assert error.detail["exception_type"] == "UnmappableXComTypePushed"
+
+    @pytest.mark.parametrize(
+        ("should_retry", "sent"),
+        [pytest.param(False, TaskState, id="fail"), pytest.param(True, RetryTask, id="retry")],
+    )
+    @patch.object(_PopenActivitySubprocess, "_send_terminal_state_msg", autospec=True)
+    def test_success_without_a_return_value_fails_the_try(self, mock_send, proc, should_retry, sent):
+        proc._should_retry = should_retry
+
+        proc._handle_request(SucceedTask(end_date=datetime.now(tz=UTC)), log, 1)
+
+        (msg,) = [c.args[1] for c in mock_send.call_args_list]
+        assert isinstance(msg, sent)
+        assert msg.retry_reason == "did not push XCom for task mapping"
+
+    @patch.object(_PopenActivitySubprocess, "_send_terminal_state_msg", autospec=True)
+    def test_success_after_the_return_value_succeeds(self, mock_send, proc):
+        proc._pushed_mapped_length = True
+        msg = SucceedTask(end_date=datetime.now(tz=UTC))
+
+        proc._handle_request(msg, log, 1)
+
+        assert mock_send.call_args.args[1] == msg
 
 
 class TestResolveArtifactBundle:

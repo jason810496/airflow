@@ -127,8 +127,8 @@ class AddMappedStubArgBindings(VersionChangeWithSideEffects):
     """
     Add ``arg_bindings`` for mapped stub tasks, the ``sequence`` and ``tuple`` kinds, and the per-index binding fields.
 
-    Older clients keep the earlier behavior for a mapped stub, which gets no ``arg_bindings``. Any other
-    stub whose bindings need this version fails ``ti_run``.
+    Also add ``needs_mapped_length``. Older clients keep the earlier behavior for a mapped stub, which gets
+    no ``arg_bindings``. Any other stub whose bindings need this version fails ``ti_run``.
     """
 
     description = __doc__
@@ -140,11 +140,13 @@ class AddMappedStubArgBindings(VersionChangeWithSideEffects):
         schema(_ArgBindingBase).field("apply_map").didnt_exist,
         schema(_ArgBindingBase).field("kwarg").didnt_exist,
         schema(_ArgBindingBase).field("fallback").didnt_exist,
+        schema(TIRunContext).field("needs_mapped_length").didnt_exist,
     )
 
     @convert_response_to_previous_version_for(TIRunContext)  # type: ignore[arg-type]
     def remove_mapped_arg_bindings(response: ResponseInfo) -> None:  # type: ignore[misc]
-        """Strip ``arg_bindings`` holding any shape an older client cannot read."""
+        """Strip ``needs_mapped_length``, and ``arg_bindings`` holding any shape an older client cannot read."""
+        response.body.pop("needs_mapped_length", None)
         if any(is_mapped_arg_binding(binding) for binding in response.body.get("arg_bindings") or ()):
             response.body.pop("arg_bindings")
 

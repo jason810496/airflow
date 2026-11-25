@@ -297,6 +297,7 @@ export type ApplyMap3 = boolean;
 export type Kwarg3 = string | null;
 export type Kind5 = "tuple";
 export type Parts = ArgPart[];
+export type NeedsMappedLength = boolean | null;
 /**
  * The execution_timeout in seconds set on a task a language SDK runs, from its serialized Dag. Unset when the task sets none. Zero means no timeout and a negative value has already elapsed, as for a Python task. A Python task runs its own timer in the task runner instead, and gets no value here.
  */
@@ -1134,6 +1135,7 @@ export interface TIRunContext {
   should_retry?: ShouldRetry;
   start_date?: StartDate2;
   arg_bindings?: ArgBindings;
+  needs_mapped_length?: NeedsMappedLength;
   execution_timeout?: ExecutionTimeout;
   multi_team?: MultiTeam;
 }
