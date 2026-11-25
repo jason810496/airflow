@@ -92,7 +92,7 @@ class _GroupArg:
 class _ArgParam:
     """One stub parameter, read from its serialized ``_arg_bindings`` entry."""
 
-    name: str
+    name: str | None
     value_schema: dict[str, Any] | None = None
     default: Any | ArgNotSet = NOTSET
     group_arg: _GroupArg | None = None
@@ -102,18 +102,27 @@ class _ArgParam:
     def from_entry(cls, entry: Mapping[str, Any]) -> _ArgParam:
         group_arg = entry.get("group_arg")
         return cls(
-            name=entry["name"],
+            name=entry.get("name"),
             value_schema=entry.get("value_schema"),
             default=entry.get("default", NOTSET),
             group_arg=None if group_arg is None else _GroupArg(group_arg["group_id"], group_arg["key"]),
             expand_keys=entry.get("expand_keys"),
         )
 
+    @property
+    def key(self) -> str:
+        """The parameter's name, which every entry but a ``kwargs`` one has."""
+        if self.name is None:
+            raise UndeliverableMappedArgBindingsError("a param entry has no name")
+        return self.name
+
     def build(self, binding_cls: type[_BindingT], **fields: Any) -> _BindingT:
         # Only fields passed here count as set, so the response's exclude_unset omits the rest.
         if self.value_schema is not None:
             fields["value_schema"] = self.value_schema
-        return binding_cls(name=self.name, **fields)
+        if self.name is not None:
+            fields["name"] = self.name
+        return binding_cls(**fields)
 
 
 def derive_mapped_arg_bindings(
@@ -199,6 +208,8 @@ class _MappedArgBindingDeriver:
                 return self._bind_group_arg(param, param.group_arg)
             case "param" if is_mapped(self.task):
                 return self._bind_mapped_param(param)
+            case "kwargs" if is_mapped(self.task):
+                return self._bind_spread(param)
             case "xcom" | "sequence":
                 # Parse time cannot tell which rows of an upstream output this map index reads.
                 if (producer := self.dag.task_dict.get(entry["task_id"])) is None:
@@ -214,21 +225,44 @@ class _MappedArgBindingDeriver:
         expand_input = self.task._get_specified_expand_input()
         partial_kwargs = self.task.partial_kwargs.get("op_kwargs") or {}
         if isinstance(expand_input, SchedulerDictOfListsExpandInput):
-            if param.name in expand_input.value:
-                index = self._get_sub_indexes(expand_input, param.expand_keys)[param.name]
-                return self._bind_element(param, expand_input.value[param.name], index)
+            if param.key in expand_input.value:
+                index = self._get_sub_indexes(expand_input, param.expand_keys)[param.key]
+                return self._bind_element(param, expand_input.value[param.key], index)
         # With strict=True a mapping cannot override partial(), so the partial() value binds as it is.
         # A mapping read from an upstream output that also has the key fails the Python task, but
         # no binding can express that check.
-        elif not (self.task._disallow_kwargs_override and param.name in partial_kwargs) and (
+        elif not (self.task._disallow_kwargs_override and param.key in partial_kwargs) and (
             binding := self._bind_mapping_entry(
-                param, expand_input, param.name, fallback=lambda: self._get_fallback(param, partial_kwargs)
+                param, expand_input, param.key, fallback=lambda: self._get_fallback(param, partial_kwargs)
             )
         ):
             return binding
-        if param.name in partial_kwargs:
-            return self._bind_whole(param, partial_kwargs[param.name])
+        if param.key in partial_kwargs:
+            return self._bind_whole(param, partial_kwargs[param.key])
         return self._bind_default(param)
+
+    def _bind_spread(self, param: _ArgParam) -> TaskArgBinding:
+        """Bind this map index's whole ``expand_kwargs()`` mapping, whose keys the runtime spreads."""
+        expand_input = self.task._get_specified_expand_input()
+        if not isinstance(expand_input, SchedulerListOfDictsExpandInput):
+            raise UndeliverableMappedArgBindingsError("a kwargs binding needs an expand_kwargs() task")
+        if isinstance(expand_input.value, SchedulerXComArg):
+            binding = self._bind_element(param, expand_input.value, self.map_index)
+        else:
+            try:
+                mapping = expand_input.value[self.map_index]
+            except IndexError:
+                raise UndeliverableMappedArgBindingsError(
+                    f"expand_kwargs() has no mapping at map index {self.map_index}"
+                )
+            match mapping:
+                case _XComRef() | SchedulerXComArg():
+                    binding = self._bind_whole(param, mapping)
+                case Mapping():
+                    binding = self._bind_literal(param, dict(mapping))
+                case _:
+                    raise UndeliverableMappedArgBindingsError("expand_kwargs() expects a list of dicts")
+        return binding.model_copy(update={"spread": True})
 
     def _bind_group_arg(self, param: _ArgParam, group_arg: _GroupArg) -> TaskArgBinding:
         if (group := self.dag.task_group_dict.get(group_arg.group_id)) is None:
@@ -330,11 +364,11 @@ class _MappedArgBindingDeriver:
         self, param: _ArgParam, partial_kwargs: Mapping[str, Any]
     ) -> XComRef | LiteralValue | None:
         """Get the value of a parameter this index's ``expand_kwargs()`` mapping may lack."""
-        if param.name not in partial_kwargs:
+        if param.key not in partial_kwargs:
             return (
                 None if not is_arg_set(param.default) else LiteralValue(kind="literal", value=param.default)
             )
-        match self._bind_whole(param, partial_kwargs[param.name]):
+        match self._bind_whole(param, partial_kwargs[param.key]):
             case XComArgBinding() as binding:
                 return XComRef.model_validate(
                     binding.model_dump(include=set(XComRef.model_fields), exclude_unset=True)

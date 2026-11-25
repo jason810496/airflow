@@ -127,7 +127,15 @@ class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
         *(
             schema(binding).field(field).didnt_exist
             for binding in (XComArgBinding, LiteralArgBinding, XComSequenceArgBinding, TupleArgBinding)
-            for field in ("apply_map", "kwarg", "fallback")
+            for field in ("apply_map", "kwarg", "fallback", "spread")
+        ),
+        *(
+            instruction
+            for binding in (XComArgBinding, LiteralArgBinding, XComSequenceArgBinding, TupleArgBinding)
+            for instruction in (
+                schema(binding).field("name").had(type=str),
+                schema(binding).field("name").didnt_have("default"),
+            )
         ),
         schema(TIRunContext).field("needs_mapped_length").didnt_exist,
     )
@@ -135,7 +143,7 @@ class AddMappedStubArgBindingsToSupervisorTIRunContext(VersionChange):
 
 def is_mapped_arg_binding(binding: dict[str, Any]) -> bool:
     """Whether *binding* uses a shape or field this version added."""
-    if binding["kind"] in ("sequence", "tuple") or binding.get("apply_map"):
+    if binding["kind"] in ("sequence", "tuple") or binding.get("apply_map") or binding.get("spread"):
         return True
     return any(
         binding.get(field) is not None for field in ("map_index", "element_index", "kwarg", "fallback")

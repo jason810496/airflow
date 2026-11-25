@@ -147,7 +147,7 @@
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "kind": { "type": "string", "enum": [ "xcom", "literal", "sequence", "param" ] },
+        "kind": { "type": "string", "enum": [ "xcom", "literal", "sequence", "param", "kwargs" ] },
         "value_schema": { "type": "object" },
         "task_id": { "type": "string" },
         "value": {},
@@ -156,7 +156,9 @@
         "group_arg": { "type": "object" },
         "expand_keys": { "type": "array", "items": { "type": "string" } }
       },
-      "required": [ "name", "kind" ]
+      "required": [ "kind" ],
+      "if": { "properties": { "kind": { "not": { "const": "kwargs" } } } },
+      "then": { "required": [ "name" ] }
     },
     "color": {
       "type": "string",

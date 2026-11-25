@@ -140,6 +140,9 @@ class AddMappedStubArgBindings(VersionChangeWithSideEffects):
         schema(_ArgBindingBase).field("apply_map").didnt_exist,
         schema(_ArgBindingBase).field("kwarg").didnt_exist,
         schema(_ArgBindingBase).field("fallback").didnt_exist,
+        schema(_ArgBindingBase).field("spread").didnt_exist,
+        schema(_ArgBindingBase).field("name").had(type=str),
+        schema(_ArgBindingBase).field("name").didnt_have("default"),
         schema(TIRunContext).field("needs_mapped_length").didnt_exist,
     )
 
@@ -153,7 +156,7 @@ class AddMappedStubArgBindings(VersionChangeWithSideEffects):
 
 def is_mapped_arg_binding(binding: dict) -> bool:
     """Whether *binding* uses a shape or field this version added."""
-    if binding["kind"] in ("sequence", "tuple") or binding.get("apply_map"):
+    if binding["kind"] in ("sequence", "tuple") or binding.get("apply_map") or binding.get("spread"):
         return True
     return any(
         binding.get(field) is not None for field in ("map_index", "element_index", "kwarg", "fallback")

@@ -2259,6 +2259,12 @@ class TestPopenActivitySubprocessXComBackend:
                 },
                 id="map-left-to-the-runtime",
             ),
+            pytest.param(
+                [{"row": "uk"}, {"row": "fr"}],
+                {"kind": "xcom", "task_id": "extract", "element_index": 1, "spread": True},
+                {"value": {"row": "fr"}, "spread": True},
+                id="spread",
+            ),
         ],
     )
     def test_prepare_reads_the_upstream_values_of_the_arguments(

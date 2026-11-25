@@ -90,7 +90,7 @@ def test_xcom_arg_binding_schema_by_version(client, version):
     assert response.status_code == 200
     schemas = response.json()["components"]["schemas"]
     binding = schemas["XComArgBinding"]["properties"]
-    for field in ("map_index", "element_index", "apply_map", "kwarg", "fallback"):
+    for field in ("map_index", "element_index", "apply_map", "kwarg", "fallback", "spread"):
         assert (field in binding) == (version == "2027-02-28")
     assert ("needs_mapped_length" in schemas["TIRunContext"]["properties"]) == (version == "2027-02-28")
     kinds = set(schemas["TaskArgBinding"]["discriminator"]["mapping"])

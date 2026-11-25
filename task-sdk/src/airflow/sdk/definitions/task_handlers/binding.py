@@ -68,13 +68,13 @@ def _bind_arguments(
         match binding.root:
             case LiteralArgBinding(from_default=True) if skip_defaults:
                 continue
-            case LiteralArgBinding(name=name, value=value):
+            case LiteralArgBinding(name=str() as name, value=value):
                 yield name, value
-            case XComArgBinding(name=name, task_id=task_id):
+            case XComArgBinding(name=str() as name, task_id=task_id):
                 yield name, xcom_resolver(task_id, BaseXCom.XCOM_RETURN_KEY)
 
 
-_PER_MAP_INDEX_FIELDS = ("map_index", "element_index", "apply_map", "kwarg", "fallback")
+_PER_MAP_INDEX_FIELDS = ("map_index", "element_index", "apply_map", "kwarg", "fallback", "spread")
 
 
 def _check_bindable(binding: TaskArgBinding) -> None:
@@ -86,7 +86,7 @@ def _check_bindable(binding: TaskArgBinding) -> None:
             raise _mapped_task_not_implemented(root.name, field)
 
 
-def _mapped_task_not_implemented(name: str, what: str) -> NotImplementedError:
+def _mapped_task_not_implemented(name: str | None, what: str) -> NotImplementedError:
     return NotImplementedError(
         f"Task argument {name!r}: {what} needs mapped task support, which the stub TaskHandler "
         "does not implement yet"

@@ -76,9 +76,13 @@ def _read_binding(binding: Any, read: ReadXCom) -> Any:
         return binding
     value = _read_value(binding, read)
     fallback: Any = _read_part(binding.fallback.root, read) if binding.fallback is not None else _NO_FALLBACK
-    literal: dict[str, Any] = {"name": binding.name, "kind": "literal"}
+    literal: dict[str, Any] = {"kind": "literal"}
+    if binding.name is not None:
+        literal["name"] = binding.name
     if binding.value_schema is not None:
         literal["value_schema"] = binding.value_schema
+    if binding.spread:
+        literal["spread"] = True
     if binding.apply_map:
         literal |= {"value": value, "apply_map": True, "kwarg": binding.kwarg}
         if fallback is not _NO_FALLBACK:

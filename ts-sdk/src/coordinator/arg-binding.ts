@@ -95,10 +95,11 @@ export async function resolveArgs(
   if (bindings == null || bindings.length === 0) return EMPTY_ARGS;
 
   // Checked in full before anything is pulled, leaving no half-resolved call behind.
+  const named = bindings.map(withName);
   const names: string[] = [];
   const byFold = new Map<string, string>();
   let pullsUpstream = false;
-  for (const binding of bindings) {
+  for (const binding of named) {
     const name = binding.name;
     const fold = foldArgName(name);
     const clash = byFold.get(fold);
@@ -118,7 +119,7 @@ export async function resolveArgs(
   // waits for one round-trip rather than four.
   const resolveAll = (): Promise<[string, JsonValue][]> =>
     Promise.all(
-      bindings.map(async (binding): Promise<[string, JsonValue]> => [
+      named.map(async (binding): Promise<[string, JsonValue]> => [
         binding.name,
         binding.kind === "xcom"
           ? await pullXComArg(binding, deps.client)
@@ -132,13 +133,21 @@ export async function resolveArgs(
   return { args: makeArgsProxy(names, byFold, new Map(entries), deps), names };
 }
 
+/** A binding whose parameter name is known: every one but a `spread` binding. */
+type NamedBinding<T extends TaskArgBinding = TaskArgBinding> = T & { name: string };
+
+function withName(binding: TaskArgBinding): NamedBinding {
+  if (typeof binding.name === "string") return binding as NamedBinding;
+  throw mappedTaskNotImplemented("**", "spread");
+}
+
 /** Airflow omits `value` for a literal whose value is null. */
 function literalValue(value: unknown): JsonValue {
   return (value ?? null) as JsonValue;
 }
 
 /** Refuse a binding this SDK cannot honour, before any of them is resolved. */
-function checkBindable(binding: TaskArgBinding): void {
+function checkBindable(binding: NamedBinding): void {
   const { name } = binding;
   if (binding.kind === "xcom") {
     checkSupportedFields(binding);
@@ -172,10 +181,11 @@ const UNSUPPORTED_FIELDS = [
   "apply_map",
   "kwarg",
   "fallback",
+  "spread",
 ] as const;
 
 /** Refuse a binding carrying a field that ignoring would bind to the wrong value. */
-function checkSupportedFields(binding: XComArgBinding | LiteralArgBinding): void {
+function checkSupportedFields(binding: NamedBinding<XComArgBinding | LiteralArgBinding>): void {
   const fields: Partial<Record<(typeof UNSUPPORTED_FIELDS)[number], unknown>> = binding;
   for (const field of UNSUPPORTED_FIELDS) {
     const value = fields[field];
@@ -192,7 +202,10 @@ function mappedTaskNotImplemented(name: string, what: string): Error {
 }
 
 /** Pull the upstream task's output this argument was called with. */
-async function pullXComArg(binding: XComArgBinding, client: CoordinatorClient): Promise<JsonValue> {
+async function pullXComArg(
+  binding: NamedBinding<XComArgBinding>,
+  client: CoordinatorClient,
+): Promise<JsonValue> {
   const entry = await client.getXComEntry({ key: XCOM_RETURN_KEY, taskId: binding.task_id });
   if (!entry.found) {
     throw new Error(

@@ -33,6 +33,7 @@ import re
 import sys
 import warnings
 from collections.abc import Generator
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta, timezone as dt_timezone
 from glob import glob
 from pathlib import Path
@@ -5716,3 +5717,19 @@ class TestFillConfigDefaults:
         DagSerialization.fill_config_defaults(data)
 
         assert data == {"__version": 3}
+
+
+@pytest.mark.parametrize(
+    ("entry", "valid"),
+    [
+        pytest.param({"kind": "kwargs"}, True, id="kwargs-without-name"),
+        pytest.param({"kind": "param"}, False, id="param-without-name"),
+    ],
+)
+def test_only_a_kwargs_arg_binding_has_no_name(entry, valid):
+    schema = {
+        "definitions": load_dag_schema_dict()["definitions"],
+        "$ref": "#/definitions/arg_binding",
+    }
+    with nullcontext() if valid else pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(entry, schema)

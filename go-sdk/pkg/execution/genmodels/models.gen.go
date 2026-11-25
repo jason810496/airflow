@@ -1370,7 +1370,10 @@ type LiteralArgBinding struct {
 	Kwarg interface{} `msgpack:"kwarg,omitempty"`
 
 	// Name corresponds to the JSON schema field "name".
-	Name string `msgpack:"name"`
+	Name interface{} `msgpack:"name,omitempty"`
+
+	// Spread corresponds to the JSON schema field "spread".
+	Spread bool `msgpack:"spread,omitempty"`
 
 	// Value corresponds to the JSON schema field "value".
 	Value interface{} `msgpack:"value,omitempty"`
@@ -2059,27 +2062,17 @@ type TupleArgBinding struct {
 	Kwarg interface{} `msgpack:"kwarg,omitempty"`
 
 	// Name corresponds to the JSON schema field "name".
-	Name string `msgpack:"name"`
+	Name interface{} `msgpack:"name,omitempty"`
 
 	// Parts corresponds to the JSON schema field "parts".
 	Parts []ArgPart `msgpack:"parts"`
 
+	// Spread corresponds to the JSON schema field "spread".
+	Spread bool `msgpack:"spread,omitempty"`
+
 	// ValueSchema corresponds to the JSON schema field "value_schema".
 	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
 }
-
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value string `msgpack:"value"`
-}
-
-type VersionData map[string]interface{}
-
-type Warnings []interface{}
 
 type UpdateDagRunNote struct {
 	// Note corresponds to the JSON schema field "note".
@@ -2126,6 +2119,15 @@ type VariableKeysResult struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value string `msgpack:"value"`
+}
+
 type VariableResult struct {
 	// Key corresponds to the JSON schema field "key".
 	Key string `msgpack:"key"`
@@ -2136,6 +2138,10 @@ type VariableResult struct {
 	// Value corresponds to the JSON schema field "value".
 	Value string `msgpack:"value"`
 }
+
+type VersionData map[string]interface{}
+
+type Warnings []interface{}
 
 // An argument read from an upstream task.
 type XComArgBinding struct {
@@ -2158,7 +2164,10 @@ type XComArgBinding struct {
 	MapIndex interface{} `msgpack:"map_index,omitempty"`
 
 	// Name corresponds to the JSON schema field "name".
-	Name string `msgpack:"name"`
+	Name interface{} `msgpack:"name,omitempty"`
+
+	// Spread corresponds to the JSON schema field "spread".
+	Spread bool `msgpack:"spread,omitempty"`
 
 	// TaskID corresponds to the JSON schema field "task_id".
 	TaskID string `msgpack:"task_id"`
@@ -2173,6 +2182,18 @@ type XComCountResponse struct {
 
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
+}
+
+// Response to ReadXCom request.
+type XComResult struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value interface{} `msgpack:"value"`
 }
 
 // One upstream value, read by the supervisor.
@@ -2190,18 +2211,6 @@ type XComRef struct {
 	TaskID string `msgpack:"task_id"`
 }
 
-// Response to ReadXCom request.
-type XComResult struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Type corresponds to the JSON schema field "type".
-	Type string `msgpack:"type,omitempty"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value interface{} `msgpack:"value"`
-}
-
 // A mapped task's whole output, read as a lazy sequence.
 type XComSequenceArgBinding struct {
 	// ApplyMap corresponds to the JSON schema field "apply_map".
@@ -2217,7 +2226,10 @@ type XComSequenceArgBinding struct {
 	Kwarg interface{} `msgpack:"kwarg,omitempty"`
 
 	// Name corresponds to the JSON schema field "name".
-	Name string `msgpack:"name"`
+	Name interface{} `msgpack:"name,omitempty"`
+
+	// Spread corresponds to the JSON schema field "spread".
+	Spread bool `msgpack:"spread,omitempty"`
 
 	// TaskID corresponds to the JSON schema field "task_id".
 	TaskID string `msgpack:"task_id"`

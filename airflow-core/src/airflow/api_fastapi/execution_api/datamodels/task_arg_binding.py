@@ -75,8 +75,8 @@ ArgPart = TypeAliasType(
 class _ArgBindingBase(BaseModel):
     """Fields every :class:`TaskArgBinding` variant carries, regardless of ``kind``."""
 
-    name: str
-    """The stub function's parameter name this binding fills, in declaration order."""
+    name: str | None = None
+    """The stub function's parameter name this binding fills, in declaration order. Absent only with ``spread``, which fills several."""
 
     value_schema: ArgValueSchema | None = None
     """Schema fragment from the stub function's annotation; omitted when unconstrained."""
@@ -89,6 +89,9 @@ class _ArgBindingBase(BaseModel):
 
     fallback: ArgPart | None = None
     """The value when ``kwarg`` is missing: the ``partial()`` value or the signature default."""
+
+    spread: bool = False
+    """``expand_kwargs()`` of a Dag definition only: the value is a dict whose keys are the handler's arguments."""
 
 
 class XComArgBinding(_ArgBindingBase, XComRef):

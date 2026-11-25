@@ -2094,6 +2094,62 @@ class TestTIRunState:
         assert response.status_code == 200
         assert response.json()["arg_bindings"][1]["fallback"] == {"kind": "xcom", "task_id": "regions"}
 
+    @pytest.mark.parametrize(
+        ("source", "expected"),
+        [
+            pytest.param(
+                "upstream", {"kind": "xcom", "task_id": "extract", "element_index": 1}, id="upstream-output"
+            ),
+            pytest.param(
+                "map",
+                {"kind": "xcom", "task_id": "extract", "element_index": 1, "apply_map": True},
+                id="map",
+            ),
+            pytest.param("literal", {"kind": "literal", "value": {"country": "fr"}}, id="literal-list"),
+            pytest.param("item", {"kind": "xcom", "task_id": "extract"}, id="upstream-item"),
+        ],
+    )
+    def test_ti_run_binds_a_dag_definitions_expand_kwargs_mapping_to_spread(
+        self, client, dag_maker, session, source, expected
+    ):
+        """A Dag definition cannot name a handler's parameters, so it spreads each mapping's keys."""
+        with dag_maker("test_mapped_spread", serialized=True, session=session):
+
+            @task.stub
+            def extract(): ...
+
+            @task.stub
+            def transform(country: str): ...
+
+            rows = extract()
+            transform.expand_kwargs(
+                {
+                    "upstream": rows,
+                    "map": rows.map(lambda row: row),
+                    "literal": [{"country": "uk"}, {"country": "fr"}],
+                    "item": [{"country": "uk"}, rows],
+                }[source]
+            )
+
+        dr = dag_maker.create_dagrun()
+        entries = [{"kind": "kwargs"}]
+
+        with mock.patch(
+            "airflow.api_fastapi.execution_api.services.task_instances.derive_mapped_arg_bindings",
+            autospec=True,
+            side_effect=lambda task, ti, _, **kwargs: derive_mapped_arg_bindings(task, ti, entries, **kwargs),
+        ):
+            # A literal list expands with the run; otherwise the placeholder stands in for index 1.
+            tis = {
+                ti.map_index: ti for ti in dr.get_task_instances(session=session) if ti.task_id == "transform"
+            }
+            response = self._run_stub_ti(
+                client, tis.get(1, tis.get(-1)), map_index=None if 1 in tis else 1, session=session
+            )
+
+        assert response.status_code == 200
+        assert response.json()["arg_bindings"] == [{**expected, "spread": True}]
+
     def test_ti_run_binds_mapped_upstream_whole_output_through_strict_partial(
         self, client, dag_maker, session
     ):
