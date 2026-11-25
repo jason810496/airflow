@@ -19,7 +19,8 @@ Conformance of mapped stub-task resolution (ADR-0016).
 
 Every mapping form is resolved twice from the same upstream values: as a Python task resolves itself, and
 as a language SDK task receives it, from the API server's bindings, the supervisor's reads, and the
-runtime steps. Each instance must receive the same arguments.
+runtime steps, with the ``map()`` callables applied by a Dag definition's runtime or by the sidecar for a
+stub TaskHandler. Each instance must receive the same arguments.
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from airflow.models.taskinstance import TaskInstance
 from airflow.models.xcom import XCOM_RETURN_KEY, XComModel
 from airflow.sdk import task, task_group
 from airflow.sdk.api.datamodels._generated import TaskArgBinding
+from airflow.sdk.coordinators._apply_map import apply_map, find_map_argument
 from airflow.sdk.coordinators._arg_bindings import read_arg_bindings
 from airflow.sdk.definitions.xcom_arg import MapXComArg
 from airflow.sdk.execution_time.comms import (
@@ -265,8 +267,21 @@ def _find_callables(op, name: str) -> Sequence[Callable[[Any], Any]]:
     return source.callables if isinstance(source, MapXComArg) else []
 
 
-def _apply_runtime_steps(bindings: list[dict], op) -> dict[str, Any]:
-    """Do what ADR-0016's runtime steps do: apply map() callables, then take kwarg, else fallback."""
+def _apply_own_callables(op, name: str, value: Any) -> Any:
+    """Apply the map() callables as a Dag definition's runtime applies its own."""
+    for fn in _find_callables(op, name):
+        # JSON has no tuple, so a zip() element reaches a runtime as a list.
+        value = fn(tuple(value) if isinstance(value, list) else value)
+    return value
+
+
+def _send_apply_map(op, name: str, value: Any) -> Any:
+    """Have the callables applied as the sidecar answers a stub TaskHandler's ApplyMap, from the same Python Dag."""
+    return apply_map(find_map_argument(op, name), value)
+
+
+def _apply_runtime_steps(bindings: list[dict], op, apply: Callable[[Any, str, Any], Any]) -> dict[str, Any]:
+    """Do what ADR-0016's runtime steps do: get map() callables applied, then take kwarg, else fallback."""
     args: dict[str, Any] = {}
     for binding in bindings:
         if binding["kind"] == "sequence":
@@ -274,9 +289,7 @@ def _apply_runtime_steps(bindings: list[dict], op) -> dict[str, Any]:
             continue
         value: Any = binding.get("value")
         if binding.get("apply_map"):
-            for fn in _find_callables(op, binding["name"]):
-                # JSON has no tuple, so a zip() element reaches a runtime as a list.
-                value = fn(tuple(value) if isinstance(value, list) else value)
+            value = apply(op, binding["name"], value)
         if (kwarg := binding.get("kwarg")) is not None:
             value = value[kwarg] if kwarg in value else binding["fallback"]["value"]
         args[binding["name"]] = _normalize(value)
@@ -332,9 +345,16 @@ def _head_api_version():
     bundle.api_version_var.reset(token)
 
 
+@pytest.mark.parametrize(
+    "apply",
+    [
+        pytest.param(_apply_own_callables, id="dag-definition"),
+        pytest.param(_send_apply_map, id="stub-task-handler"),
+    ],
+)
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.__name__)
 def test_server_and_supervisor_resolve_like_python(
-    scenario, dag_maker, session, create_runtime_ti, mock_supervisor_comms
+    scenario, apply, dag_maker, session, create_runtime_ti, mock_supervisor_comms
 ):
     with dag_maker("d", serialized=True, session=session) as dag:
         task_id, xcoms, counts = scenario()
@@ -358,4 +378,4 @@ def test_server_and_supervisor_resolve_like_python(
         )
         bindings = [b.model_dump(mode="json", exclude_unset=True) for b in received]
 
-        assert _apply_runtime_steps(bindings, op) == expected, f"map_index={ti.map_index}"
+        assert _apply_runtime_steps(bindings, op, apply) == expected, f"map_index={ti.map_index}"

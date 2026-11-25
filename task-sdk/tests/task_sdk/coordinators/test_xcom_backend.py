@@ -34,6 +34,7 @@ from uuid6 import uuid7
 
 from airflow.sdk import Connection
 from airflow.sdk.api.client import Client
+from airflow.sdk.bases.operator import BaseOperator
 from airflow.sdk.bases.xcom import BaseXCom, XComCoordinate
 from airflow.sdk.coordinators._xcom_backend import (
     AwaitXComBackendCall,
@@ -44,6 +45,8 @@ from airflow.sdk.coordinators._xcom_backend import (
     run_xcom_backend,
     runs_in_helper,
 )
+from airflow.sdk.definitions.xcom_arg import MapXComArg, PlainXComArg
+from airflow.sdk.exceptions import AirflowSkipException
 from airflow.sdk.execution_time.supervisor import ProcessTracker, WatchedSubprocess
 
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_3_PLUS
@@ -181,6 +184,52 @@ def test_failed_call_reports_the_error():
     result = _HookRunner(_ConnectionXCom).run(XComBackendCall(hook="purge", key="return_value", value={}))
 
     assert result == XComBackendResult(error="PermissionError: purge refused")
+
+
+def _apply_map_call(value) -> XComBackendCall:
+    return XComBackendCall(
+        hook="apply_map",
+        key="row",
+        value={
+            "value": value,
+            "ti": {"dag_id": "d", "task_id": "t"},
+            "dag_rel_path": "dag.py",
+            "bundle_info": {"name": "dags", "version": None},
+        },
+    )
+
+
+def _skip_negative(value):
+    if value < 0:
+        raise AirflowSkipException("negative")
+    return value * 10
+
+
+@patch("airflow.sdk.coordinators._apply_map.find_map_argument", autospec=True)
+@patch("airflow.sdk.execution_time.task_runner.load_dag_task", autospec=True)
+def test_apply_map_imports_the_dag_file_and_runs_each_map_once(mock_load, mock_find):
+    mock_find.return_value = MapXComArg(PlainXComArg(BaseOperator(task_id="up")), [_skip_negative])
+    runner = _HookRunner(BaseXCom)
+
+    results = [runner.run(_apply_map_call(value)) for value in (2, -1, 2)]
+
+    assert results == [
+        XComBackendResult(value={"value": 20}),
+        XComBackendResult(value={"skipped": True}),
+        XComBackendResult(value={"value": 20}),
+    ]
+    mock_load.assert_called_once()
+    assert mock_load.call_args.args[1:] == ("dag.py", "d", "t")
+    assert mock_find.call_args.args[1] == "row"
+
+
+@patch("airflow.sdk.execution_time.task_runner.load_dag_task", autospec=True)
+def test_apply_map_reports_a_dag_file_without_the_task(mock_load):
+    mock_load.side_effect = LookupError("Dag 'd' is not in 'dag.py'")
+
+    result = _HookRunner(BaseXCom).run(_apply_map_call(1))
+
+    assert result == XComBackendResult(error="LookupError: Dag 'd' is not in 'dag.py'")
 
 
 @pytest.mark.parametrize("uses_exec", [True, False])

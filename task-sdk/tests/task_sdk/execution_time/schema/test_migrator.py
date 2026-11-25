@@ -714,26 +714,27 @@ class TestRealBundleRetryReason:
 
 
 class TestRealBundleXComBackendError:
-    """A runtime whose version has no type for an XCom backend failure gets a generic one."""
+    """A runtime whose version has no type for an XCom backend or ``map()`` failure gets a generic one."""
 
     @pytest.fixture
     def real_migrator(self) -> SchemaVersionMigrator:
         return get_schema_version_migrator()
 
+    @pytest.mark.parametrize("error", [ErrorType.XCOM_BACKEND_ERROR, ErrorType.APPLY_MAP_ERROR])
     @pytest.mark.parametrize(
-        ("version", "expected"),
+        ("version", "known"),
         [
-            pytest.param("2027-02-28", ErrorType.XCOM_BACKEND_ERROR, id="head"),
-            pytest.param("2026-10-30", ErrorType.GENERIC_ERROR, id="3.4.0"),
-            pytest.param("2026-06-16", ErrorType.GENERIC_ERROR, id="oldest"),
+            pytest.param("2027-02-28", True, id="head"),
+            pytest.param("2026-10-30", False, id="3.4.0"),
+            pytest.param("2026-06-16", False, id="oldest"),
         ],
     )
-    def test_downgrade_reports_the_error_the_version_knows(self, real_migrator, version, expected):
-        msg = ErrorResponse(error=ErrorType.XCOM_BACKEND_ERROR, detail={"message": "backend refused"})
+    def test_downgrade_reports_the_error_the_version_knows(self, real_migrator, version, known, error):
+        msg = ErrorResponse(error=error, detail={"message": "backend refused"})
 
         out = real_migrator.downgrade(msg, version)
 
-        assert out.error.value == expected.value
+        assert out.error.value == (error if known else ErrorType.GENERIC_ERROR).value
         assert out.detail == {"message": "backend refused"}
 
 

@@ -84,11 +84,13 @@ from airflow.sdk.exceptions import (
 )
 from airflow.sdk.execution_time.bundles import initialize_pinned_bundle
 from airflow.sdk.execution_time.comms import (
+    ApplyMap,
     DeleteXCom,
     ErrorResponse,
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    MapResult,
     RetryTask,
     SetXCom,
     SucceedTask,
@@ -616,6 +618,9 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         bundle_info,
         sentry_integration: str,
     ) -> None:
+        # The sidecar imports the Dag file from them to answer ApplyMap.
+        self._dag_rel_path = os.fspath(dag_rel_path)
+        self._bundle_info = bundle_info
         super()._on_child_started(
             ti=ti,
             dag_rel_path=dag_rel_path,
@@ -627,6 +632,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         self._arm_execution_timeout()
 
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
+    _dag_rel_path: str | None = attrs.field(default=None, init=False)
+    _bundle_info: BundleInfo | None = attrs.field(default=None, init=False)
     # Set when a mapped task expands over this task's return value, which the supervisor then measures.
     _needs_mapped_length: bool = attrs.field(default=False, init=False)
     _pushed_mapped_length: bool = attrs.field(default=False, init=False)
@@ -822,6 +829,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         call: XComBackendCall,
         then: Callable[[XComBackendResult], RequestResult],
         req_id: int,
+        error_type: ErrorType = ErrorType.XCOM_BACKEND_ERROR,
     ) -> ResponseSent:
         """
         Answer request ``req_id`` with ``then(result)`` once the XCom backend has run ``call``.
@@ -842,7 +850,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 resp, dump_opts = then(result)
             except Exception as e:
                 self.process_log.exception("Failed to handle the XCom backend result", request_id=req_id)
-                answer(None, _build_request_error(e))
+                answer(None, _build_request_error(e, error_type))
             else:
                 answer(resp, None, **dump_opts)
 
@@ -907,6 +915,26 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             XComBackendCall.store(coordinate, msg.resolved_map_index, msg.key, msg.value),
             lambda stored: handle_set_xcom(self.client, msg.model_copy(update={"value": stored.value})),
             req_id,
+        )
+
+    def _handle_apply_map(self, msg: ApplyMap, log: FilteringBoundLogger, req_id: int) -> ResponseSent:
+        """Have the Python sidecar run the Python Dag's ``map()`` callables for a stub TaskHandler."""
+        ti = cast("TaskInstance", self.ti)
+        call = XComBackendCall(
+            hook="apply_map",
+            key=msg.name,
+            value={
+                "value": msg.value,
+                "ti": ti.model_dump(mode="json"),
+                "dag_rel_path": self._dag_rel_path,
+                "bundle_info": self._bundle_info.model_dump(mode="json") if self._bundle_info else None,
+            },
+        )
+        return self._call_xcom_backend(
+            call,
+            lambda result: (MapResult.model_validate(result.value), {}),
+            req_id,
+            error_type=ErrorType.APPLY_MAP_ERROR,
         )
 
     def _is_mapped_over(self, msg: SetXCom) -> bool:
@@ -1020,6 +1048,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         **dict(
             [
                 register_request_method(SucceedTask, _handle_finished_task),
+                register_request_method(ApplyMap, _handle_apply_map),
                 register_request_method(DeleteXCom, _handle_delete_xcom),
                 register_request_method(GetXCom, _handle_get_xcom),
                 register_request_method(GetXComSequenceItem, _handle_get_xcom_sequence_item),

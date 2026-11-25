@@ -18,6 +18,19 @@
 
 package genmodels
 
+// Run a Python Dag's “map()“ callables for one argument of a stub TaskHandler,
+// in the Python sidecar.
+type ApplyMap struct {
+	// Name corresponds to the JSON schema field "name".
+	Name string `msgpack:"name"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value JsonValue `msgpack:"value,omitempty"`
+}
+
 type ArgBindings []TaskArgBinding
 
 type ArgPart map[string]interface{}
@@ -799,6 +812,7 @@ type ErrorResponse struct {
 type ErrorType string
 
 const ErrorTypeAPISERVERERROR ErrorType = "API_SERVER_ERROR"
+const ErrorTypeAPPLYMAPERROR ErrorType = "APPLY_MAP_ERROR"
 const ErrorTypeASSETNOTFOUND ErrorType = "ASSET_NOT_FOUND"
 const ErrorTypeASSETSTORENOTFOUND ErrorType = "ASSET_STORE_NOT_FOUND"
 const ErrorTypeCONNECTIONNOTFOUND ErrorType = "CONNECTION_NOT_FOUND"
@@ -1414,6 +1428,19 @@ type LoopDecisionPayload struct {
 
 	// Stop corresponds to the JSON schema field "stop".
 	Stop bool `msgpack:"stop"`
+}
+
+// The argument of a stub TaskHandler after a Python Dag's “map()“ callables ran
+// on it.
+type MapResult struct {
+	// Skipped corresponds to the JSON schema field "skipped".
+	Skipped bool `msgpack:"skipped,omitempty"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value JsonValue `msgpack:"value,omitempty"`
 }
 
 // Add a new value to be redacted in task logs.
@@ -2041,6 +2068,19 @@ type TupleArgBinding struct {
 	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
 }
 
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value string `msgpack:"value"`
+}
+
+type VersionData map[string]interface{}
+
+type Warnings []interface{}
+
 type UpdateDagRunNote struct {
 	// Note corresponds to the JSON schema field "note".
 	Note interface{} `msgpack:"note"`
@@ -2086,15 +2126,6 @@ type VariableKeysResult struct {
 	Type string `msgpack:"type,omitempty"`
 }
 
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value string `msgpack:"value"`
-}
-
 type VariableResult struct {
 	// Key corresponds to the JSON schema field "key".
 	Key string `msgpack:"key"`
@@ -2105,10 +2136,6 @@ type VariableResult struct {
 	// Value corresponds to the JSON schema field "value".
 	Value string `msgpack:"value"`
 }
-
-type VersionData map[string]interface{}
-
-type Warnings []interface{}
 
 // An argument read from an upstream task.
 type XComArgBinding struct {

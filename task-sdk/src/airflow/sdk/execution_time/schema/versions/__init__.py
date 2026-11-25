@@ -47,6 +47,7 @@ def get_bundle() -> VersionBundle:
         AddRetryReasonToTaskState,
     )
     from airflow.sdk.execution_time.schema.versions.v2027_02_28 import (
+        AddApplyMapErrorType,
         AddExecutionTimeoutToSupervisorTIRunContext,
         AddExternalClearTargetToSucceedTask,
         AddMappedStubArgBindingsToSupervisorTIRunContext,
@@ -63,6 +64,7 @@ def get_bundle() -> VersionBundle:
             MakeSupervisorVariableValueNonNullable,
             AddXComBackendErrorType,
             AddMappedStubArgBindingsToSupervisorTIRunContext,
+            AddApplyMapErrorType,
         ),
         Version(
             "2026-10-30",

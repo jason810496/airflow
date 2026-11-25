@@ -619,6 +619,18 @@ class XComResult(XComResponse):
         return cls(**xcom_response.model_dump(exclude_defaults=True), type="XComResult")
 
 
+class MapResult(BaseModel):
+    """The argument of a stub TaskHandler after a Python Dag's ``map()`` callables ran on it."""
+
+    value: JsonValue = None
+    """The argument after the callables. Unset when ``skipped``."""
+
+    skipped: bool = False
+    """True when a callable raised ``AirflowSkipException``."""
+
+    type: Literal["MapResult"] = "MapResult"
+
+
 class XComCountResponse(BaseModel):
     len: int
     type: Literal["XComCountResponse"] = "XComCountResponse"
@@ -905,6 +917,7 @@ class DagResult(DagResponse):
 
 ToTask = Annotated[
     AssetResult
+    | MapResult
     | AssetsByAliasResult
     | AssetEventsResult
     | AssetStateStoreResult
@@ -1005,6 +1018,18 @@ class GetXCom(BaseModel):
     map_index: int | None = None
     include_prior_dates: bool = False
     type: Literal["GetXCom"] = "GetXCom"
+
+
+class ApplyMap(BaseModel):
+    """Run a Python Dag's ``map()`` callables for one argument of a stub TaskHandler, in the Python sidecar."""
+
+    name: str
+    """The parameter whose expand argument holds the callables."""
+
+    value: JsonValue = None
+    """The element the supervisor picked, before the callables."""
+
+    type: Literal["ApplyMap"] = "ApplyMap"
 
 
 class GetXComCount(BaseModel):
@@ -1361,7 +1386,8 @@ class GetDag(BaseModel):
 
 
 ToSupervisor = Annotated[
-    AwaitInputTask
+    ApplyMap
+    | AwaitInputTask
     | ClearAssetStateStoreByName
     | ClearAssetStateStoreByUri
     | ClearTaskStateStore

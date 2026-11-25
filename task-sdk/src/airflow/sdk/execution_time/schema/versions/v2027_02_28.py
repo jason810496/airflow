@@ -22,6 +22,8 @@ New bodies in this version:
 
 - ``HITLDetailResponseResult``: the supervisor's reply when a running task reads its own
   Human-in-the-loop response.
+- ``ApplyMap`` and ``MapResult``: a stub TaskHandler has the Python sidecar run a Python Dag's
+  ``map()`` callables on one argument.
 """
 
 from __future__ import annotations
@@ -151,4 +153,18 @@ class AddXComBackendErrorType(VersionChange):
     def report_as_a_generic_error(response: ResponseInfo = None) -> None:  # type: ignore[assignment]
         """Report the failure as a generic one to a runtime whose version has no type for it."""
         if response.body.get("error") == ErrorType.XCOM_BACKEND_ERROR.value:
+            response.body["error"] = ErrorType.GENERIC_ERROR.value
+
+
+class AddApplyMapErrorType(VersionChange):
+    """Report a ``map()`` callable that failed in the Python sidecar under its own error type."""
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (enum(ErrorType).didnt_have("APPLY_MAP_ERROR"),)
+
+    @convert_response_to_previous_version_for(ErrorResponse)  # type: ignore[arg-type]
+    def report_as_a_generic_error(response: ResponseInfo = None) -> None:  # type: ignore[assignment]
+        """Report the failure as a generic one to a runtime whose version has no type for it."""
+        if response.body.get("error") == ErrorType.APPLY_MAP_ERROR.value:
             response.body["error"] = ErrorType.GENERIC_ERROR.value

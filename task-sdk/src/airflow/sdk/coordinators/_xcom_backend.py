@@ -31,7 +31,7 @@ import signal
 import time
 from collections import deque
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 from uuid import UUID
 
 import attrs
@@ -91,10 +91,11 @@ class XComBackendCall(BaseModel):
     A call of an XCom backend hook, sent to the helper process.
 
     ``value`` is a value as the runtime sends it for ``store``, the XCom row for ``load`` and ``purge``,
-    and a list of rows for ``load_many``.
+    a list of rows for ``load_many``, and the element, the task instance and its Dag file for ``apply_map``,
+    whose ``key`` names the argument.
     """
 
-    hook: Literal["store", "load", "load_many", "purge", "exit"]
+    hook: Literal["store", "load", "load_many", "purge", "apply_map", "exit"]
     key: str = ""
     value: JsonValue = None
     coordinate: _Coordinate | None = None
@@ -318,6 +319,10 @@ class _HookRunner:
     """Runs the hooks of an XCom backend that the supervisor's calls name, one method per hook."""
 
     xcom: type[BaseXCom]
+    # The Dag file is imported once per task instance, and each map() runs once per element, even when
+    # several arguments of an expand_kwargs() share it.
+    _tasks: dict[tuple[str, str, str], Any] = attrs.field(factory=dict, init=False)
+    _mapped: dict[tuple[int, str], JsonValue] = attrs.field(factory=dict, init=False)
 
     def run(self, call: XComBackendCall) -> XComBackendResult:
         try:
@@ -344,6 +349,30 @@ class _HookRunner:
     def load_many(self, call: XComBackendCall) -> XComBackendResult:
         rows = call.value if isinstance(call.value, list) else []
         return XComBackendResult(value=[self._load_row(call.key, row) for row in rows])
+
+    def apply_map(self, call: XComBackendCall) -> XComBackendResult:
+        import json
+
+        from airflow.sdk.api.datamodels._generated import BundleInfo
+        from airflow.sdk.coordinators._apply_map import apply_map, find_map_argument
+        from airflow.sdk.exceptions import AirflowSkipException
+        from airflow.sdk.execution_time.task_runner import load_dag_task
+
+        if not isinstance(call.value, dict) or not isinstance(ti := call.value.get("ti"), dict):
+            raise ValueError("An apply_map call needs the element, the task instance and its Dag file")
+        dag_id, task_id, dag_rel_path = str(ti["dag_id"]), str(ti["task_id"]), str(call.value["dag_rel_path"])
+        if (task := self._tasks.get((dag_rel_path, dag_id, task_id))) is None:
+            bundle_info = BundleInfo.model_validate(call.value["bundle_info"])
+            task = load_dag_task(bundle_info, dag_rel_path, dag_id, task_id)
+            self._tasks[(dag_rel_path, dag_id, task_id)] = task
+        source = find_map_argument(task, call.key)
+        key = (id(source), json.dumps(call.value["value"], sort_keys=True))
+        if key not in self._mapped:
+            try:
+                self._mapped[key] = {"value": apply_map(source, call.value["value"])}
+            except AirflowSkipException:
+                self._mapped[key] = {"skipped": True}
+        return XComBackendResult(value=self._mapped[key])
 
     def purge(self, call: XComBackendCall) -> XComBackendResult:
         self.xcom.purge(XComResult(key=call.key, value=call.value))

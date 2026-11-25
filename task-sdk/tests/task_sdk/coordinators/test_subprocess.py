@@ -74,10 +74,12 @@ from airflow.sdk.coordinators._xcom_backend import (
 )
 from airflow.sdk.exceptions import AirflowConfigException, ErrorType
 from airflow.sdk.execution_time.comms import (
+    ApplyMap,
     DeleteXCom,
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    MapResult,
     RetryTask,
     SetTaskStateStore,
     SetXCom,
@@ -2314,6 +2316,61 @@ class TestPopenActivitySubprocessXComBackend:
 
         assert (prepared is not None) is started
         assert mock_kill.called is not started
+
+
+class TestPopenActivitySubprocessApplyMap:
+    @pytest.fixture
+    def proc(self):
+        ti = _make_ti()
+        process = MagicMock(spec=ProcessTracker)
+        process.pid = 12345
+        proc = _PopenActivitySubprocess(
+            id=ti.id,
+            pid=12345,
+            process=process,
+            process_log=structlog.get_logger(logger_name="task"),
+            stdin=MagicMock(spec=socket.socket),
+            client=MagicMock(),
+            comm_server=MagicMock(spec=socket.socket),
+            logs_server=MagicMock(spec=socket.socket),
+        )
+        proc.ti = ti  # type: ignore[assignment]
+        proc._dag_rel_path = "dag.py"
+        proc._bundle_info = BundleInfo(name="dags", version="v1")
+        proc._open_sockets[proc.stdin] = "requests"
+        yield proc
+        proc.selector.close()
+
+    @pytest.mark.parametrize(
+        ("result", "response", "error"),
+        [
+            pytest.param(XComBackendResult(value={"value": "de"}), MapResult(value="de"), None, id="applied"),
+            pytest.param(
+                XComBackendResult(value={"skipped": True}), MapResult(skipped=True), None, id="skipped"
+            ),
+            pytest.param(
+                XComBackendResult(error="ZeroDivisionError: boom"), None, "APPLY_MAP_ERROR", id="failed"
+            ),
+        ],
+    )
+    @patch.object(_PopenActivitySubprocess, "send_msg", autospec=True)
+    @patch.object(_PopenActivitySubprocess, "_start_xcom_backend_call", autospec=True)
+    def test_the_sidecar_answers_apply_map(self, mock_start, mock_send, proc, result, response, error):
+        mock_start.side_effect = lambda _proc, call, finish: finish(result)
+
+        proc._handle_request(ApplyMap(name="row", value="de "), log, 7)
+
+        (call,) = [c.args[1] for c in mock_start.call_args_list]
+        assert call.hook == "apply_map"
+        assert call.key == "row"
+        assert call.value["value"] == "de "
+        assert call.value["dag_rel_path"] == "dag.py"
+        assert call.value["bundle_info"] == {"name": "dags", "version": "v1", "version_data": None}
+        sent = mock_send.call_args
+        assert sent.args[1] == response
+        assert sent.kwargs["request_id"] == 7
+        if error is not None:
+            assert sent.kwargs["error"].error.value == error
 
 
 class TestPopenActivitySubprocessMappedLength:

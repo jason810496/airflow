@@ -180,6 +180,7 @@ if TYPE_CHECKING:
     from pendulum.datetime import DateTime
     from structlog.typing import FilteringBoundLogger as Logger
 
+    from airflow.sdk.api.datamodels._generated import BundleInfo
     from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
     from airflow.sdk.definitions._internal.abstractoperator import AbstractOperator
     from airflow.sdk.definitions.context import Context
@@ -1139,6 +1140,34 @@ def check_xcom_backend_supports_loops(dag) -> None:
     if not any(isinstance(group, LoopTaskGroup) for group in dag.task_group.get_task_group_dict().values()):
         return
     raise build_loop_error(XCom, f"Dag {dag.dag_id!r}")
+
+
+def load_dag_task(
+    bundle_info: BundleInfo, dag_rel_path: str, dag_id: str, task_id: str
+) -> BaseOperator | MappedOperator:
+    """
+    Import the Dag file at *dag_rel_path* from its pinned bundle, and return task *task_id* of Dag *dag_id*.
+
+    The supervisor's Python sidecar uses this to run a Python Dag's ``map()`` callables for a stub task.
+
+    :raises LookupError: if the file declares no such Dag or task.
+    """
+    from airflow.dag_processing.dagbag import BundleDagBag
+
+    bundle_instance = initialize_ti_bundle(bundle_info)
+    bag = BundleDagBag(
+        dag_folder=os.fspath(Path(bundle_instance.path, dag_rel_path)),
+        safe_mode=False,
+        load_op_links=False,
+        bundle_path=bundle_instance.path,
+        bundle_name=bundle_info.name,
+    )
+    if (dag := bag.dags.get(dag_id)) is None:
+        raise LookupError(f"Dag {dag_id!r} is not in {dag_rel_path!r}")
+    task = dag.task_dict.get(task_id)
+    if not isinstance(task, (BaseOperator, MappedOperator)):
+        raise LookupError(f"Task {task_id!r} is not in Dag {dag_id!r}")
+    return task
 
 
 @detail_span("parse")

@@ -3,6 +3,30 @@
   "api_version": "2027-02-28",
   "description": "Apache Airflow SDK Supervisor Schema",
   "$defs": {
+    "ApplyMap": {
+      "description": "Run a Python Dag's ``map()`` callables for one argument of a stub TaskHandler, in the Python sidecar.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "type": {
+          "const": "ApplyMap",
+          "default": "ApplyMap",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ApplyMap",
+      "type": "object"
+    },
     "ArgPart": {
       "discriminator": {
         "mapping": {
@@ -1920,7 +1944,8 @@
         "PERMISSION_DENIED",
         "GENERIC_ERROR",
         "API_SERVER_ERROR",
-        "XCOM_BACKEND_ERROR"
+        "XCOM_BACKEND_ERROR",
+        "APPLY_MAP_ERROR"
       ],
       "title": "ErrorType",
       "type": "string"
@@ -3419,6 +3444,28 @@
         "stop"
       ],
       "title": "LoopDecisionPayload",
+      "type": "object"
+    },
+    "MapResult": {
+      "description": "The argument of a stub TaskHandler after a Python Dag's ``map()`` callables ran on it.",
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "skipped": {
+          "default": false,
+          "title": "Skipped",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "MapResult",
+          "default": "MapResult",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "title": "MapResult",
       "type": "object"
     },
     "MaskSecret": {

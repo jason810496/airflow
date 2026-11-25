@@ -82,6 +82,7 @@ from airflow.sdk.definitions._internal.loop import create_loop
 from airflow.sdk.exceptions import AirflowRuntimeError, ErrorType, TaskAlreadyRunningError
 from airflow.sdk.execution_time import supervisor, task_runner
 from airflow.sdk.execution_time.comms import (
+    ApplyMap,
     AssetEventsResult,
     AssetResult,
     AssetsByAliasResult,
@@ -4572,7 +4573,8 @@ class TestHandleRequest:
             assert decoder.validate_python(frame.body) == client_mock.response
 
     def test_registered_message_types(self):
-        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail}
+        # A Python task runs its own map() callables, so only a language SDK's supervisor answers ApplyMap.
+        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail, ApplyMap}
         assert set(ActivitySubprocess._request_handlers) == expected
         assert {type(case.message) for case in REQUEST_TEST_CASES} == expected
 

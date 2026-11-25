@@ -102,6 +102,7 @@ class ErrorType(enum.Enum):
     GENERIC_ERROR = "GENERIC_ERROR"
     API_SERVER_ERROR = "API_SERVER_ERROR"
     XCOM_BACKEND_ERROR = "XCOM_BACKEND_ERROR"
+    APPLY_MAP_ERROR = "APPLY_MAP_ERROR"
 
 
 class XComForMappingNotPushed(TypeError):
