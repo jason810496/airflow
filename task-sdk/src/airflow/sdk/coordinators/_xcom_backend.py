@@ -100,8 +100,8 @@ class XComBackendCall(BaseModel):
     A call of an XCom backend hook, sent to the helper process.
 
     ``value`` is a value as the runtime sends it for ``store``, the XCom row for ``load`` and ``purge``,
-    a list of rows for ``load_many``, and the task instance, its run context and its Dag file for
-    ``resolve_bindings``.
+    a list of rows for ``load_many``, and the task instance, its run context and either its Dag file or
+    a Dag definition's serialized Dag for ``resolve_bindings``.
     """
 
     hook: Literal["store", "load", "load_many", "purge", "resolve_bindings", "exit"]
@@ -389,11 +389,14 @@ class _HookRunner:
         from airflow.sdk.execution_time.task_runner import load_dag_task
 
         if not isinstance(call.value, dict):
-            raise ValueError(
-                "A resolve_bindings call needs the task instance, its run context and its Dag file"
-            )
+            raise ValueError("A resolve_bindings call needs the task instance, its run context and its Dag")
         ti = TaskInstance.model_validate(call.value["ti"])
         ti_context = TIRunContext.model_validate(call.value["ti_context"])
+        if isinstance(dag_data := call.value.get("dag"), dict):
+            from airflow.sdk.coordinators._dag_definition_mapping import resolve_dag_definition_bindings
+
+            bindings = resolve_dag_definition_bindings(ti, ti_context, dag_data)
+            return XComBackendResult(value={"bindings": cast("JsonValue", bindings)})
         bundle_info = BundleInfo.model_validate(call.value["bundle_info"])
         task = load_dag_task(bundle_info, str(call.value["dag_rel_path"]), ti.dag_id, ti.task_id)
         try:

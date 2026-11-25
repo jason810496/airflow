@@ -24,6 +24,7 @@ import "reflect"
 // in the supervisor wire-schema: the single source of truth for the "type"
 // field's value, so callers never hand-write strings that could drift.
 const (
+	TypeArgBindingsResult           = "ArgBindingsResult"
 	TypeAssetEventsResult           = "AssetEventsResult"
 	TypeAssetResult                 = "AssetResult"
 	TypeAssetStateStoreResult       = "AssetStateStoreResult"
@@ -87,6 +88,7 @@ const (
 	TypePutVariable                 = "PutVariable"
 	TypeRescheduleTask              = "RescheduleTask"
 	TypeResendLoggingFD             = "ResendLoggingFD"
+	TypeResolveArgBindings          = "ResolveArgBindings"
 	TypeRetryTask                   = "RetryTask"
 	TypeSentFDs                     = "SentFDs"
 	TypeSetAssetStateStoreByName    = "SetAssetStateStoreByName"
@@ -124,6 +126,9 @@ const (
 // only here and call sites can't pair the wrong constant with a struct.
 func EnsureType(m any) any {
 	switch b := m.(type) {
+	case ArgBindingsResult:
+		b.Type = TypeArgBindingsResult
+		return b
 	case AssetEventsResult:
 		b.Type = TypeAssetEventsResult
 		return b
@@ -312,6 +317,9 @@ func EnsureType(m any) any {
 		return b
 	case ResendLoggingFD:
 		b.Type = TypeResendLoggingFD
+		return b
+	case ResolveArgBindings:
+		b.Type = TypeResolveArgBindings
 		return b
 	case RetryTask:
 		b.Type = TypeRetryTask

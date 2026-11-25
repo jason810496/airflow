@@ -70,11 +70,13 @@ from airflow.sdk.coordinators._xcom_backend import (
 from airflow.sdk.exceptions import AirflowConfigException, ErrorType
 from airflow.sdk.execution_time.bundles import initialize_pinned_bundle
 from airflow.sdk.execution_time.comms import (
+    ArgBindingsResult,
     DeleteXCom,
     ErrorResponse,
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    ResolveArgBindings,
     RetryTask,
     SetXCom,
     TaskState,
@@ -621,6 +623,8 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     _xcom_backend: XComBackendProcess | None = attrs.field(default=None, init=False)
     _dag_rel_path: str | None = attrs.field(default=None, init=False)
     _bundle_info: BundleInfo | None = attrs.field(default=None, init=False)
+    # What the runtime started with; the sidecar resolves a Dag definition's bindings from it.
+    _ti_context: TIRunContext | None = attrs.field(default=None, init=False)
 
     def _prepare_ti_context(self, ti: TaskInstance, ti_context: TIRunContext) -> TIRunContext | None:
         """
@@ -695,6 +699,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             )
             self.kill(signal.SIGKILL)
             return None
+        self._ti_context = prepared
         return prepared
 
     def _needs_arg_resolution(self, ti: TaskInstance, ti_context: TIRunContext) -> bool:
@@ -829,6 +834,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
         call: XComBackendCall,
         then: Callable[[XComBackendResult], RequestResult],
         req_id: int,
+        error_type: ErrorType = ErrorType.XCOM_BACKEND_ERROR,
     ) -> ResponseSent:
         """
         Answer request ``req_id`` with ``then(result)`` once the XCom backend has run ``call``.
@@ -849,7 +855,7 @@ class _PopenActivitySubprocess(ActivitySubprocess):
                 resp, dump_opts = then(result)
             except Exception as e:
                 self.process_log.exception("Failed to handle the XCom backend result", request_id=req_id)
-                answer(None, _build_request_error(e))
+                answer(None, _build_request_error(e, error_type))
             else:
                 answer(resp, None, **dump_opts)
 
@@ -988,11 +994,39 @@ class _PopenActivitySubprocess(ActivitySubprocess):
             return result, XComBackendCall(hook="purge", key=msg.key, value=row.value)
         return result, None
 
+    def _handle_resolve_arg_bindings(
+        self, msg: ResolveArgBindings, log: FilteringBoundLogger, req_id: int
+    ) -> ResponseSent:
+        """Have the Python sidecar resolve a Dag definition's task arguments from the Dag its runtime sent."""
+        ti = cast("TaskInstance", self.ti)
+        if self._ti_context is None:
+            raise RuntimeError("The task has no run context to resolve its arguments from")
+        call = XComBackendCall(
+            hook="resolve_bindings",
+            value={
+                "ti": ti.model_dump(mode="json"),
+                # A binding's ``default`` means something by its presence alone, so unset keys stay out.
+                "ti_context": self._ti_context.model_dump(mode="json", exclude_unset=True),
+                "dag": msg.dag,
+            },
+        )
+        return self._call_xcom_backend(
+            call,
+            # Unset binding fields stay out, so ``type`` is set to be sent.
+            lambda result: (
+                ArgBindingsResult(type="ArgBindingsResult", **cast("dict", result.value)),
+                {"exclude_unset": True},
+            ),
+            req_id,
+            error_type=ErrorType.GENERIC_ERROR,
+        )
+
     _request_handlers: ClassVar[dict[type[BaseModel], RequestHandler[Any]]] = {
         **ActivitySubprocess._request_handlers,
         **dict(
             [
                 register_request_method(DeleteXCom, _handle_delete_xcom),
+                register_request_method(ResolveArgBindings, _handle_resolve_arg_bindings),
                 register_request_method(GetXCom, _handle_get_xcom),
                 register_request_method(GetXComSequenceItem, _handle_get_xcom_sequence_item),
                 register_request_method(GetXComSequenceSlice, _handle_get_xcom_sequence_slice),
@@ -1002,12 +1036,14 @@ class _PopenActivitySubprocess(ActivitySubprocess):
     }
 
 
-def _build_request_error(exc: Exception) -> ErrorResponse:
-    """Report ``exc`` to the runtime as an XCom backend failure, unless the API server rejected the request."""
+def _build_request_error(
+    exc: Exception, error_type: ErrorType = ErrorType.XCOM_BACKEND_ERROR
+) -> ErrorResponse:
+    """Report ``exc`` to the runtime as a sidecar failure, unless the API server rejected the request."""
     if isinstance(exc, ServerResponseError):
         return ErrorResponse.from_server_error(exc)
     return ErrorResponse(
-        error=ErrorType.XCOM_BACKEND_ERROR,
+        error=error_type,
         detail={"status_code": None, "message": str(exc), "exception_type": type(exc).__name__},
     )
 

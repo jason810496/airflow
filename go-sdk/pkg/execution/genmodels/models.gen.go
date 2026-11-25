@@ -20,6 +20,16 @@ package genmodels
 
 type ArgBindings []TaskArgBinding
 
+// A Dag definition's task arguments at this map index, as the Python sidecar
+// resolved them.
+type ArgBindingsResult struct {
+	// Bindings corresponds to the JSON schema field "bindings".
+	Bindings []interface{} `msgpack:"bindings"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+}
+
 type ArgValueSchema map[string]JsonValue
 
 // Schema for AssetAliasModel used in AssetEventDagRunReference.
@@ -345,6 +355,8 @@ type DRCount struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
+
+type Dag map[string]JsonValue
 
 // A Class with information about the success/failure DAG callback to be executed.
 type DagCallbackRequest struct {
@@ -1380,6 +1392,12 @@ type LiteralArgBinding struct {
 	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
 }
 
+// One inline value.
+type LiteralValue struct {
+	// Value corresponds to the JSON schema field "value".
+	Value JsonValue `msgpack:"value,omitempty"`
+}
+
 type LogicalDates []Time
 
 // Pinned loop definition and enclosing iteration for a task execution.
@@ -1580,6 +1598,47 @@ type RescheduleTask struct {
 type ResendLoggingFD struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
+}
+
+// Have the Python sidecar resolve a Dag definition's task arguments at this map
+// index.
+type ResolveArgBindings struct {
+	// Dag corresponds to the JSON schema field "dag".
+	Dag Dag `msgpack:"dag"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type string `msgpack:"type,omitempty"`
+}
+
+// A Dag definition's argument at this map index, with what the runtime still has
+// to do to it.
+type ResolvedLiteralArgBinding struct {
+	// ApplyMap corresponds to the JSON schema field "apply_map".
+	ApplyMap bool `msgpack:"apply_map,omitempty"`
+
+	// Fallback corresponds to the JSON schema field "fallback".
+	Fallback *LiteralValue `msgpack:"fallback,omitempty"`
+
+	// FromDefault corresponds to the JSON schema field "from_default".
+	FromDefault interface{} `msgpack:"from_default,omitempty"`
+
+	// Kind corresponds to the JSON schema field "kind".
+	Kind string `msgpack:"kind"`
+
+	// Kwarg corresponds to the JSON schema field "kwarg".
+	Kwarg interface{} `msgpack:"kwarg,omitempty"`
+
+	// Name corresponds to the JSON schema field "name".
+	Name string `msgpack:"name"`
+
+	// Spread corresponds to the JSON schema field "spread".
+	Spread bool `msgpack:"spread,omitempty"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value interface{} `msgpack:"value,omitempty"`
+
+	// ValueSchema corresponds to the JSON schema field "value_schema".
+	ValueSchema *ArgValueSchema `msgpack:"value_schema,omitempty"`
 }
 
 // Update a task instance state to up_for_retry.
@@ -1932,23 +1991,38 @@ type TaskInstance struct {
 	TryNumber int `msgpack:"try_number"`
 }
 
-type TaskInstanceState string
-
 const TaskInstanceStateAwaitingInput TaskInstanceState = "awaiting_input"
 const TaskInstanceStateDeferred TaskInstanceState = "deferred"
-const TaskInstanceStateFailed TaskInstanceState = "failed"
-const TaskInstanceStateQueued TaskInstanceState = "queued"
-const TaskInstanceStateRemoved TaskInstanceState = "removed"
-const TaskInstanceStateRestarting TaskInstanceState = "restarting"
-const TaskInstanceStateRunning TaskInstanceState = "running"
-const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
 const TaskInstanceStateSkipped TaskInstanceState = "skipped"
-const TaskInstanceStateSuccess TaskInstanceState = "success"
+const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
 const TaskInstanceStateUpForReschedule TaskInstanceState = "up_for_reschedule"
 const TaskInstanceStateUpForRetry TaskInstanceState = "up_for_retry"
-const TaskInstanceStateUpstreamFailed TaskInstanceState = "upstream_failed"
+const TaskInstanceStateFailed TaskInstanceState = "failed"
+const TaskInstanceStateRestarting TaskInstanceState = "restarting"
+const TaskInstanceStateSuccess TaskInstanceState = "success"
+const TaskInstanceStateRunning TaskInstanceState = "running"
+const TaskInstanceStateQueued TaskInstanceState = "queued"
+const TaskInstanceStateScheduled TaskInstanceState = "scheduled"
+const TaskInstanceStateRemoved TaskInstanceState = "removed"
+
+type TaskInstanceState string
+
+// Variable schema for responses with fields that are needed for Runtime.
+type VariableResponse struct {
+	// Key corresponds to the JSON schema field "key".
+	Key string `msgpack:"key"`
+
+	// Value corresponds to the JSON schema field "value".
+	Value string `msgpack:"value"`
+}
+
+type TriggerKwargs map[string]interface{}
 
 type TaskOutlets []AssetProfile
+
+type Warnings []interface{}
+
+type VersionData map[string]interface{}
 
 // Response containing the first reschedule date for a task instance.
 type TaskRescheduleStartDate struct {
@@ -1958,6 +2032,12 @@ type TaskRescheduleStartDate struct {
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
 }
+
+type TaskStateState string
+
+const TaskStateStateFailed TaskStateState = "failed"
+const TaskStateStateSkipped TaskStateState = "skipped"
+const TaskStateStateRemoved TaskStateState = "removed"
 
 // Update a task's state.
 //
@@ -1983,28 +2063,6 @@ type TaskState struct {
 
 	// Type corresponds to the JSON schema field "type".
 	Type string `msgpack:"type,omitempty"`
-}
-
-type TaskStateState string
-
-const TaskStateStateFailed TaskStateState = "failed"
-const TaskStateStateRemoved TaskStateState = "removed"
-
-type TriggerKwargs map[string]interface{}
-
-type Warnings []interface{}
-
-type VersionData map[string]interface{}
-
-const TaskStateStateSkipped TaskStateState = "skipped"
-
-// Variable schema for responses with fields that are needed for Runtime.
-type VariableResponse struct {
-	// Key corresponds to the JSON schema field "key".
-	Key string `msgpack:"key"`
-
-	// Value corresponds to the JSON schema field "value".
-	Value string `msgpack:"value"`
 }
 
 // Response to GetTaskStateStore; wraps the generated API response for supervisor

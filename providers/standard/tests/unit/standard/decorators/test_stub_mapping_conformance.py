@@ -18,9 +18,11 @@
 """
 Conformance of mapped stub-task resolution (ADR-0016).
 
-Every mapping form is resolved twice with the same supervisor responses: as a Python task resolves
-itself, and as the supervisor's sidecar resolves a Python Dag's stub task for a language SDK runtime,
-from the serialized bindings. Each instance must receive the same arguments.
+Every mapping form is resolved with the same supervisor responses as a Python task resolves itself,
+then as the supervisor's sidecar resolves it for a language SDK runtime: from the Python Dag's own
+stub task, and from the serialized Dag, as a Dag definition's runtime sends it. After the runtime's
+own steps, such as applying a Dag definition's ``map()`` callables, each instance must receive the
+same arguments.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import pytest
 from airflow.providers.standard.decorators.stub import stub
 from airflow.sdk import DAG, task, task_group
 from airflow.sdk.api.datamodels._generated import TaskArgBinding, TaskInstance
+from airflow.sdk.definitions.xcom_arg import MapXComArg
 from airflow.sdk.execution_time.comms import (
     ErrorResponse,
     GetTICount,
@@ -59,6 +62,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 if AIRFLOW_V_3_5_PLUS:
+    from airflow.sdk.coordinators._dag_definition_mapping import resolve_dag_definition_bindings
     from airflow.sdk.coordinators._stub_mapping import needs_resolution, resolve_arg_bindings
 
 
@@ -292,3 +296,55 @@ def test_sidecar_resolves_like_python(scenario, create_runtime_ti, mock_supervis
         ti_context = runtime_ti._ti_context_from_server.model_copy(update={"arg_bindings": arg_bindings})
 
         assert _receive(resolve_arg_bindings(ti, ti_context, op)) == expected, f"map_index={map_index}"
+
+
+def _find_callables(op, name: str) -> list:
+    """Find the map() callables of argument *name*, which a Dag definition's runtime finds the same way."""
+    if op.is_mapped:
+        value = op._get_specified_expand_input().value
+    else:
+        # The scenarios name each group member's parameter after the group key it reads.
+        value = op.get_closest_mapped_task_group()._expand_input.value
+    source = value.get(name) if isinstance(value, Mapping) else value
+    return source.callables if isinstance(source, MapXComArg) else []
+
+
+def _apply_runtime_steps(bindings: list[dict], op) -> dict[str, Any]:
+    """Do what ADR-0016's runtime steps do with the bindings: apply map() callables, then take kwarg."""
+    args: dict[str, Any] = {}
+    for binding in bindings:
+        if binding["kind"] == "sequence":
+            args[binding["name"]] = ("sequence", binding["task_id"])
+            continue
+        value = binding.get("value")
+        if binding.get("apply_map"):
+            for fn in _find_callables(op, binding["name"]):
+                # JSON has no tuple, so a zip() element reaches a runtime as a list.
+                value = fn(tuple(value) if isinstance(value, list) else value)
+        if (kwarg := binding.get("kwarg")) is not None:
+            value = value[kwarg] if kwarg in value else binding["fallback"]["value"]
+        args[binding["name"]] = _normalize(value)
+    return args
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.__name__)
+def test_sidecar_resolves_a_dag_definition_like_python(scenario, create_runtime_ti, mock_supervisor_comms):
+    dag, task_id, xcoms, counts = scenario()
+    # A Dag definition's runtime sends the same JSON Python serializes for the Dag processor.
+    dag_data = DagSerialization.to_dict(dag)["dag"]
+    encoded = {t[Encoding.VAR]["task_id"]: t[Encoding.VAR] for t in dag_data["tasks"]}[task_id]
+    op = dag.task_dict[task_id]
+    mock_supervisor_comms.send.side_effect = _make_responder(xcoms, counts)
+    arg_bindings = [TaskArgBinding.model_validate(e) for e in encoded["_arg_bindings"]]
+    for map_index in range(counts[task_id]) if op.get_needs_expansion() else [-1]:
+        expected = _resolve_in_python(create_runtime_ti, op, map_index)
+        runtime_ti = create_runtime_ti(task=op, dag_id="d", map_index=map_index)
+        ti = TaskInstance.model_validate(
+            {field: getattr(runtime_ti, field) for field in TaskInstance.model_fields}
+        )
+        if not needs_resolution(ti, arg_bindings):
+            continue
+        ti_context = runtime_ti._ti_context_from_server.model_copy(update={"arg_bindings": arg_bindings})
+        bindings = resolve_dag_definition_bindings(ti, ti_context, dag_data)
+
+        assert _apply_runtime_steps(bindings, op) == expected, f"map_index={map_index}"

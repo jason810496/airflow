@@ -80,6 +80,7 @@ from airflow.sdk.api.datamodels._generated import (
     HITLDetailRequest,
     HITLDetailResponse,
     InactiveAssetsResponse,
+    LiteralArgBinding,
     LoopDecisionPayload,
     PreviousTIResponse,
     PrevSuccessfulDagRunResponse,
@@ -99,6 +100,7 @@ from airflow.sdk.api.datamodels._generated import (
     UpdateHITLDetailPayload,
     VariableResponse,
     XComResponse,
+    XComSequenceArgBinding,
     XComSequenceIndexResponse,
     XComSequenceSliceResponse,
 )
@@ -597,6 +599,36 @@ class XComResult(XComResponse):
         return cls(**xcom_response.model_dump(exclude_defaults=True), type="XComResult")
 
 
+class LiteralValue(BaseModel):
+    """One inline value."""
+
+    value: JsonValue = None
+
+
+class ResolvedLiteralArgBinding(LiteralArgBinding):
+    """A Dag definition's argument at this map index, with what the runtime still has to do to it."""
+
+    apply_map: bool = False
+    """Run this argument's ``map()`` callables on the value, which are the Dag definition's own."""
+
+    kwarg: str | None = None
+    """``expand_kwargs()`` only: take this key of the value, after any ``map()`` callables."""
+
+    fallback: LiteralValue | None = None
+    """The value when ``kwarg`` is missing: the ``partial()`` value or the signature default."""
+
+    spread: bool = False
+    """``expand_kwargs()`` only: the value, after any ``map()`` callables, is a dict the runtime spreads
+    into the handler's arguments. ``name`` is then ``**``."""
+
+
+class ArgBindingsResult(BaseModel):
+    """A Dag definition's task arguments at this map index, as the Python sidecar resolved them."""
+
+    bindings: list[Annotated[ResolvedLiteralArgBinding | XComSequenceArgBinding, Field(discriminator="kind")]]
+    type: Literal["ArgBindingsResult"] = "ArgBindingsResult"
+
+
 class XComCountResponse(BaseModel):
     len: int
     type: Literal["XComCountResponse"] = "XComCountResponse"
@@ -882,7 +914,8 @@ class DagResult(DagResponse):
 
 
 ToTask = Annotated[
-    AssetResult
+    ArgBindingsResult
+    | AssetResult
     | AssetsByAliasResult
     | AssetEventsResult
     | AssetStateStoreResult
@@ -983,6 +1016,15 @@ class GetXCom(BaseModel):
     map_index: int | None = None
     include_prior_dates: bool = False
     type: Literal["GetXCom"] = "GetXCom"
+
+
+class ResolveArgBindings(BaseModel):
+    """Have the Python sidecar resolve a Dag definition's task arguments at this map index."""
+
+    dag: dict[str, JsonValue]
+    """The serialized Dag, as the runtime writes it for the Dag processor."""
+
+    type: Literal["ResolveArgBindings"] = "ResolveArgBindings"
 
 
 class GetXComCount(BaseModel):
@@ -1340,6 +1382,7 @@ class GetDag(BaseModel):
 
 ToSupervisor = Annotated[
     AwaitInputTask
+    | ResolveArgBindings
     | ClearAssetStateStoreByName
     | ClearAssetStateStoreByUri
     | ClearTaskStateStore

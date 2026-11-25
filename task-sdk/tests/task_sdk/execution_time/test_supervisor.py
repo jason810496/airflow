@@ -142,6 +142,7 @@ from airflow.sdk.execution_time.comms import (
     PutVariable,
     RescheduleTask,
     ResendLoggingFD,
+    ResolveArgBindings,
     RetryTask,
     SentFDs,
     SetAssetStateStoreByName,
@@ -4572,7 +4573,8 @@ class TestHandleRequest:
             assert decoder.validate_python(frame.body) == client_mock.response
 
     def test_registered_message_types(self):
-        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail}
+        # Only a Dag definition's runtime sends its Dag, to a language SDK's supervisor.
+        expected = set(get_args(get_args(ToSupervisor)[0])) - {UpdateHITLDetail, ResolveArgBindings}
         assert set(ActivitySubprocess._request_handlers) == expected
         assert {type(case.message) for case in REQUEST_TEST_CASES} == expected
 

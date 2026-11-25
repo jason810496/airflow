@@ -79,6 +79,7 @@ from airflow.sdk.execution_time.comms import (
     GetXCom,
     GetXComSequenceItem,
     GetXComSequenceSlice,
+    ResolveArgBindings,
     SetTaskStateStore,
     SetXCom,
     TaskState,
@@ -2321,6 +2322,50 @@ class TestPopenActivitySubprocessResolveArgBindings:
         proc._subprocess_schema_version = "2026-10-30"
 
         assert proc._prepare_ti_context(proc.ti, mapped_ti_context) is not None
+
+    @pytest.fixture
+    def answer_call(self, proc):
+        """Answer every sidecar call with the result the test sets, and keep the calls."""
+        calls: list[XComBackendCall] = []
+        result = {"value": XComBackendResult()}
+        proc._open_sockets[proc.stdin] = "requests"
+
+        def start(self, call, finish):
+            calls.append(call)
+            finish(result["value"])
+
+        with patch.object(
+            _PopenActivitySubprocess, "_start_xcom_backend_call", autospec=True, side_effect=start
+        ):
+            yield calls, result
+
+    def test_a_dag_definitions_runtime_gets_its_bindings_resolved_from_the_dag_it_sends(
+        self, proc, answer_call, mapped_ti_context
+    ):
+        calls, result = answer_call
+        proc._ti_context = mapped_ti_context
+        resolved = {"name": "row", "kind": "literal", "value": "de ", "apply_map": True}
+        result["value"] = XComBackendResult(value={"bindings": [resolved]})
+
+        proc._handle_request(ResolveArgBindings(dag={"dag_id": "d"}), log, 1)
+
+        (call,) = calls
+        assert call.hook == "resolve_bindings"
+        assert call.value["dag"] == {"dag_id": "d"}
+        assert call.value["ti_context"]["arg_bindings"] == [_PARAM_BINDING]
+        assert _sent_body(proc) == {"bindings": [resolved], "type": "ArgBindingsResult"}
+
+    def test_a_dag_definitions_bindings_that_cannot_be_resolved_fail_the_request(
+        self, proc, answer_call, mapped_ti_context
+    ):
+        _, result = answer_call
+        proc._ti_context = mapped_ti_context
+        result["value"] = XComBackendResult(error="ArgResolutionError: Task 'gone' is not in the Dag")
+
+        proc._handle_request(ResolveArgBindings(dag={}), log, 1)
+
+        assert _sent_error(proc)["error"] == ErrorType.GENERIC_ERROR.value
+        assert "Task 'gone' is not in the Dag" in _sent_error(proc)["detail"]["message"]
 
 
 class TestResolveArtifactBundle:

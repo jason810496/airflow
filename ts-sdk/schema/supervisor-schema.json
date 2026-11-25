@@ -3,6 +3,43 @@
   "api_version": "2027-02-28",
   "description": "Apache Airflow SDK Supervisor Schema",
   "$defs": {
+    "ArgBindingsResult": {
+      "description": "A Dag definition's task arguments at this map index, as the Python sidecar resolved them.",
+      "properties": {
+        "bindings": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "literal": "#/$defs/ResolvedLiteralArgBinding",
+                "sequence": "#/$defs/XComSequenceArgBinding"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ResolvedLiteralArgBinding"
+              },
+              {
+                "$ref": "#/$defs/XComSequenceArgBinding"
+              }
+            ]
+          },
+          "title": "Bindings",
+          "type": "array"
+        },
+        "type": {
+          "const": "ArgBindingsResult",
+          "default": "ArgBindingsResult",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bindings"
+      ],
+      "title": "ArgBindingsResult",
+      "type": "object"
+    },
     "AssetAliasReferenceAssetEventDagRun": {
       "additionalProperties": false,
       "description": "Schema for AssetAliasModel used in AssetEventDagRunReference.",
@@ -3368,6 +3405,17 @@
       "title": "LazyDeserializedDAG",
       "type": "object"
     },
+    "LiteralValue": {
+      "description": "One inline value.",
+      "properties": {
+        "value": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        }
+      },
+      "title": "LiteralValue",
+      "type": "object"
+    },
     "LoopDecisionPayload": {
       "additionalProperties": false,
       "description": "A loop gate's evaluation of its ``until`` callable.",
@@ -3766,6 +3814,116 @@
         }
       },
       "title": "ResendLoggingFD",
+      "type": "object"
+    },
+    "ResolveArgBindings": {
+      "description": "Have the Python sidecar resolve a Dag definition's task arguments at this map index.",
+      "properties": {
+        "dag": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Dag",
+          "type": "object"
+        },
+        "type": {
+          "const": "ResolveArgBindings",
+          "default": "ResolveArgBindings",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dag"
+      ],
+      "title": "ResolveArgBindings",
+      "type": "object"
+    },
+    "ResolvedLiteralArgBinding": {
+      "description": "A Dag definition's argument at this map index, with what the runtime still has to do to it.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value_schema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArgValueSchema"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "const": "literal",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JsonValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from_default": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "From Default"
+        },
+        "apply_map": {
+          "default": false,
+          "title": "Apply Map",
+          "type": "boolean"
+        },
+        "kwarg": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kwarg"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LiteralValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spread": {
+          "default": false,
+          "title": "Spread",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "title": "ResolvedLiteralArgBinding",
       "type": "object"
     },
     "RetryTask": {
