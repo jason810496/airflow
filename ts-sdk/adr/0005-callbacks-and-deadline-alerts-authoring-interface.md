@@ -38,10 +38,10 @@ This ADR records the TypeScript spelling of it. Listeners have no TypeScript API
    which the serializer sets when a field is non-empty.
 2. **A callback is a function or a `PythonCallbackRef`.** The function takes a `CallbackContext` and
    may be async, since it runs in the runtime. `getClient()` works inside it.
-3. **`DagSpec.deadline` takes `DeadlineAlert` objects.** References come from the `deadlines`
-   module. `interval` is seconds. An alert whose callback is a function must have a `name` unique
+3. **`DagSpec.deadline` takes `DeadlineAlert` objects.** Built-in references come from the
+   `deadlines` module, and a custom reference is `python.deadlineReferenceRef`. `interval` is seconds. An alert whose callback is a function must have a `name` unique
    in the Dag.
-4. **The `python` module adds `callbackRef` and `asyncCallbackRef`.** `asyncCallbackRef` and the
+4. **The `python` module adds `callbackRef`, `asyncCallbackRef` and `deadlineReferenceRef`.** `asyncCallbackRef` and the
    `executor` option of `callbackRef` are accepted only in a deadline alert, and the types enforce
    it.
 
@@ -94,6 +94,7 @@ function averageRuntime(options?: { maxRuns?: number; minRuns?: number }): Deadl
 // @apache-airflow/ts-sdk/python
 function callbackRef(path: string, kwargs?: JsonObject, options?: { executor?: string }): PythonCallbackRef;
 function asyncCallbackRef(path: string, kwargs?: JsonObject, options?: { queue?: string }): PythonAsyncCallbackRef;
+function deadlineReferenceRef(path: string, data?: JsonObject): DeadlineReference;
 ```
 
 ## Example
@@ -101,7 +102,7 @@ function asyncCallbackRef(path: string, kwargs?: JsonObject, options?: { queue?:
 ```ts
 import { Dag, getClient, type CallbackContext } from "@apache-airflow/ts-sdk";
 import * as deadlines from "@apache-airflow/ts-sdk/deadlines";
-import { asyncCallbackRef, callbackRef } from "@apache-airflow/ts-sdk/python";
+import { asyncCallbackRef, callbackRef, deadlineReferenceRef } from "@apache-airflow/ts-sdk/python";
 
 async function notifyTeam(ctx: CallbackContext) {
   await getClient().setVariable("last_notified_run", ctx.runId);
@@ -121,6 +122,8 @@ const dag = new Dag("daily_report", {
       callback: asyncCallbackRef("my_plugin.alerts.slack", { channel: "#ops" }, { queue: "default" }) },
     { name: "slow", reference: deadlines.averageRuntime({ maxRuns: 10, minRuns: 3 }), interval: 600,
       callback: escalate },
+    { name: "batch", reference: deadlineReferenceRef("my_plugin.deadlines.UpstreamBatchLanded", { batch: "eu" }),
+      interval: 1800, callback: escalate },
   ],
 });
 

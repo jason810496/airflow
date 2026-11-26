@@ -41,8 +41,8 @@ This ADR records the Go spelling of it. Listeners have no Go API.
 2. **A callback is an `airflow.CallbackFunc` or a `python.CallbackRef`.** A `CallbackFunc` takes an
    `airflow.CallbackContext`, which embeds `context.Context` and gives the client, the logger and
    the callback's details. A returned error is logged, as a panic is.
-3. **`DagSpec.Deadline` takes `[]airflow.DeadlineAlert`.** References come from the `deadline`
-   package. `Interval` is a `time.Duration`. An alert whose callback is a `CallbackFunc` must have a
+3. **`DagSpec.Deadline` takes `[]airflow.DeadlineAlert`.** Built-in references come from the
+   `deadline` package, and a custom reference is `python.DeadlineReferenceRef`. `Interval` is a `time.Duration`. An alert whose callback is a `CallbackFunc` must have a
    `Name` unique in the Dag.
 4. **`airflow.Callback` and `airflow.DeadlineCallback` are separate interfaces.** A sync callback
    implements both; `python.AsyncCallbackRef` implements only `DeadlineCallback`, so the compiler
@@ -100,6 +100,7 @@ type AsyncCallbackOptions struct{ Queue string }
 type SyncCallback interface{ airflow.Callback; airflow.DeadlineCallback }
 func CallbackRef(path string, kwargs map[string]any, opts ...CallbackOptions) SyncCallback
 func AsyncCallbackRef(path string, kwargs map[string]any, opts ...AsyncCallbackOptions) airflow.DeadlineCallback
+func DeadlineReferenceRef(path string, data map[string]any) airflow.DeadlineReference
 ```
 
 ## Example
@@ -146,6 +147,8 @@ func newDag() *airflow.DagRef {
                     python.AsyncCallbackOptions{Queue: "default"})},
             {Name: "slow", Reference: deadline.AverageRuntime(deadline.AverageRuntimeOptions{MaxRuns: 10, MinRuns: 3}),
                 Interval: 10 * time.Minute, Callback: airflow.CallbackFunc(escalate)},
+            {Name: "batch", Reference: python.DeadlineReferenceRef("my_plugin.deadlines.UpstreamBatchLanded",
+                map[string]any{"batch": "eu"}), Interval: 30 * time.Minute, Callback: airflow.CallbackFunc(escalate)},
         },
     })
     dag.Task(load, airflow.TaskSpec{

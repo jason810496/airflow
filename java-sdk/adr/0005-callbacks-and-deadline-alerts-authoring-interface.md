@@ -39,10 +39,11 @@ surface of [ADR-0002](0002-native-dag-interface.md). Listeners have no Java API.
    overload, since a lambda only converts to a functional interface.
 2. **`Callback` is a functional interface** taking a `CallbackContext` and a `Client`, as
    `Task.execute` takes a `Context` and a `Client`. An exception it throws is logged.
-3. **`DagDef.deadline(DeadlineAlert...)` adds deadline alerts.** References come from
-   `org.apache.airflow.sdk.deadline.Deadlines`. A `DeadlineAlert` with a `Callback` takes a
+3. **`DagDef.deadline(DeadlineAlert...)` adds deadline alerts.** Built-in references come
+   from `org.apache.airflow.sdk.deadline.Deadlines`, and a custom reference is
+   `Python.deadlineReferenceRef`. A `DeadlineAlert` with a `Callback` takes a
    required name, unique in the Dag; the overloads for a Python callback take an optional one.
-4. **`Python` adds `callbackRef` and `asyncCallbackRef`.** `PythonAsyncCallback` is accepted only by
+4. **`Python` adds `callbackRef`, `asyncCallbackRef` and `deadlineReferenceRef`.** `PythonAsyncCallback` is accepted only by
    `DeadlineAlert`, so the compiler rejects it elsewhere. The `executor` argument of `callbackRef` is
    rejected at registration outside a deadline alert.
 5. **The annotation surface has one annotation per callback.** `@Airflow.OnSuccessCallback` and
@@ -51,7 +52,8 @@ surface of [ADR-0002](0002-native-dag-interface.md). Listeners have no Java API.
    `@Airflow.OnSkippedCallback` require `task`. `@Airflow.Deadline` marks a method as an alert's
    callback. The method takes the same arguments as `Callback.call`. Methods carrying the same
    annotation run in source order. Python references on the annotation surface are left to a
-   follow-up, since an annotation attribute cannot hold a `Map` of kwargs.
+   follow-up, since an annotation attribute cannot hold a `Map` of kwargs. Custom deadline
+   references are left to the same follow-up.
 
 ## Signatures
 
@@ -108,6 +110,7 @@ static PythonCallback callbackRef(String path, Map<String, Object> kwargs);
 static PythonCallback callbackRef(String path, Map<String, Object> kwargs, String executor);
 static PythonAsyncCallback asyncCallbackRef(String path, Map<String, Object> kwargs);
 static PythonAsyncCallback asyncCallbackRef(String path, Map<String, Object> kwargs, String queue);
+static DeadlineReference deadlineReferenceRef(String path, Map<String, Object> data);
 
 // org.apache.airflow.sdk.Airflow (annotation surface)
 @interface OnSuccessCallback { String task() default ""; }   // "" means a Dag callback
@@ -161,7 +164,10 @@ public class Reports {
                 Python.callbackRef("my_plugin.alerts.page", Map.of(), "CeleryExecutor")),
             new DeadlineAlert(fixedDatetime(OffsetDateTime.parse("2026-12-31T00:00:00+01:00")), Duration.ZERO,
                 Python.asyncCallbackRef("my_plugin.alerts.slack", Map.of("channel", "#ops"), "default")),
-            new DeadlineAlert("slow", averageRuntime(10, 3), Duration.ofMinutes(10), Reports::escalate));
+            new DeadlineAlert("slow", averageRuntime(10, 3), Duration.ofMinutes(10), Reports::escalate),
+            new DeadlineAlert("batch",
+                Python.deadlineReferenceRef("my_plugin.deadlines.UpstreamBatchLanded", Map.of("batch", "eu")),
+                Duration.ofMinutes(30), Reports::escalate));
     dag.task("load", Load.class)
         .onExecuteCallback((context, client) -> System.out.println("starting try " + context.getTryNumber()))
         .onSuccessCallback(Reports::notifyTeam)
