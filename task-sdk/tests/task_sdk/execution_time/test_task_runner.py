@@ -2738,6 +2738,21 @@ def test_run_with_asset_outlets(
     mock_supervisor_comms.send.assert_any_call(expected_msg)
 
 
+def test_outlet_events_rejects_undeclared_outlet(create_runtime_ti, mock_supervisor_comms):
+    from airflow.providers.standard.operators.bash import BashOperator
+
+    task = BashOperator(outlets=[Asset("declared")], task_id="asset-outlet-task", bash_command="echo 0")
+    ti = create_runtime_ti(task=task, dag_id="dag_with_asset_outlet_task")
+    outlet_events = ti.get_template_context()["outlet_events"]
+
+    outlet_events[Asset("declared")].extra = {"k": "v"}
+    with pytest.raises(KeyError, match="is not an outlet of this task"):
+        outlet_events[Asset("undeclared")]
+
+    task.outlets.append(Asset("added-at-runtime"))
+    outlet_events[Asset("added-at-runtime")].extra = {"k": "v"}
+
+
 def test_run_with_asset_inlets(create_runtime_ti, mock_supervisor_comms):
     """Test running a basic task that contains asset inlets."""
     asset_event_resp = AssetEventResult(

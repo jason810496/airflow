@@ -2236,7 +2236,7 @@ class TestTaskInstance:
         assert events["write2"].asset.uri == "test_outlet_asset_extra_2"
         assert events["write2"].extra == {"x": 1}
 
-    def test_outlet_asset_extra_ignore_different(self, dag_maker, session):
+    def test_outlet_asset_extra_undeclared_fails(self, dag_maker, session):
         from airflow.sdk.definitions.asset import Asset
 
         with dag_maker(schedule=None, serialized=True, session=session):
@@ -2244,17 +2244,14 @@ class TestTaskInstance:
             @task(outlets=Asset("test_outlet_asset_extra"))
             def write(*, outlet_events):
                 outlet_events[Asset("test_outlet_asset_extra")].extra = {"one": 1}
-                outlet_events[Asset("different_uri")].extra = {"foo": "bar"}  # Will be silently dropped.
+                outlet_events[Asset("different_uri")].extra = {"foo": "bar"}
 
             write()
 
-        ti = dag_maker.run_ti("write")
+        with pytest.raises(KeyError, match="is not an outlet of this task"):
+            dag_maker.run_ti("write")
 
-        event = session.scalars(select(AssetEvent)).one()
-        assert event.source_dag_id == ti.dag_id
-        assert event.source_run_id == ti.run_id
-        assert event.source_task_id == "write"
-        assert event.extra == {"one": 1}
+        assert session.scalars(select(AssetEvent)).all() == []
 
     def test_outlet_asset_alias(self, dag_maker, session):
         from airflow.sdk.definitions.asset import Asset
@@ -2385,7 +2382,7 @@ class TestTaskInstance:
 
         with dag_maker(dag_id="producer_dag", schedule=None, serialized=True, session=session):
 
-            @task(outlets=AssetAlias(asset_alias_name))
+            @task(outlets=[AssetAlias(asset_alias_name), Asset(asset_uri)])
             def producer(*, outlet_events):
                 yield Metadata(Asset(asset_uri), extra={"key": "value"}, alias=AssetAlias(asset_alias_name))
 
@@ -2396,7 +2393,11 @@ class TestTaskInstance:
         for ti in dr.get_task_instances(session=session):
             run_task_instance(ti, dag_maker.dag.get_task(ti.task_id), session=session)
 
-        producer_event = session.scalar(select(AssetEvent).where(AssetEvent.source_task_id == "producer"))
+        events = session.scalars(
+            select(AssetEvent).where(AssetEvent.source_task_id == "producer").order_by(AssetEvent.id)
+        ).all()
+        assert [len(e.source_aliases) for e in events] == [0, 1]
+        producer_event = events[1]
 
         assert producer_event.source_task_id == "producer"
         assert producer_event.source_dag_id == "producer_dag"

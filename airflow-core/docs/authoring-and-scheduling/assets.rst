@@ -227,6 +227,8 @@ There's minimal magic here---Airflow simply writes the yielded values to the exa
 
 .. note:: Asset event extra information can only contain JSON-serializable values (list and dict nesting is possible). This is due to the value being stored in the database.
 
+.. note:: ``outlet_events`` only accepts assets and asset aliases in the task's ``outlets``. Looking up any other asset or alias raises ``KeyError``. An asset added to ``outlets`` while the task runs is accepted.
+
 .. _fetching_information_from_previously_emitted_asset_events:
 
 Fetching information from previously emitted asset events
@@ -398,11 +400,14 @@ The following example creates an asset event against the S3 URI ``f"s3://bucket/
 
     from airflow.sdk import Metadata
 
+    s3_asset = Asset(uri="s3://bucket/my-task", name="example_s3")
 
-    @task(outlets=[AssetAlias("my-task-outputs")])
+
+    @task(outlets=[AssetAlias("my-task-outputs"), s3_asset])
     def my_task_with_metadata():
-        s3_asset = Asset(uri="s3://bucket/my-task", name="example_s3")
         yield Metadata(s3_asset, extra={"k": "v"}, alias=AssetAlias("my-task-outputs"))
+
+``Metadata`` also writes the event to the asset itself, so the asset must be in the task's ``outlets`` too, and the task records one event for the asset plus one through the alias. To add an asset that is not known before the task runs, call ``add()`` on the alias accessor in ``outlet_events`` as shown above.
 
 Only one asset event is emitted for an added asset, even if it is added to the alias multiple times, or added to multiple aliases. However, if different ``extra`` values are passed, it can emit multiple asset events. In the following example, two asset events will be emitted.
 

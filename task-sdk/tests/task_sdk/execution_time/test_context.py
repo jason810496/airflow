@@ -561,7 +561,6 @@ class TestOutletEventAccessor:
     @pytest.mark.parametrize(
         ("key", "asset_alias_events"),
         (
-            (AssetUniqueKey.from_asset(Asset("test_uri")), []),
             (
                 AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias")),
                 [
@@ -574,7 +573,7 @@ class TestOutletEventAccessor:
                 ],
             ),
         ),
-        ids=["inactive asset", "active asset"],
+        ids=["alias"],
     )
     def test_add(self, add_args, key, asset_alias_events, mock_supervisor_comms):
         mock_supervisor_comms.send.return_value = AssetResponse(
@@ -597,7 +596,6 @@ class TestOutletEventAccessor:
     @pytest.mark.parametrize(
         ("key", "asset_alias_events"),
         (
-            (AssetUniqueKey.from_asset(Asset("test_uri")), []),
             (
                 AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias")),
                 [
@@ -610,7 +608,7 @@ class TestOutletEventAccessor:
                 ],
             ),
         ),
-        ids=["inactive asset", "active asset"],
+        ids=["alias"],
     )
     def test_add_with_db(self, add_args, key, asset_alias_events, mock_supervisor_comms):
         mock_supervisor_comms.send.return_value = AssetResponse(
@@ -620,6 +618,12 @@ class TestOutletEventAccessor:
         outlet_event_accessor = OutletEventAccessor(key=key)
         outlet_event_accessor.add(*add_args)
         assert outlet_event_accessor.asset_alias_events == asset_alias_events
+
+    def test_add_on_asset_raises(self):
+        outlet_event_accessor = OutletEventAccessor(key=AssetUniqueKey.from_asset(Asset("test_uri")))
+        with pytest.raises(TypeError, match=r"add\(\) is only supported on asset alias outlet events"):
+            outlet_event_accessor.add(Asset("name", "uri"))
+        assert outlet_event_accessor.asset_alias_events == []
 
 
 class TestOutletEventAccessorPartitionKeys:
@@ -928,6 +932,52 @@ class TestOutletEventAccessors:
         outlet_event_accessors = OutletEventAccessors()
         outlet_event_accessors.for_asset(name=name, uri=uri)
         assert mocked__getitem__.call_args[0][0] == expected_key
+
+    @pytest.mark.parametrize(
+        ("outlets", "access_key"),
+        (
+            pytest.param(
+                [Asset(name="a", uri="s3://bucket/a")], Asset(name="a", uri="s3://bucket/a"), id="asset"
+            ),
+            pytest.param([Asset.ref(name="a")], Asset(name="a", uri="s3://bucket/a"), id="name-ref"),
+            pytest.param(
+                [Asset.ref(uri="s3://bucket/a")], Asset(name="a", uri="s3://bucket/a"), id="uri-ref"
+            ),
+            pytest.param([AssetAlias("alias")], AssetAlias("alias"), id="alias"),
+        ),
+    )
+    def test__get_item__declared_outlet(self, outlets, access_key):
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
+        outlet_event_accessors[access_key].extra["k"] = "v"
+        assert list(outlet_event_accessors) == [access_key]
+
+    @pytest.mark.parametrize(
+        ("outlets", "access_key"),
+        (
+            pytest.param([], Asset(name="a", uri="s3://bucket/a"), id="no-outlets"),
+            pytest.param(
+                [Asset(name="b", uri="s3://bucket/b")], Asset(name="a", uri="s3://bucket/a"), id="other-asset"
+            ),
+            pytest.param([Asset.ref(name="b")], Asset(name="a", uri="s3://bucket/a"), id="other-name-ref"),
+            pytest.param([AssetAlias("alias")], Asset(name="alias", uri="alias"), id="alias-not-asset"),
+            pytest.param([Asset(name="alias", uri="alias")], AssetAlias("alias"), id="asset-not-alias"),
+            pytest.param([AssetAlias("other")], AssetAlias("alias"), id="other-alias"),
+        ),
+    )
+    def test__get_item__undeclared_outlet_raises(self, outlets, access_key):
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
+        with pytest.raises(KeyError, match="is not an outlet of this task"):
+            outlet_event_accessors[access_key]
+        assert access_key not in outlet_event_accessors
+        assert len(outlet_event_accessors) == 0
+
+    def test__get_item__outlet_added_at_runtime(self):
+        outlets: list[Asset] = []
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
+        with pytest.raises(KeyError):
+            outlet_event_accessors[Asset("a")]
+        outlets.append(Asset("a"))
+        assert outlet_event_accessors[Asset("a")].key == AssetUniqueKey.from_asset(Asset("a"))
 
     @mock.patch("airflow.sdk.execution_time.context.OutletEventAccessors.__getitem__")
     def test_for_asset_alias(self, mocked__getitem__):

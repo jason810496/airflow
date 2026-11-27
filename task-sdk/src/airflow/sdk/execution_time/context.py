@@ -25,7 +25,7 @@ import itertools
 import json
 import os
 import warnings
-from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -1373,9 +1373,16 @@ class OutletEventAccessor(_AssetRefResolutionMixin):
         self.partition_keys.update(keys)
 
     def add(self, asset: Asset | AssetRef, extra: dict[str, JsonValue] | None = None) -> None:
-        """Add an AssetEvent to an existing Asset."""
+        """
+        Add an asset event for ``asset`` through this asset alias.
+
+        :raises TypeError: If this accessor is for an asset, not an asset alias.
+        """
         if not isinstance(self.key, AssetAliasUniqueKey):
-            return
+            raise TypeError(
+                "add() is only supported on asset alias outlet events; "
+                "set extra or call add_partitions() on an asset outlet event instead."
+            )
 
         if isinstance(asset, AssetRef):
             asset_key, asset_extra = self._resolve_asset_ref(asset)
@@ -1425,10 +1432,17 @@ class OutletEventAccessors(
     Mapping["Asset | AssetAlias", OutletEventAccessor],
     _AssetEventAccessorsMixin[OutletEventAccessor],
 ):
-    """Lazy mapping of outlet asset event accessors."""
+    """
+    Lazy mapping of outlet asset event accessors.
 
-    def __init__(self) -> None:
+    :param get_outlets: Returns the task's declared outlets. When given, looking up an asset
+        or asset alias that is not among them raises ``KeyError``. It is called on every
+        lookup, so outlets the task adds while running are accepted.
+    """
+
+    def __init__(self, get_outlets: Callable[[], Iterable[Any]] | None = None) -> None:
         self._dict: dict[BaseAssetUniqueKey, OutletEventAccessor] = {}
+        self._get_outlets = get_outlets
 
     def __str__(self) -> str:
         return f"OutletEventAccessors(_dict={self._dict})"
@@ -1453,8 +1467,28 @@ class OutletEventAccessors(
             raise TypeError(f"Key should be either an asset or an asset alias, not {type(key)}")
 
         if hashable_key not in self._dict:
+            if self._get_outlets is not None and not self._is_declared(hashable_key):
+                raise KeyError(
+                    f"{hashable_key!r} is not an outlet of this task; add it to the task's outlets."
+                )
             self._dict[hashable_key] = OutletEventAccessor(extra={}, key=hashable_key)
         return self._dict[hashable_key]
+
+    def _is_declared(self, key: BaseAssetUniqueKey) -> bool:
+        if TYPE_CHECKING:
+            assert self._get_outlets is not None
+        for outlet in self._get_outlets():
+            if isinstance(key, AssetAliasUniqueKey):
+                if isinstance(outlet, AssetAlias) and outlet.name == key.name:
+                    return True
+            elif isinstance(key, AssetUniqueKey):
+                if isinstance(outlet, Asset) and AssetUniqueKey.from_asset(outlet) == key:
+                    return True
+                if isinstance(outlet, AssetNameRef) and outlet.name == key.name:
+                    return True
+                if isinstance(outlet, AssetUriRef) and outlet.uri == key.uri:
+                    return True
+        return False
 
 
 @attrs.define(init=False)
