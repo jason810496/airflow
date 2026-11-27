@@ -59,6 +59,7 @@ from airflow.sdk.exceptions import (
     AirflowSecretsBackendAccessDenied,
     DeprecatedVariableNoneValueWarning,
     ErrorType,
+    UndeclaredOutletError,
 )
 from airflow.sdk.execution_time.comms import (
     AssetsByAliasResult,
@@ -1468,10 +1469,7 @@ class OutletEventAccessors(
 
         if hashable_key not in self._dict:
             if self._get_outlets is not None and not self._is_declared(hashable_key):
-                raise KeyError(
-                    f"{self._format_key(hashable_key)} is not an outlet of this task; "
-                    "add it to the task's outlets."
-                )
+                raise UndeclaredOutletError(self._build_undeclared_message(hashable_key))
             self._dict[hashable_key] = OutletEventAccessor(extra={}, key=hashable_key)
         return self._dict[hashable_key]
 
@@ -1480,6 +1478,20 @@ class OutletEventAccessors(
         if isinstance(key, AssetAliasUniqueKey):
             return f"AssetAlias(name={key.name!r})"
         return f"Asset(name={key.name!r}, uri={key.uri!r})"
+
+    def _build_undeclared_message(self, key: BaseAssetUniqueKey) -> str:
+        message = f"{self._format_key(key)} is not an outlet of this task; "
+        if isinstance(key, AssetUniqueKey):
+            if TYPE_CHECKING:
+                assert self._get_outlets is not None
+            for outlet in self._get_outlets():
+                if not isinstance(outlet, Asset):
+                    continue
+                shared = "name" if outlet.name == key.name else "URI" if outlet.uri == key.uri else None
+                if shared:
+                    outlet_label = self._format_key(AssetUniqueKey.from_asset(outlet))
+                    return f"{message}the task's outlets have {outlet_label} with the same {shared}; use it."
+        return f"{message}add it to the task's outlets."
 
     def _is_declared(self, key: BaseAssetUniqueKey) -> bool:
         if TYPE_CHECKING:

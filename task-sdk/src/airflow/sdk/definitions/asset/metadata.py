@@ -31,7 +31,13 @@ __all__ = ["Metadata"]
 
 @attrs.define(init=True)
 class Metadata:
-    """Metadata to attach to an AssetEvent."""
+    """
+    Metadata to attach to an AssetEvent.
+
+    ``asset`` must be in the task's ``outlets``, otherwise the task raises ``KeyError``.
+    If you set ``alias``, it must be in ``outlets`` too, and the task records an event for the alias as well
+    as for the asset. To add an asset that is only known at runtime, call ``outlet_events[alias].add(asset)``.
+    """
 
     asset: Asset
     extra: dict[str, JsonValue] = attrs.field(factory=dict)

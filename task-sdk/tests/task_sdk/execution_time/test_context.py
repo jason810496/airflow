@@ -51,6 +51,7 @@ from airflow.sdk.exceptions import (
     AirflowRuntimeError,
     AirflowSecretsBackendAccessDenied,
     ErrorType,
+    UndeclaredOutletError,
 )
 from airflow.sdk.execution_time.comms import (
     AssetEventDagRunReferenceResult,
@@ -960,16 +961,83 @@ class TestOutletEventAccessors:
             pytest.param(
                 Asset(name="a", uri="s3://bucket/a"), "Asset(name='a', uri='s3://bucket/a')", id="asset"
             ),
+            pytest.param(
+                Asset(name='it\'s "q"\n', uri="s3://bucket/q"),
+                "Asset(name='it\\'s \"q\"\\n', uri='s3://bucket/q')",
+                id="asset-with-quotes-and-newline",
+            ),
             pytest.param(AssetAlias("alias"), "AssetAlias(name='alias')", id="alias"),
         ),
     )
     def test__get_item__undeclared_outlet_message(self, access_key, expected_label):
         outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [])
-        with pytest.raises(KeyError) as exc_info:
+        with pytest.raises(UndeclaredOutletError) as exc_info:
             outlet_event_accessors[access_key]
-        assert exc_info.value.args == (
-            f"{expected_label} is not an outlet of this task; add it to the task's outlets.",
+        expected = f"{expected_label} is not an outlet of this task; add it to the task's outlets."
+        assert exc_info.value.args == (expected,)
+        assert str(exc_info.value) == expected
+
+    @pytest.mark.parametrize(
+        ("outlets", "shared"),
+        (
+            pytest.param(
+                [Asset(name="a", uri="s3://bucket/other")],
+                "Asset(name='a', uri='s3://bucket/other') with the same name",
+                id="same-name",
+            ),
+            pytest.param(
+                [Asset(name="other", uri="s3://bucket/a")],
+                "Asset(name='other', uri='s3://bucket/a') with the same URI",
+                id="same-uri",
+            ),
+            pytest.param(
+                [AssetAlias("a"), Asset(name="other", uri="s3://bucket/a")],
+                "Asset(name='other', uri='s3://bucket/a') with the same URI",
+                id="skips-non-asset-outlets",
+            ),
+        ),
+    )
+    def test__get_item__undeclared_outlet_message_points_at_conflicting_outlet(self, outlets, shared):
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
+        with pytest.raises(UndeclaredOutletError) as exc_info:
+            outlet_event_accessors[Asset(name="a", uri="s3://bucket/a")]
+        assert str(exc_info.value) == (
+            "Asset(name='a', uri='s3://bucket/a') is not an outlet of this task; "
+            f"the task's outlets have {shared}; use it."
         )
+
+    @pytest.mark.parametrize(
+        "access_key",
+        (
+            pytest.param(Asset.ref(name="undeclared_ref_name"), id="name-ref"),
+            pytest.param(Asset.ref(uri="s3://bucket/undeclared_ref_uri"), id="uri-ref"),
+        ),
+    )
+    def test__get_item__undeclared_asset_ref_raises(self, access_key, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = AssetResult(
+            name="undeclared_ref_name", uri="s3://bucket/undeclared_ref_uri", group="asset"
+        )
+        outlet_event_accessors = OutletEventAccessors(
+            get_outlets=lambda: [Asset(name="other", uri="s3://bucket/other")]
+        )
+        with pytest.raises(UndeclaredOutletError, match="is not an outlet of this task"):
+            outlet_event_accessors[access_key]
+        assert len(outlet_event_accessors) == 0
+
+    @pytest.mark.parametrize(
+        "for_asset_kwargs",
+        (
+            pytest.param({"name": "undeclared_for_asset_name"}, id="name"),
+            pytest.param({"uri": "s3://bucket/undeclared_for_asset_uri"}, id="uri"),
+        ),
+    )
+    def test_for_asset_undeclared_ref_raises(self, for_asset_kwargs, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = AssetResult(
+            name="undeclared_for_asset_name", uri="s3://bucket/undeclared_for_asset_uri", group="asset"
+        )
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [])
+        with pytest.raises(UndeclaredOutletError, match="is not an outlet of this task"):
+            outlet_event_accessors.for_asset(**for_asset_kwargs)
 
     def test__get_item__outlet_added_at_runtime(self):
         outlets: list[Asset] = []

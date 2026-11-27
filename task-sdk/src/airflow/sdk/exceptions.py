@@ -80,6 +80,13 @@ class AirflowRuntimeError(Exception):
         super().__init__(f"{error.error.value}: {error.detail}")
 
 
+class UndeclaredOutletError(KeyError):
+    """Raise when ``outlet_events`` is asked for an asset or asset alias that is not in the task's outlets."""
+
+    def __str__(self) -> str:
+        return str(self.args[0]) if self.args else ""
+
+
 class AirflowTimetableInvalid(AirflowException):
     """Raise when a DAG has an invalid timetable."""
 

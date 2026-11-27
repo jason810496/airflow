@@ -272,7 +272,13 @@ class OutletEventAccessorProtocol(Protocol):
         asset_alias_events: list[AssetAliasEvent],
         partition_keys: set[str] = ...,
     ) -> None: ...
-    def add(self, asset: Asset, extra: dict[str, JsonValue] | None = None) -> None: ...
+    def add(self, asset: Asset, extra: dict[str, JsonValue] | None = None) -> None:
+        """
+        Add an asset event for ``asset`` through this asset alias.
+
+        :raises TypeError: If this accessor is for an asset.
+        """
+
     def add_partitions(self, keys: str | list[str]) -> None: ...
 
 
@@ -281,4 +287,9 @@ class OutletEventAccessorsProtocol(Protocol):
 
     def __iter__(self) -> Iterator[Asset | AssetAlias]: ...
     def __len__(self) -> int: ...
-    def __getitem__(self, key: Asset | AssetAlias | AssetRef) -> OutletEventAccessorProtocol: ...
+    def __getitem__(self, key: Asset | AssetAlias | AssetRef) -> OutletEventAccessorProtocol:
+        """
+        Return the accessor for ``key``.
+
+        :raises KeyError: If ``key`` is not in the task's ``outlets``.
+        """

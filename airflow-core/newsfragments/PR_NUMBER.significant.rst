@@ -5,8 +5,8 @@ A task's ``outlet_events`` now raises instead of dropping events Airflow would n
 - Looking up an asset or asset alias that is not in the task's ``outlets`` raises ``KeyError``.
   This covers ``outlet_events[...]``, ``for_asset_alias()``, ``for_asset()`` with both ``name`` and ``uri``,
   and yielded ``Metadata``. ``outlet_events.get()`` returns ``None`` and ``in`` returns ``False`` for these keys.
-  An asset ref (``Asset.ref()``, or ``for_asset()`` with only ``name`` or ``uri``) is first resolved in Airflow,
-  so a ref to an unknown asset raises ``AirflowRuntimeError``.
+  Airflow looks up an asset ref (``Asset.ref()``, or ``for_asset()`` with only ``name`` or ``uri``) by name or URI first,
+  so a ref to an asset it does not know raises ``AirflowRuntimeError``.
   The task can append to ``outlets`` while it runs, but an asset that Airflow does not already know
   still gets no event.
 - ``add()`` only works on an asset alias accessor, so calling it on an asset accessor raises ``TypeError``.

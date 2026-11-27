@@ -227,7 +227,7 @@ There's minimal magic here---Airflow simply writes the yielded values to the exa
 
 .. note:: Asset event extra information can only contain JSON-serializable values (list and dict nesting is possible). This is due to the value being stored in the database.
 
-.. note:: ``outlet_events`` only accepts assets and asset aliases in the task's ``outlets``. Looking up any other asset or alias raises ``KeyError``, ``outlet_events.get()`` returns ``None``, and ``in`` returns ``False``. If the task appends to ``outlets`` while running, ``outlet_events`` accepts the new entry. Airflow still records an event for an asset outlet only if it already knows the asset, for example from a Dag file, so create new assets through an asset alias (see the AssetAlias section below). An asset ref such as ``Asset.ref(name="x")`` is first resolved in Airflow, so a ref to an unknown asset raises ``AirflowRuntimeError``.
+.. note:: ``outlet_events`` only accepts assets and asset aliases in the task's ``outlets``. Looking up any other asset or alias raises ``KeyError``, ``outlet_events.get()`` returns ``None``, and ``in`` returns ``False``. If the task appends to ``outlets`` while running, ``outlet_events`` accepts the new entry. Airflow still records an event for an asset outlet only if it already knows the asset, for example from a Dag file, so create new assets through an asset alias (see :ref:`the AssetAlias section <dynamic_asset_events_through_asset_alias>`). Airflow looks up an asset ref such as ``Asset.ref(name="x")`` by name or URI first, so a ref to an asset it does not know raises ``airflow.sdk.exceptions.AirflowRuntimeError``.
 
 .. _fetching_information_from_previously_emitted_asset_events:
 
@@ -365,20 +365,23 @@ The shorthand for this is ``@asset.multi``:
         """Split input into two."""
 
 
+.. _dynamic_asset_events_through_asset_alias:
+
 Dynamic data events emitting and asset creation through AssetAlias
 -----------------------------------------------------------------------
 Use ``AssetAlias`` when a task must declare an asset dependency before the Asset's fixed attributes
 (like URI or name) are available. The alias is listed in ``outlets`` as a stable name, and the task
-resolves it at runtime by adding one or more concrete ``Asset`` objects through ``outlet_events`` or
-yielded ``Metadata``. Downstream Dags can depend on the alias, and Airflow triggers them when events
+resolves it at runtime by calling ``outlet_events[alias].add()`` with one or more concrete ``Asset``
+objects. Downstream Dags can depend on the alias, and Airflow triggers them when events
 are emitted for the resolved assets.
 
 How to use AssetAlias
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 ``AssetAlias`` has one single argument ``name`` that uniquely identifies the alias. The task must
-first declare the alias as an outlet, and then use ``outlet_events`` or yield ``Metadata`` during
-execution to associate the alias with the concrete assets it produced.
+first declare the alias as an outlet, and then call ``outlet_events[alias].add()`` during execution to
+associate the alias with the concrete assets it produced. Yielding ``Metadata`` with ``alias`` does the
+same for an asset that is already in ``outlets``.
 
 The following example creates an asset event against the S3 URI ``f"s3://bucket/my-task"``  with optional extra information ``extra``. If the asset does not exist, Airflow will dynamically create it and log a warning message.
 
