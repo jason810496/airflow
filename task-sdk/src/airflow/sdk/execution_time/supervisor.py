@@ -178,6 +178,7 @@ from airflow.sdk.execution_time.request_handlers import (
     handle_update_dag_run_note,
 )
 from airflow.sdk.execution_time.schema import get_schema_version_migrator, resolve_body_class
+from airflow.sdk.execution_time.xcom_write_path import SupervisorXComWriter, is_raw_value
 from airflow.sdk.log import _supervisor_comms
 
 try:
@@ -1694,6 +1695,9 @@ class ActivitySubprocess(WatchedSubprocess):
 
     ti: RuntimeTI | None = None
 
+    _xcom_writer: SupervisorXComWriter | None = attrs.field(default=None, init=False, repr=False)
+    """Stores the XComs a Python task process sent unstored; see ``xcom_write_path``."""
+
     @classmethod
     def start(  # type: ignore[override]
         cls,
@@ -1804,6 +1808,8 @@ class ActivitySubprocess(WatchedSubprocess):
         try:
             self._monitor_subprocess()
         finally:
+            if self._xcom_writer is not None:
+                self._xcom_writer.stop()
             self.selector.close()
 
         # self._monitor_subprocess() will set the exit code when the process has finished
@@ -2171,6 +2177,15 @@ class ActivitySubprocess(WatchedSubprocess):
         self.client.task_instances.skip_downstream_tasks(self.id, msg)
         return None, {}
 
+    def _handle_set_xcom(
+        self, msg: SetXCom, log: FilteringBoundLogger, req_id: int
+    ) -> RequestResult | ResponseSent:
+        if not is_raw_value(msg.value):
+            return handle_set_xcom(self.client, msg)
+        if self._xcom_writer is None:
+            self._xcom_writer = SupervisorXComWriter(self)
+        return self._xcom_writer.write(msg, req_id)
+
     def _handle_set_execution_timeout(
         self, msg: SetExecutionTimeout, log: FilteringBoundLogger, req_id: int
     ) -> RequestResult:
@@ -2450,7 +2465,6 @@ class ActivitySubprocess(WatchedSubprocess):
             GetXComSequenceSlice,
             MaskSecret,
             PutVariable,
-            SetXCom,
         ),
         **dict(
             [
@@ -2485,6 +2499,7 @@ class ActivitySubprocess(WatchedSubprocess):
                 register_request_method(SetRenderedFields, _handle_set_rendered_fields),
                 register_request_method(SetRenderedMapIndex, _handle_set_rendered_map_index),
                 register_request_method(SetTaskStateStore, _handle_set_task_state_store),
+                register_request_method(SetXCom, _handle_set_xcom),
                 register_request_method(SkipDownstreamTasks, _handle_skip_downstream_tasks),
                 register_request_method(SetExecutionTimeout, _handle_set_execution_timeout),
                 register_request_method(SucceedTask, _handle_finished_task),
