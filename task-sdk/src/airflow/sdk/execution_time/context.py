@@ -1485,13 +1485,29 @@ class OutletEventAccessors(
             if TYPE_CHECKING:
                 assert self._get_outlets is not None
             for outlet in self._get_outlets():
-                if not isinstance(outlet, Asset):
+                if (outlet_key := self._resolve_outlet_key(outlet, key)) is None:
                     continue
-                shared = "name" if outlet.name == key.name else "URI" if outlet.uri == key.uri else None
+                shared = (
+                    "name" if outlet_key.name == key.name else "URI" if outlet_key.uri == key.uri else None
+                )
                 if shared:
-                    outlet_label = self._format_key(AssetUniqueKey.from_asset(outlet))
+                    outlet_label = self._format_key(outlet_key)
                     return f"{message}the task's outlets have {outlet_label} with the same {shared}; use it."
         return f"{message}add it to the task's outlets."
+
+    def _resolve_outlet_key(self, outlet: object, key: AssetUniqueKey) -> AssetUniqueKey | None:
+        if isinstance(outlet, Asset):
+            return AssetUniqueKey.from_asset(outlet)
+        # A ref outlet names only half of the asset, so resolve it to compare the full key. Only
+        # refs sharing that half with the key are resolved, to avoid a round trip per outlet.
+        if (isinstance(outlet, AssetNameRef) and outlet.name == key.name) or (
+            isinstance(outlet, AssetUriRef) and outlet.uri == key.uri
+        ):
+            try:
+                return self._resolve_asset_ref(outlet)[0]
+            except AirflowRuntimeError:
+                return None
+        return None
 
     def _is_declared(self, key: BaseAssetUniqueKey) -> bool:
         if TYPE_CHECKING:
@@ -1500,13 +1516,8 @@ class OutletEventAccessors(
             if isinstance(key, AssetAliasUniqueKey):
                 if isinstance(outlet, AssetAlias) and outlet.name == key.name:
                     return True
-            elif isinstance(key, AssetUniqueKey):
-                if isinstance(outlet, Asset) and AssetUniqueKey.from_asset(outlet) == key:
-                    return True
-                if isinstance(outlet, AssetNameRef) and outlet.name == key.name:
-                    return True
-                if isinstance(outlet, AssetUriRef) and outlet.uri == key.uri:
-                    return True
+            elif isinstance(key, AssetUniqueKey) and self._resolve_outlet_key(outlet, key) == key:
+                return True
         return False
 
 

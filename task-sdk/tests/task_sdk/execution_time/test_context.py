@@ -922,10 +922,6 @@ class TestOutletEventAccessors:
             pytest.param(
                 [Asset(name="a", uri="s3://bucket/a")], Asset(name="a", uri="s3://bucket/a"), id="asset"
             ),
-            pytest.param([Asset.ref(name="a")], Asset(name="a", uri="s3://bucket/a"), id="name-ref"),
-            pytest.param(
-                [Asset.ref(uri="s3://bucket/a")], Asset(name="a", uri="s3://bucket/a"), id="uri-ref"
-            ),
             pytest.param([AssetAlias("alias")], AssetAlias("alias"), id="alias"),
         ),
     )
@@ -933,6 +929,59 @@ class TestOutletEventAccessors:
         outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
         outlet_event_accessors[access_key].extra["k"] = "v"
         assert list(outlet_event_accessors) == [access_key]
+
+    @pytest.mark.parametrize(
+        "outlet",
+        (
+            pytest.param(Asset.ref(name="declared_ref"), id="name-ref"),
+            pytest.param(Asset.ref(uri="s3://bucket/declared_ref"), id="uri-ref"),
+        ),
+    )
+    def test__get_item__declared_ref_outlet(self, outlet, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = AssetResult(
+            name="declared_ref", uri="s3://bucket/declared_ref", group="asset"
+        )
+        access_key = Asset(name="declared_ref", uri="s3://bucket/declared_ref")
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [outlet])
+        outlet_event_accessors[access_key].extra["k"] = "v"
+        assert list(outlet_event_accessors) == [access_key]
+
+    @pytest.mark.parametrize(
+        ("outlet", "access_key", "shared"),
+        (
+            pytest.param(
+                Asset.ref(name="mismatch_ref"),
+                Asset(name="mismatch_ref", uri="s3://bucket/wrong"),
+                "name",
+                id="name-ref-other-uri",
+            ),
+            pytest.param(
+                Asset.ref(uri="s3://bucket/mismatch_ref"),
+                Asset(name="wrong", uri="s3://bucket/mismatch_ref"),
+                "URI",
+                id="uri-ref-other-name",
+            ),
+        ),
+    )
+    def test__get_item__ref_outlet_resolving_to_other_asset_raises(
+        self, outlet, access_key, shared, mock_supervisor_comms
+    ):
+        mock_supervisor_comms.send.return_value = AssetResult(
+            name="mismatch_ref", uri="s3://bucket/mismatch_ref", group="asset"
+        )
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [outlet])
+        with pytest.raises(UndeclaredOutletError) as exc_info:
+            outlet_event_accessors[access_key]
+        assert str(exc_info.value).endswith(
+            "the task's outlets have Asset(name='mismatch_ref', uri='s3://bucket/mismatch_ref') "
+            f"with the same {shared}; use it."
+        )
+
+    def test__get_item__unknown_ref_outlet_raises(self, mock_supervisor_comms):
+        mock_supervisor_comms.send.return_value = ErrorResponse(error=ErrorType.ASSET_NOT_FOUND)
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [Asset.ref(name="unknown_ref")])
+        with pytest.raises(UndeclaredOutletError, match="add it to the task's outlets"):
+            outlet_event_accessors[Asset(name="unknown_ref", uri="s3://bucket/unknown_ref")]
 
     @pytest.mark.parametrize(
         ("outlets", "access_key"),
