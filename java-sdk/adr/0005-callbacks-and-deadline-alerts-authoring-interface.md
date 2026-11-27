@@ -54,6 +54,10 @@ surface of [ADR-0002](0002-native-dag-interface.md). Listeners have no Java API.
    annotation run in source order. Python references on the annotation surface are left to a
    follow-up, since an annotation attribute cannot hold a `Map` of kwargs. Custom deadline
    references are left to the same follow-up.
+6. **Tasks get an email recipient.** `TaskRef.email(String...)` on the interface surface and
+   `@Airflow.Task(email = {...})` on the annotation surface set it. The serializer stops omitting
+   `email_on_failure` and `email_on_retry`, and writes them only when the task has an email, as
+   Python does.
 
 ## Signatures
 
@@ -88,6 +92,7 @@ TaskRef<T> onSuccessCallback(Callback... callbacks);
 TaskRef<T> onFailureCallback(Callback... callbacks);
 TaskRef<T> onRetryCallback(Callback... callbacks);
 TaskRef<T> onSkippedCallback(Callback... callbacks);
+TaskRef<T> email(String... addresses);
 
 final class DeadlineAlert {
   DeadlineAlert(String name, DeadlineReference reference, Duration interval, Callback callback);
@@ -113,6 +118,7 @@ static PythonAsyncCallback asyncCallbackRef(String path, Map<String, Object> kwa
 static DeadlineReference deadlineReferenceRef(String path, Map<String, Object> data);
 
 // org.apache.airflow.sdk.Airflow (annotation surface)
+@interface Task { /* ... */ String[] email() default {}; }
 @interface OnSuccessCallback { String task() default ""; }   // "" means a Dag callback
 @interface OnFailureCallback { String task() default ""; }
 @interface OnExecuteCallback { String task(); }
@@ -174,7 +180,9 @@ public class Reports {
         .onFailureCallback(Reports::page)
         .onFailureCallback(Python.callbackRef("my_plugin.alerts.notify", Map.of("channel", "#oncall")))
         .onRetryCallback(Reports::page)
-        .onSkippedCallback(Reports::page);
+        .onSkippedCallback(Reports::page)
+        .email("oncall@example.com")
+        .config("email_on_retry", false);
     return dag;
   }
 
@@ -190,7 +198,7 @@ The annotation surface:
 ```java
 @Airflow.Dag(id = "daily_report_annotated", queue = "java")
 public class DailyReport {
-  @Airflow.Task
+  @Airflow.Task(email = {"oncall@example.com"})
   public void load(Client client) { /* ... */ }
 
   @Airflow.OnSuccessCallback
@@ -227,6 +235,7 @@ public class DailyReport {
   a callback method with other arguments, and a duplicate deadline name.
 - The serializer writes `has_on_*_callback` from these calls and the deadline alerts into
   `deadline`, which it writes as `null` today.
-- The runtime handles `CallbackStartupDetails` beside `StartupDetails`.
+- The runtime handles the callback startup messages of core ADR-0020 beside `StartupDetails`, and
+  sends `RunPythonCallback` and `SendErrorEmail` to the supervisor.
 - `capabilities.yaml` marks callbacks and deadline alerts as supported, and listeners as supported
   through Python listeners.

@@ -44,6 +44,8 @@ This ADR records the TypeScript spelling of it. Listeners have no TypeScript API
 4. **The `python` module adds `callbackRef`, `asyncCallbackRef` and `deadlineReferenceRef`.** `asyncCallbackRef` and the
    `executor` option of `callbackRef` are accepted only in a deadline alert, and the types enforce
    it.
+5. **`TaskSpec` gets an `email` field.** It takes one address or an array. The existing
+   `emailOnFailure` and `emailOnRetry` fields take effect only when `email` is set, as in Python.
 
 ## Signatures
 
@@ -65,6 +67,7 @@ interface TaskSpec {
   readonly onFailureCallback?: Callbacks;
   readonly onRetryCallback?: Callbacks;
   readonly onSkippedCallback?: Callbacks;
+  readonly email?: string | string[];
   /* ... */
 }
 
@@ -133,6 +136,8 @@ dag.task(async function load() { /* ... */ }, {
   onFailureCallback: [page, callbackRef("my_plugin.alerts.notify", { channel: "#oncall" })],
   onRetryCallback: page,
   onSkippedCallback: (ctx) => console.log(`${ctx.taskId} skipped`),
+  email: ["oncall@example.com"],
+  emailOnRetry: false,
 });
 ```
 
@@ -140,6 +145,7 @@ dag.task(async function load() { /* ... */ }, {
 
 - The serializer writes `has_on_*_callback` from these fields and the deadline alerts into
   `deadline`, which it writes as `null` today.
-- The runtime handles `CallbackStartupDetails` beside `StartupDetails`.
+- The runtime handles the callback startup messages of core ADR-0020 beside `StartupDetails`, and
+  sends `RunPythonCallback` and `SendErrorEmail` to the supervisor.
 - `capabilities.yaml` marks callbacks and deadline alerts as supported, and listeners as supported
   through Python listeners.

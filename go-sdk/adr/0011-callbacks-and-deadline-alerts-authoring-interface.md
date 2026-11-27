@@ -49,6 +49,8 @@ This ADR records the Go spelling of it. Listeners have no Go API.
    rejects it outside a deadline alert. Each interface has one exported method, since a type in
    another package cannot implement an unexported one. The `Executor` option of `python.CallbackRef`
    is rejected at registration outside a deadline alert.
+5. **`TaskSpec` gets an `Email []string` field.** The existing `EmailOnFailure` and `EmailOnRetry`
+   fields take effect only when `Email` is set, as in Python, and their "no effect yet" docs go.
 
 ## Signatures
 
@@ -77,6 +79,7 @@ type DagSpec struct {
 type TaskSpec struct {
     OnExecuteCallback, OnSuccessCallback, OnFailureCallback []Callback
     OnRetryCallback, OnSkippedCallback                      []Callback
+    Email                                                   []string
     /* ... */
 }
 type DeadlineReference interface{ DeadlineReferenceJSON() map[string]any }
@@ -161,6 +164,8 @@ func newDag() *airflow.DagRef {
             python.CallbackRef("my_plugin.alerts.notify", map[string]any{"channel": "#oncall"})},
         OnRetryCallback:   []airflow.Callback{airflow.CallbackFunc(page)},
         OnSkippedCallback: []airflow.Callback{airflow.CallbackFunc(page)},
+        Email:             []string{"oncall@example.com"},
+        EmailOnRetry:      new(bool),
     })
     return dag
 }
@@ -170,6 +175,7 @@ func newDag() *airflow.DagRef {
 
 - `internal/genspec` stops excluding `deadline` and adds the callback fields; the serializer writes
   `has_on_*_callback` from them.
-- The runtime handles `CallbackStartupDetails` beside `StartupDetails`.
+- The runtime handles the callback startup messages of core ADR-0020 beside `StartupDetails`, and
+  sends `RunPythonCallback` and `SendErrorEmail` to the supervisor.
 - `capabilities.yaml` marks callbacks and deadline alerts as supported, and listeners as supported
   through Python listeners.
