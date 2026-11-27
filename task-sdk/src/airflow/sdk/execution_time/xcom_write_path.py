@@ -89,7 +89,14 @@ def is_active() -> bool:
 
 
 def is_raw_value(value: JsonValue) -> bool:
-    return isinstance(value, dict) and len(value) == 1 and _ENVELOPE_KEY in value
+    if not (isinstance(value, dict) and len(value) == 1):
+        return False
+    body = value.get(_ENVELOPE_KEY)
+    return (
+        isinstance(body, dict)
+        and body.keys() == {"value", "needs_mapped_length"}
+        and isinstance(body["needs_mapped_length"], bool)
+    )
 
 
 def unwrap_raw_value(value: JsonValue) -> RawXCom:

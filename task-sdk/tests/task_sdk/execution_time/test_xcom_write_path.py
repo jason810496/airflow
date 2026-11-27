@@ -296,7 +296,18 @@ def test_unwrap_raw_value_reads_what_the_task_sent():
 
 
 @pytest.mark.parametrize(
-    "value", [None, 1, "x", [1], {"a": 1}, {"__airflow_exp_supervisor_write__": 1, "b": 2}]
+    "value",
+    [
+        None,
+        1,
+        "x",
+        [1],
+        {"a": 1},
+        {"__airflow_exp_supervisor_write__": 1, "b": 2},
+        {"__airflow_exp_supervisor_write__": 1},
+        {"__airflow_exp_supervisor_write__": {"value": 1}},
+        {"__airflow_exp_supervisor_write__": {"value": 1, "needs_mapped_length": "yes"}},
+    ],
 )
 def test_is_raw_value_ignores_what_a_task_stored_itself(value):
     assert not is_raw_value(value)
