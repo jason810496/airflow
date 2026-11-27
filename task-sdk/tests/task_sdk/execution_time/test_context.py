@@ -558,31 +558,22 @@ class TestOutletEventAccessor:
         ],
         ids=["asset", "asset name ref", "asset uri ref"],
     )
-    @pytest.mark.parametrize(
-        ("key", "asset_alias_events"),
-        (
-            (
-                AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias")),
-                [
-                    AssetAliasEvent(
-                        source_alias_name="test_alias",
-                        dest_asset_key=AssetUniqueKey(name="name", uri="uri"),
-                        dest_asset_extra={"extra": "from asset itself"},
-                        extra={"extra": "from event"},
-                    )
-                ],
-            ),
-        ),
-        ids=["alias"],
-    )
-    def test_add(self, add_args, key, asset_alias_events, mock_supervisor_comms):
+    def test_add(self, add_args, mock_supervisor_comms):
         mock_supervisor_comms.send.return_value = AssetResponse(
             name="name", uri="uri", group="", extra={"extra": "from asset itself"}
         )
 
+        key = AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias"))
         outlet_event_accessor = OutletEventAccessor(key=key, extra={})
         outlet_event_accessor.add(*add_args)
-        assert outlet_event_accessor.asset_alias_events == asset_alias_events
+        assert outlet_event_accessor.asset_alias_events == [
+            AssetAliasEvent(
+                source_alias_name="test_alias",
+                dest_asset_key=AssetUniqueKey(name="name", uri="uri"),
+                dest_asset_extra={"extra": "from asset itself"},
+                extra={"extra": "from event"},
+            )
+        ]
 
     @pytest.mark.parametrize(
         "add_args",
@@ -593,31 +584,22 @@ class TestOutletEventAccessor:
         ],
         ids=["asset", "asset name ref", "asset uri ref"],
     )
-    @pytest.mark.parametrize(
-        ("key", "asset_alias_events"),
-        (
-            (
-                AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias")),
-                [
-                    AssetAliasEvent(
-                        source_alias_name="test_alias",
-                        dest_asset_key=AssetUniqueKey(name="name", uri="uri"),
-                        dest_asset_extra={"extra": "from asset itself"},
-                        extra={"extra": "from event"},
-                    )
-                ],
-            ),
-        ),
-        ids=["alias"],
-    )
-    def test_add_with_db(self, add_args, key, asset_alias_events, mock_supervisor_comms):
+    def test_add_with_db(self, add_args, mock_supervisor_comms):
         mock_supervisor_comms.send.return_value = AssetResponse(
             name="name", uri="uri", group="", extra={"extra": "from asset itself"}
         )
 
+        key = AssetAliasUniqueKey.from_asset_alias(AssetAlias("test_alias"))
         outlet_event_accessor = OutletEventAccessor(key=key)
         outlet_event_accessor.add(*add_args)
-        assert outlet_event_accessor.asset_alias_events == asset_alias_events
+        assert outlet_event_accessor.asset_alias_events == [
+            AssetAliasEvent(
+                source_alias_name="test_alias",
+                dest_asset_key=AssetUniqueKey(name="name", uri="uri"),
+                dest_asset_extra={"extra": "from asset itself"},
+                extra={"extra": "from event"},
+            )
+        ]
 
     def test_add_on_asset_raises(self):
         outlet_event_accessor = OutletEventAccessor(key=AssetUniqueKey.from_asset(Asset("test_uri")))
@@ -968,8 +950,26 @@ class TestOutletEventAccessors:
         outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: outlets)
         with pytest.raises(KeyError, match="is not an outlet of this task"):
             outlet_event_accessors[access_key]
+        assert outlet_event_accessors.get(access_key) is None
         assert access_key not in outlet_event_accessors
         assert len(outlet_event_accessors) == 0
+
+    @pytest.mark.parametrize(
+        ("access_key", "expected_label"),
+        (
+            pytest.param(
+                Asset(name="a", uri="s3://bucket/a"), "Asset(name='a', uri='s3://bucket/a')", id="asset"
+            ),
+            pytest.param(AssetAlias("alias"), "AssetAlias(name='alias')", id="alias"),
+        ),
+    )
+    def test__get_item__undeclared_outlet_message(self, access_key, expected_label):
+        outlet_event_accessors = OutletEventAccessors(get_outlets=lambda: [])
+        with pytest.raises(KeyError) as exc_info:
+            outlet_event_accessors[access_key]
+        assert exc_info.value.args == (
+            f"{expected_label} is not an outlet of this task; add it to the task's outlets.",
+        )
 
     def test__get_item__outlet_added_at_runtime(self):
         outlets: list[Asset] = []

@@ -227,7 +227,7 @@ There's minimal magic here---Airflow simply writes the yielded values to the exa
 
 .. note:: Asset event extra information can only contain JSON-serializable values (list and dict nesting is possible). This is due to the value being stored in the database.
 
-.. note:: ``outlet_events`` only accepts assets and asset aliases in the task's ``outlets``. Looking up any other asset or alias raises ``KeyError``. An asset added to ``outlets`` while the task runs is accepted.
+.. note:: ``outlet_events`` only accepts assets and asset aliases in the task's ``outlets``. Looking up any other asset or alias raises ``KeyError``, ``outlet_events.get()`` returns ``None``, and ``in`` returns ``False``. If the task appends to ``outlets`` while running, ``outlet_events`` accepts the new entry. Airflow still records an event for an asset outlet only if it already knows the asset, for example from a Dag file, so create new assets through an asset alias (see the AssetAlias section below). An asset ref such as ``Asset.ref(name="x")`` is first resolved in Airflow, so a ref to an unknown asset raises ``AirflowRuntimeError``.
 
 .. _fetching_information_from_previously_emitted_asset_events:
 

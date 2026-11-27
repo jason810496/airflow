@@ -63,6 +63,7 @@ from airflow.sdk import (
     BaseOperatorLink,
     Connection,
     ExternalClearTarget,
+    Metadata,
     dag as dag_decorator,
     get_current_context,
     task as task_decorator,
@@ -112,6 +113,10 @@ from airflow.sdk.exceptions import (
     TaskDeferred,
 )
 from airflow.sdk.execution_time import context as context_module, task_runner
+from airflow.sdk.execution_time.callback_runner import (
+    create_async_executable_runner,
+    create_executable_runner,
+)
 from airflow.sdk.execution_time.comms import (
     AssetEventResult,
     AssetEventsResult,
@@ -2751,6 +2756,50 @@ def test_outlet_events_rejects_undeclared_outlet(create_runtime_ti, mock_supervi
 
     task.outlets.append(Asset("added-at-runtime"))
     outlet_events[Asset("added-at-runtime")].extra = {"k": "v"}
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        pytest.param(Metadata(Asset("undeclared")), id="asset"),
+        pytest.param(
+            Metadata(Asset("undeclared"), alias=AssetAlias("declared-alias")), id="asset-with-alias"
+        ),
+    ],
+)
+def test_executable_runner_rejects_undeclared_metadata(create_runtime_ti, mock_supervisor_comms, metadata):
+    from airflow.providers.standard.operators.bash import BashOperator
+
+    task = BashOperator(
+        outlets=[Asset("declared"), AssetAlias("declared-alias")],
+        task_id="asset-outlet-task",
+        bash_command="echo 0",
+    )
+    ti = create_runtime_ti(task=task, dag_id="dag_with_asset_outlet_task")
+    outlet_events = ti.get_template_context()["outlet_events"]
+
+    def produce():
+        yield metadata
+
+    runner = create_executable_runner(produce, outlet_events, logger=structlog.get_logger())
+    with pytest.raises(KeyError, match="is not an outlet of this task"):
+        runner.run()
+
+
+@pytest.mark.asyncio
+async def test_async_executable_runner_rejects_undeclared_metadata(create_runtime_ti, mock_supervisor_comms):
+    from airflow.providers.standard.operators.bash import BashOperator
+
+    task = BashOperator(outlets=[Asset("declared")], task_id="asset-outlet-task", bash_command="echo 0")
+    ti = create_runtime_ti(task=task, dag_id="dag_with_asset_outlet_task")
+    outlet_events = ti.get_template_context()["outlet_events"]
+
+    async def produce():
+        yield Metadata(Asset("undeclared"))
+
+    runner = create_async_executable_runner(produce, outlet_events, logger=structlog.get_logger())
+    with pytest.raises(KeyError, match="is not an outlet of this task"):
+        await runner.run()
 
 
 def test_run_with_asset_inlets(create_runtime_ti, mock_supervisor_comms):

@@ -1376,7 +1376,7 @@ class OutletEventAccessor(_AssetRefResolutionMixin):
         """
         Add an asset event for ``asset`` through this asset alias.
 
-        :raises TypeError: If this accessor is for an asset, not an asset alias.
+        :raises TypeError: If this accessor is for an asset.
         """
         if not isinstance(self.key, AssetAliasUniqueKey):
             raise TypeError(
@@ -1469,10 +1469,17 @@ class OutletEventAccessors(
         if hashable_key not in self._dict:
             if self._get_outlets is not None and not self._is_declared(hashable_key):
                 raise KeyError(
-                    f"{hashable_key!r} is not an outlet of this task; add it to the task's outlets."
+                    f"{self._format_key(hashable_key)} is not an outlet of this task; "
+                    "add it to the task's outlets."
                 )
             self._dict[hashable_key] = OutletEventAccessor(extra={}, key=hashable_key)
         return self._dict[hashable_key]
+
+    @staticmethod
+    def _format_key(key: BaseAssetUniqueKey) -> str:
+        if isinstance(key, AssetAliasUniqueKey):
+            return f"AssetAlias(name={key.name!r})"
+        return f"Asset(name={key.name!r}, uri={key.uri!r})"
 
     def _is_declared(self, key: BaseAssetUniqueKey) -> bool:
         if TYPE_CHECKING:
