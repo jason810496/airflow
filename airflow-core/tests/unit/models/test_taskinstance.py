@@ -2382,7 +2382,7 @@ class TestTaskInstance:
 
         with dag_maker(dag_id="producer_dag", schedule=None, serialized=True, session=session):
 
-            @task(outlets=[AssetAlias(asset_alias_name), Asset(asset_uri)])
+            @task(outlets=AssetAlias(asset_alias_name))
             def producer(*, outlet_events):
                 yield Metadata(Asset(asset_uri), extra={"key": "value"}, alias=AssetAlias(asset_alias_name))
 
@@ -2393,11 +2393,7 @@ class TestTaskInstance:
         for ti in dr.get_task_instances(session=session):
             run_task_instance(ti, dag_maker.dag.get_task(ti.task_id), session=session)
 
-        events = session.scalars(
-            select(AssetEvent).where(AssetEvent.source_task_id == "producer").order_by(AssetEvent.id)
-        ).all()
-        assert [len(e.source_aliases) for e in events] == [0, 1]
-        producer_event = events[1]
+        producer_event = session.scalar(select(AssetEvent).where(AssetEvent.source_task_id == "producer"))
 
         assert producer_event.source_task_id == "producer"
         assert producer_event.source_dag_id == "producer_dag"

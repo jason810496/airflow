@@ -26,10 +26,24 @@ from typing import TYPE_CHECKING, Any, Generic, ParamSpec, Protocol, TypeVar, ca
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger as Logger
 
+    from airflow.sdk.definitions.asset.metadata import Metadata
     from airflow.sdk.types import OutletEventAccessorsProtocol
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+def _record_metadata(outlet_events: OutletEventAccessorsProtocol, metadata: Metadata) -> None:
+    from airflow.sdk.exceptions import UndeclaredOutletError
+
+    try:
+        outlet_events[metadata.asset].extra.update(metadata.extra)
+    except UndeclaredOutletError:
+        # An alias exists to name assets only known at runtime, so its asset need not be declared.
+        if not metadata.alias:
+            raise
+    if metadata.alias:
+        outlet_events[metadata.alias].add(metadata.asset, extra=metadata.extra)
 
 
 class _ExecutionCallableRunner(Generic[P, R]):
@@ -113,9 +127,7 @@ def create_executable_runner(
 
             for metadata in _run():
                 if isinstance(metadata, Metadata):
-                    outlet_events[metadata.asset].extra.update(metadata.extra)
-                    if metadata.alias:
-                        outlet_events[metadata.alias].add(metadata.asset, extra=metadata.extra)
+                    _record_metadata(outlet_events, metadata)
                 else:
                     _warn_unknown(metadata)
 
@@ -161,9 +173,7 @@ def create_async_executable_runner(
 
             async for result in func(*args, **kwargs):
                 if isinstance(result, Metadata):
-                    outlet_events[result.asset].extra.update(result.extra)
-                    if result.alias:
-                        outlet_events[result.alias].add(result.asset, extra=result.extra)
+                    _record_metadata(outlet_events, result)
 
                 results.append(result)
 

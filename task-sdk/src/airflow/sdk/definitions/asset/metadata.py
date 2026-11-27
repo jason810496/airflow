@@ -34,9 +34,8 @@ class Metadata:
     """
     Metadata to attach to an AssetEvent.
 
-    ``asset`` must be in the task's ``outlets``, otherwise the task raises ``KeyError``.
-    If you set ``alias``, it must be in ``outlets`` too, and the task records an event for the alias as well
-    as for the asset. To add an asset that is only known at runtime, call ``outlet_events[alias].add(asset)``.
+    ``asset`` must be in the task's ``outlets``, otherwise the task raises ``KeyError``. With ``alias`` set,
+    the alias must be in ``outlets`` instead, and ``asset`` may be one only known at runtime.
     """
 
     asset: Asset

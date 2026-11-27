@@ -90,7 +90,15 @@ from airflow.sdk.coordinators._dag_importer import CoordinatorDagImporter
 from airflow.sdk.coordinators._subprocess import SubprocessCoordinator
 from airflow.sdk.definitions._internal.loop import create_loop
 from airflow.sdk.definitions._internal.types import NOTSET, SET_DURING_EXECUTION, is_arg_set
-from airflow.sdk.definitions.asset import Asset, AssetAlias, AssetUniqueKey, AssetUriRef, Dataset, Model
+from airflow.sdk.definitions.asset import (
+    Asset,
+    AssetAlias,
+    AssetAliasEvent,
+    AssetUniqueKey,
+    AssetUriRef,
+    Dataset,
+    Model,
+)
 from airflow.sdk.definitions.param import DagParam
 from airflow.sdk.definitions.retry_policy import (
     ExceptionRetryPolicy,
@@ -2763,7 +2771,7 @@ def test_outlet_events_rejects_undeclared_outlet(create_runtime_ti, mock_supervi
     [
         pytest.param(Metadata(Asset("undeclared")), id="asset"),
         pytest.param(
-            Metadata(Asset("undeclared"), alias=AssetAlias("declared-alias")), id="asset-with-alias"
+            Metadata(Asset("declared"), alias=AssetAlias("undeclared-alias")), id="undeclared-alias"
         ),
     ],
 )
@@ -2784,6 +2792,31 @@ def test_executable_runner_rejects_undeclared_metadata(create_runtime_ti, mock_s
     runner = create_executable_runner(produce, outlet_events, logger=structlog.get_logger())
     with pytest.raises(KeyError, match="is not an outlet of this task"):
         runner.run()
+
+
+def test_executable_runner_accepts_undeclared_asset_through_alias(create_runtime_ti, mock_supervisor_comms):
+    from airflow.providers.standard.operators.bash import BashOperator
+
+    task = BashOperator(
+        outlets=[AssetAlias("declared-alias")], task_id="asset-outlet-task", bash_command="echo 0"
+    )
+    ti = create_runtime_ti(task=task, dag_id="dag_with_asset_outlet_task")
+    outlet_events = ti.get_template_context()["outlet_events"]
+
+    def produce():
+        yield Metadata(Asset("runtime"), extra={"k": "v"}, alias=AssetAlias("declared-alias"))
+
+    create_executable_runner(produce, outlet_events, logger=structlog.get_logger()).run()
+
+    assert list(outlet_events) == [AssetAlias("declared-alias")]
+    assert outlet_events[AssetAlias("declared-alias")].asset_alias_events == [
+        AssetAliasEvent(
+            source_alias_name="declared-alias",
+            dest_asset_key=AssetUniqueKey.from_asset(Asset("runtime")),
+            dest_asset_extra={},
+            extra={"k": "v"},
+        )
+    ]
 
 
 @pytest.mark.asyncio

@@ -371,17 +371,17 @@ Dynamic data events emitting and asset creation through AssetAlias
 -----------------------------------------------------------------------
 Use ``AssetAlias`` when a task must declare an asset dependency before the Asset's fixed attributes
 (like URI or name) are available. The alias is listed in ``outlets`` as a stable name, and the task
-resolves it at runtime by calling ``outlet_events[alias].add()`` with one or more concrete ``Asset``
-objects. Downstream Dags can depend on the alias, and Airflow triggers them when events
+resolves it at runtime by adding one or more concrete ``Asset`` objects through ``outlet_events`` or
+yielded ``Metadata``. Downstream Dags can depend on the alias, and Airflow triggers them when events
 are emitted for the resolved assets.
 
 How to use AssetAlias
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 ``AssetAlias`` has one single argument ``name`` that uniquely identifies the alias. The task must
-first declare the alias as an outlet, and then call ``outlet_events[alias].add()`` during execution to
-associate the alias with the concrete assets it produced. Yielding ``Metadata`` with ``alias`` does the
-same for an asset that is already in ``outlets``.
+first declare the alias as an outlet, and then use ``outlet_events`` or yield ``Metadata`` during
+execution to associate the alias with the concrete assets it produced. The concrete assets do not need
+to be in ``outlets``.
 
 The following example creates an asset event against the S3 URI ``f"s3://bucket/my-task"``  with optional extra information ``extra``. If the asset does not exist, Airflow will dynamically create it and log a warning message.
 
@@ -403,14 +403,11 @@ The following example creates an asset event against the S3 URI ``f"s3://bucket/
 
     from airflow.sdk import Metadata
 
-    s3_asset = Asset(uri="s3://bucket/my-task", name="example_s3")
 
-
-    @task(outlets=[AssetAlias("my-task-outputs"), s3_asset])
+    @task(outlets=[AssetAlias("my-task-outputs")])
     def my_task_with_metadata():
+        s3_asset = Asset(uri="s3://bucket/my-task", name="example_s3")
         yield Metadata(s3_asset, extra={"k": "v"}, alias=AssetAlias("my-task-outputs"))
-
-``Metadata`` also writes the event to the asset itself, so the asset must be in the task's ``outlets`` too, and the task records one event for the asset plus one through the alias. To add an asset that is not known before the task runs, call ``add()`` on the alias accessor in ``outlet_events`` as shown above.
 
 Only one asset event is emitted for an added asset, even if it is added to the alias multiple times, or added to multiple aliases. However, if different ``extra`` values are passed, it can emit multiple asset events. In the following example, two asset events will be emitted.
 
