@@ -98,6 +98,7 @@ from airflow.sdk.exceptions import (
     TaskDeferred,
     TaskNotFound,
 )
+from airflow.sdk.execution_time import xcom_write_path
 from airflow.sdk.execution_time.bundles import initialize_ti_bundle
 from airflow.sdk.execution_time.callback_runner import create_executable_runner
 from airflow.sdk.execution_time.comms import (
@@ -1020,6 +1021,7 @@ def _xcom_push(
     value: Any,
     *,
     mapped_length: int | None = None,
+    needs_mapped_length: bool = False,
 ) -> None:
     """Push a XCom for ``ti`` through the configured XCom backend."""
     # Private function, as we don't want to expose the ability to manually set `mapped_length` to SDK
@@ -1027,6 +1029,10 @@ def _xcom_push(
 
     if not is_stored_through_backend(key):
         _xcom_push_to_db(ti, key, value)
+        return
+
+    if xcom_write_path.is_active():
+        xcom_write_path.push(ti, key, value, needs_mapped_length=needs_mapped_length)
         return
 
     XCom._push(ti, key, value, dag_result=ti.task.returns_dag_result, mapped_length=mapped_length)
@@ -1042,6 +1048,10 @@ async def _axcom_push(
     """Push a XCom for ``ti`` through the configured XCom backend."""
     # Private function, as we don't want to expose the ability to manually set `mapped_length` to SDK
     # consumers
+
+    if is_stored_through_backend(key) and xcom_write_path.is_active():
+        await xcom_write_path.apush(ti, key, value)
+        return
 
     await XCom._apush(ti, key, value, dag_result=ti.task.returns_dag_result, mapped_length=mapped_length)
 
@@ -2607,16 +2617,21 @@ def _push_xcom_if_needed(result: Any, ti: RuntimeTaskInstance, log: Logger):
         xcom_value = None
 
     has_mapped_dep = next(ti.task.iter_mapped_dependants(), None) is not None
+    needs_mapped_length = not ti.is_mapped and has_mapped_dep
+    on_supervisor = xcom_write_path.is_active()
     if xcom_value is None:
-        if not ti.is_mapped and has_mapped_dep:
-            # Uhoh, a downstream mapped task depends on us to push something to map over
+        if needs_mapped_length:
             from airflow.sdk.exceptions import XComForMappingNotPushed
 
+            if on_supervisor:
+                # The supervisor rejects the missing value with the error raised below.
+                _xcom_push(ti, BaseXCom.XCOM_RETURN_KEY, None, needs_mapped_length=True)
+            # Uhoh, a downstream mapped task depends on us to push something to map over
             raise XComForMappingNotPushed()
         return
 
     mapped_length: int | None = None
-    if not ti.is_mapped and has_mapped_dep:
+    if needs_mapped_length and not on_supervisor:
         from airflow.sdk.definitions.mappedoperator import is_mappable_value
         from airflow.sdk.exceptions import UnmappableXComTypePushed
 
@@ -2641,7 +2656,10 @@ def _push_xcom_if_needed(result: Any, ti: RuntimeTaskInstance, log: Logger):
         for k, v in result.items():
             ti.xcom_push(k, v)
 
-    _xcom_push(ti, BaseXCom.XCOM_RETURN_KEY, result, mapped_length=mapped_length)
+    if on_supervisor:
+        _xcom_push(ti, BaseXCom.XCOM_RETURN_KEY, result, needs_mapped_length=needs_mapped_length)
+    else:
+        _xcom_push(ti, BaseXCom.XCOM_RETURN_KEY, result, mapped_length=mapped_length)
 
 
 @detail_span("finalize")
