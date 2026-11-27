@@ -452,6 +452,8 @@ class StartupDetails(BaseModel):
     start_date: datetime
     ti_context: TIRunContext
     sentry_integration: str
+    pre_resolved_expand_inputs: str | None = None
+    """Experiment: expand inputs the supervisor resolved before the fork, see ``resolve_before_fork``."""
     type: Literal["StartupDetails"] = "StartupDetails"
 
 

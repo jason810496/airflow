@@ -1684,6 +1684,10 @@ type StartupDetails struct {
 	// DagRelPath corresponds to the JSON schema field "dag_rel_path".
 	DagRelPath string `msgpack:"dag_rel_path"`
 
+	// PreResolvedExpandInputs corresponds to the JSON schema field
+	// "pre_resolved_expand_inputs".
+	PreResolvedExpandInputs interface{} `msgpack:"pre_resolved_expand_inputs,omitempty"`
+
 	// SentryIntegration corresponds to the JSON schema field "sentry_integration".
 	SentryIntegration string `msgpack:"sentry_integration"`
 

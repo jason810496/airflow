@@ -615,6 +615,7 @@ export type Type74 = "SkipDownstreamTasks";
 export type DagRelPath = string;
 export type StartDate6 = string;
 export type SentryIntegration = string;
+export type PreResolvedExpandInputs = string | null;
 export type Type75 = "StartupDetails";
 export type State7 = "success";
 export type EndDate7 = string;
@@ -1902,6 +1903,7 @@ export interface StartupDetails {
   start_date: StartDate6;
   ti_context: TIRunContext;
   sentry_integration: SentryIntegration;
+  pre_resolved_expand_inputs?: PreResolvedExpandInputs;
   type?: Type75;
 }
 /**

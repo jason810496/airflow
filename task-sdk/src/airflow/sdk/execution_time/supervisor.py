@@ -200,6 +200,7 @@ if TYPE_CHECKING:
     from airflow.sdk.api.datamodels._generated import TIRunContext
     from airflow.sdk.bases.secrets_backend import BaseSecretsBackend
     from airflow.sdk.definitions.connection import Connection
+    from airflow.sdk.execution_time import resolve_before_fork
     from airflow.sdk.types import RuntimeTaskInstanceProtocol as RuntimeTI
 
 
@@ -1694,6 +1695,9 @@ class ActivitySubprocess(WatchedSubprocess):
 
     ti: RuntimeTI | None = None
 
+    _exp_prestart: resolve_before_fork.PreStart | None = attrs.field(default=None, init=False, repr=False)
+    """Experiment: what ``resolve_before_fork`` found out before the fork, if it ran."""
+
     @classmethod
     def start(  # type: ignore[override]
         cls,
@@ -1712,6 +1716,19 @@ class ActivitySubprocess(WatchedSubprocess):
         # Tests override `target` with a local stub to exercise the base
         # infrastructure; keep bare fork for those.
         use_exec = target is _subprocess_main and task_process_uses_exec()
+        prestart = None
+        # The experiment module is only imported when its flag is set, so the baseline stays untouched.
+        if target is _subprocess_main and os.environ.get("AIRFLOW_EXP_RESOLVE_BEFORE_FORK") == "1":
+            from airflow.sdk.execution_time import resolve_before_fork
+
+            if resolve_before_fork.is_enabled(what):
+                prestart = resolve_before_fork.prestart(
+                    ti=what,
+                    dag_rel_path=dag_rel_path,
+                    bundle_info=bundle_info,
+                    sentry_integration=sentry_integration,
+                    client=client,
+                )
         if target is _subprocess_main and not use_exec:
             _import_task_runner_before_fork()
         proc: Self = super().start(
@@ -1723,6 +1740,7 @@ class ActivitySubprocess(WatchedSubprocess):
             new_process_group=True,
             **kwargs,
         )
+        proc._exp_prestart = prestart
         # Tell the task process what it needs to do!
         proc._on_child_started(
             ti=what,
@@ -1746,7 +1764,13 @@ class ActivitySubprocess(WatchedSubprocess):
             # We've forked, but the task won't start doing anything until we send it the StartupDetails
             # message. But before we do that, we need to tell the server it's started (so it has the chance to
             # tell us "no, stop!" for any reason)
-            ti_context = self.client.task_instances.start(ti.id, self.pid, datetime.now(tz=UTC))
+            if (prestart := self._exp_prestart) is None:
+                ti_context = self.client.task_instances.start(ti.id, self.pid, datetime.now(tz=UTC))
+            elif prestart.start_error is not None:
+                raise prestart.start_error
+            else:
+                # Already started before the fork, so the expand inputs could be resolved first.
+                ti_context = cast("TIRunContext", prestart.ti_context)
             self._should_retry = ti_context.should_retry
             self._last_successful_heartbeat = time.monotonic()
         except Exception as e:
@@ -1775,6 +1799,7 @@ class ActivitySubprocess(WatchedSubprocess):
             ti_context=ti_context,
             start_date=start_date,
             sentry_integration=sentry_integration,
+            pre_resolved_expand_inputs=self._exp_prestart.encoded if self._exp_prestart else None,
         )
 
         # Send the message to tell the process what it needs to execute
@@ -2052,7 +2077,9 @@ class ActivitySubprocess(WatchedSubprocess):
 
         self._last_heartbeat_attempt = time.monotonic()
         try:
-            self.client.task_instances.heartbeat(self.id, pid=self._process.pid)
+            # The server checks the pid it recorded at start, which is the supervisor's after a pre-fork start.
+            pid = self._exp_prestart.start_pid if self._exp_prestart else self._process.pid
+            self.client.task_instances.heartbeat(self.id, pid=pid)
             # Update the last heartbeat time on success
             self._last_successful_heartbeat = time.monotonic()
 

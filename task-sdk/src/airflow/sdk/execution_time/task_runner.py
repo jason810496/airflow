@@ -254,6 +254,9 @@ class RuntimeTaskInstance(TaskInstance):
     _ti_context_from_server: Annotated[TIRunContext | None, Field(repr=False)] = None
     """The Task Instance context from the API server, if any."""
 
+    _pre_resolved_expand_inputs: dict[int, Mapping[str, Any]] | None = None
+    """Experiment: expand inputs the supervisor resolved, by ``id()`` of the ``ExpandInput`` they belong to."""
+
     _loop_decision: LoopDecisionPayload | None = None
     """A loop gate's evaluation of ``until``, reported with its terminal state."""
 
@@ -1350,6 +1353,11 @@ def startup(msg: StartupDetails) -> tuple[RuntimeTaskInstance, Context, Logger]:
     with _airflow_parsing_context_manager(dag_id=msg.ti.dag_id, task_id=msg.ti.task_id):
         ti = parse(msg, log)
     log.debug("Dag file parsed", file=msg.dag_rel_path)
+
+    if msg.pre_resolved_expand_inputs:
+        from airflow.sdk.execution_time import resolve_before_fork
+
+        resolve_before_fork.install(ti, msg.pre_resolved_expand_inputs, log)
 
     run_as_user = getattr(ti.task, "run_as_user", None) or conf.get(
         "core", "default_impersonation", fallback=None

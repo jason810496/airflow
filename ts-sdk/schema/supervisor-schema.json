@@ -4126,6 +4126,18 @@
           "title": "Sentry Integration",
           "type": "string"
         },
+        "pre_resolved_expand_inputs": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pre Resolved Expand Inputs"
+        },
         "type": {
           "const": "StartupDetails",
           "default": "StartupDetails",

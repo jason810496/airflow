@@ -79,6 +79,12 @@ def _needs_run_time_resolution(v: OperatorExpandArgument) -> TypeGuard[MappedArg
     return isinstance(v, (MappedArgument, XComArg))
 
 
+def _get_pre_resolved(expand_input: ExpandInput, context: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """Experiment: return what the supervisor resolved for *expand_input* before the fork, if it did."""
+    pre_resolved = getattr(context["ti"], "_pre_resolved_expand_inputs", None)
+    return pre_resolved.get(id(expand_input)) if isinstance(pre_resolved, dict) else None
+
+
 @attrs.define(kw_only=True)
 class MappedArgument(ResolveMixin):
     """
@@ -170,6 +176,10 @@ class DictOfListsExpandInput(ResolveMixin):
         if map_index is None or map_index < 0:
             raise RuntimeError("can't resolve task-mapping argument without expanding")
 
+        if (pre_resolved := _get_pre_resolved(self, context)) is not None:
+            literal_keys = {k for k, _ in self._iter_parse_time_resolved_kwargs()}
+            return pre_resolved, {id(v) for k, v in pre_resolved.items() if k not in literal_keys}
+
         # TODO: This initiates one API call for each XComArg. Would it be
         # more efficient to do one single call and unpack the value here?
 
@@ -219,6 +229,9 @@ class ListOfDictsExpandInput(ResolveMixin):
         map_index = context["ti"].map_index
         if map_index < 0:
             raise RuntimeError("can't resolve task-mapping argument without expanding")
+
+        if (pre_resolved := _get_pre_resolved(self, context)) is not None:
+            return pre_resolved, {id(v) for k, v in pre_resolved.items() if not _is_parse_time_mappable(v)}
 
         mapping: Any = None
         if isinstance(self.value, Sized):

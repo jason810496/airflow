@@ -38,7 +38,7 @@ from cadwyn import (
 
 from airflow.sdk.api.datamodels._generated import TIRunContext, TISuccessStatePayload, VariableResponse
 from airflow.sdk.exceptions import ErrorType
-from airflow.sdk.execution_time.comms import ErrorResponse, PutVariable
+from airflow.sdk.execution_time.comms import ErrorResponse, PutVariable, StartupDetails
 
 
 class AddExecutionTimeoutToSupervisorTIRunContext(VersionChange):
@@ -53,6 +53,16 @@ class AddExecutionTimeoutToSupervisorTIRunContext(VersionChange):
 
     instructions_to_migrate_to_previous_version = (
         schema(TIRunContext).field("execution_timeout").didnt_exist,
+    )
+
+
+class AddPreResolvedExpandInputsToStartupDetails(VersionChange):
+    """Add the ``pre_resolved_expand_inputs`` the supervisor resolves before it forks the task process."""
+
+    description = __doc__
+
+    instructions_to_migrate_to_previous_version = (
+        schema(StartupDetails).field("pre_resolved_expand_inputs").didnt_exist,
     )
 
 
